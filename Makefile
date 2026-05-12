@@ -1,4 +1,4 @@
-.PHONY: all check fmt fmtcheck vet staticcheck _staticcheck run-tests open_coverage clean
+.PHONY: all check fmt fmtcheck vet staticcheck _staticcheck run-tests open_coverage clean e2e
 
 # Quiet runner: $(call RUN,label,cmd) — runs cmd silently, prints "✓ label" on
 # success, dumps captured output and exits non-zero on failure. Set V=1 for
@@ -61,3 +61,10 @@ open_coverage:
 
 clean:
 	rm -f coverage.out coverage.tmp.out
+
+# End-to-end smoke: builds the binary, exercises ClientLogin → subscription
+# list → stream/contents → edit-tag → unread-count, plus a UI login + home
+# fetch. Not run under `make all`; opt-in via `make e2e` and the E2E=1 env
+# flag baked into the test.
+e2e:
+	$(call RUN,e2e smoke,E2E=1 go test -count=1 -timeout=60s ./e2e/...)

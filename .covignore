@@ -3,3 +3,6 @@
 
 # Entry point — wiring, flag parsing, signal handling, no behaviour worth a test.
 github.com/kfet/harborrs/cmd/harborrs/main.go
+
+# End-to-end test package; exercised by `make e2e`, not unit tests.
+^github.com/kfet/harborrs/e2e/

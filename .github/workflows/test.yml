@@ -30,3 +30,6 @@ jobs:
       - run: make all
         env:
           GOTOOLCHAIN: auto
+      - run: make e2e
+        env:
+          GOTOOLCHAIN: auto

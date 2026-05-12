@@ -29,3 +29,9 @@ All notable changes to this project will be documented in this file.
   view, read/star toggles via hx-post returning fragment rows. Theme via
   `[ui] theme` config (light/dark/sepia) and optional overrides at
   `<config>/overrides/templates/*.html` and `<config>/overrides/theme.css`.
+- `internal/config`: JSON config + FileOPML provider.
+- `cmd/harborrs`: subcommands `serve`, `import`, `poll-once`, `hashpass`,
+  `version`.
+- `make e2e`: end-to-end smoke that builds the binary, polls a canned
+  RSS feed, exercises ClientLogin → subscription/list →
+  stream/contents → edit-tag → unread-count plus a UI login + home.
