@@ -268,6 +268,9 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		if e.Hash == "" {
 			e.Hash = EntryHash(e.GUID, e.Link)
 		}
+		if e.FeedHash == "" {
+			e.FeedHash = feedHash
+		}
 		if known[e.Hash] {
 			continue
 		}

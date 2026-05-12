@@ -19,3 +19,8 @@ All notable changes to this project will be documented in this file.
 - `internal/auth`: single-user credential (stdlib SHA-256 salt-and-stretch),
   opaque API + cookie-session token store persisted to `tokens.json`,
   ClientLogin-style token extraction helpers.
+- `internal/reader`: Google Reader API subset — ClientLogin, token,
+  user-info, subscription list/edit/quickadd, tag list, stream contents
+  (per-feed/label/starred/read/reading-list), item id queries, item
+  contents lookup, edit-tag (read/starred), mark-all-as-read with `ts`
+  cutoff, unread-count.
