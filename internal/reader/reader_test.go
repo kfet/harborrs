@@ -670,28 +670,57 @@ func TestEditTagAndMarkAllSetReadFail(t *testing.T) {
 	_, mux, tok, op, st := fixture(t)
 	u := seedFeed(t, op, st, 1, "F")
 	es, _ := st.ListEntries(store.FeedHash(u))
+	// Seed in-memory flags so the "remove" path has something to clear.
+	st.SetRead(es[0].Hash, true)
+	// Make read.log + starred.log read-only so subsequent appends fail.
+	if err := os.Chmod(filepath.Join(st.Dir, "read.log"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(st.Dir, "read.log"), 0o644) })
 	if err := os.Chmod(st.Dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(st.Dir, 0o755) })
-	// edit-tag: add read → SetRead fails
-	body := url.Values{"i": {itemID(es[0].Hash)}, "a": {stateReadID}}
-	if w := do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body); w.Code != 500 {
-		t.Fatalf("add read code=%d", w.Code)
-	}
-	// edit-tag: add starred → SetStarred fails
+	// edit-tag: add starred → SetStarred fails (starred.log doesn't exist,
+	// O_CREATE in chmod-0500 dir → EACCES).
 	body2 := url.Values{"i": {itemID(es[0].Hash)}, "a": {stateStarredID}}
 	if w := do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body2); w.Code != 500 {
 		t.Fatalf("add star code=%d", w.Code)
 	}
-	// edit-tag: remove (calls apply with on=false; SetRead also fails)
+	// edit-tag: remove read (state is currently Read=true; SetRead(false)
+	// tries to append to read.log which is 0444 → EACCES).
 	body3 := url.Values{"i": {itemID(es[0].Hash)}, "r": {stateReadID}}
 	if w := do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body3); w.Code != 500 {
 		t.Fatalf("rem read code=%d", w.Code)
 	}
-	// mark-all-as-read
-	body4 := url.Values{"s": {"feed/" + u}}
-	if w := do(t, mux, "POST", "/reader/api/0/mark-all-as-read", tok, body4); w.Code != 500 {
+	// edit-tag: add read on a *different* item.
+	body1 := url.Values{"i": {itemID("freshhash000000000000")}, "a": {stateReadID}}
+	if w := do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body1); w.Code != 500 {
+		t.Fatalf("add read code=%d", w.Code)
+	}
+	// mark-all-as-read against the (sole) feed: its lone entry is already
+	// read in memory, so we use a fresh feed with a fresh entry.
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: "https://other.example/feed", Title: "Other"})
+	// Can't AppendEntries here — chmod blocks file creation. Use a hash
+	// directly: pretend to mark-all by hitting an empty stream which now
+	// fails inside ListEntries (no current.ndjson in a dir we can't
+	// create). Easier: just hit the existing feed and exercise the
+	// already-read continue path → returns 200.
+	_ = u
+}
+
+func TestMarkAllAsReadSetReadFail(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypass")
+	}
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 1, "F")
+	if err := os.Chmod(st.Dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(st.Dir, 0o755) })
+	body := url.Values{"s": {"feed/" + u}}
+	if w := do(t, mux, "POST", "/reader/api/0/mark-all-as-read", tok, body); w.Code != 500 {
 		t.Fatalf("mark-all code=%d", w.Code)
 	}
 }
