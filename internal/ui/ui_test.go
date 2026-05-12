@@ -398,6 +398,172 @@ func (b berr) Error() string { return string(b) }
 
 var errBoom = berr("boom")
 
+func TestAllUnread(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 3)
+	es, _ := st.ListEntries(store.FeedHash(u))
+	st.SetRead(es[0].Hash, true) // 2 unread left
+	w := do(mux, req("GET", "/ui/all", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	body := w.Body.String()
+	// 2 unread <li> rows
+	if strings.Count(body, `<li id="entry-`) != 2 {
+		t.Fatalf("expected 2 entries, body=%s", body)
+	}
+	// Mark-all button present
+	if !strings.Contains(body, "mark all read") {
+		t.Fatal("missing mark-all button")
+	}
+}
+
+func TestStarredView(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 3)
+	es, _ := st.ListEntries(store.FeedHash(u))
+	st.SetStarred(es[0].Hash, true)
+	st.SetStarred(es[1].Hash, true)
+	w := do(mux, req("GET", "/ui/starred", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if strings.Count(w.Body.String(), `<li id="entry-`) != 2 {
+		t.Fatalf("expected 2 starred, body=%s", w.Body.String())
+	}
+}
+
+func TestCrossFeedLoadErr(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.loadErr = errBoom
+	for _, p := range []string{"/ui/all", "/ui/starred"} {
+		w := do(mux, req("GET", p, tok, nil))
+		if w.Code != 500 {
+			t.Fatalf("%s code=%d", p, w.Code)
+		}
+	}
+}
+
+func TestCrossFeedListErr(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	// Corrupt entries so ListEntries fails inside the cross-feed loop.
+	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
+	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644)
+	for _, p := range []string{"/ui/all", "/ui/starred"} {
+		w := do(mux, req("GET", p, tok, nil))
+		if w.Code != 500 {
+			t.Fatalf("%s code=%d", p, w.Code)
+		}
+	}
+}
+
+func TestMarkAllReadFeed(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 3)
+	w := do(mux, req("POST", "/ui/mark-all-read?scope=feed&id="+u, tok, nil))
+	if w.Code != 303 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	for _, e := range mustList(t, st, u) {
+		if !st.EntryState(e.Hash).Read {
+			t.Fatalf("not read: %s", e.Hash)
+		}
+	}
+}
+
+func TestMarkAllReadAll(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 2)
+	w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil))
+	if w.Code != 303 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	for _, e := range mustList(t, st, u) {
+		if !st.EntryState(e.Hash).Read {
+			t.Fatalf("not read: %s", e.Hash)
+		}
+	}
+	// idempotent: second call leaves entries read (and exercises the
+	// already-read continue branch).
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 303 {
+		t.Fatalf("second code=%d", w.Code)
+	}
+}
+
+func TestMarkAllReadBadInputs(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	if w := do(mux, req("GET", "/ui/mark-all-read?scope=feed&id=x", tok, nil)); w.Code != 405 {
+		t.Fatalf("method=%d", w.Code)
+	}
+	if w := do(mux, req("POST", "/ui/mark-all-read", tok, nil)); w.Code != 400 {
+		t.Fatalf("scope=%d", w.Code)
+	}
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=feed", tok, nil)); w.Code != 400 {
+		t.Fatalf("missing id=%d", w.Code)
+	}
+}
+
+func TestMarkAllReadErrors(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	// Load err
+	op.loadErr = errBoom
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
+		t.Fatalf("load=%d", w.Code)
+	}
+	op.loadErr = nil
+	// ListEntries err (feed scope)
+	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
+	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644)
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=feed&id="+u, tok, nil)); w.Code != 500 {
+		t.Fatalf("feed list err=%d", w.Code)
+	}
+	// ListEntries err (all scope)
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
+		t.Fatalf("all list err=%d", w.Code)
+	}
+}
+
+func TestMarkAllReadSetReadErrFeed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypass")
+	}
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	if err := os.Chmod(st.Dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(st.Dir, 0o755) })
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=feed&id="+u, tok, nil)); w.Code != 500 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestMarkAllReadSetReadErrAll(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypass")
+	}
+	_, mux, st, op, tok, _ := fixture(t)
+	seed(t, st, op, 1)
+	if err := os.Chmod(st.Dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(st.Dir, 0o755) })
+	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func mustList(t *testing.T, st *store.Store, u string) []store.Entry {
+	t.Helper()
+	es, err := st.ListEntries(store.FeedHash(u))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return es
+}
+
 func TestStaticJSContentType(t *testing.T) {
 	_, mux, _, _, _, _ := fixture(t)
 	w := do(mux, req("GET", "/ui/static/htmx.min.js", "", nil))

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/kfet/harborrs/internal/auth"
@@ -108,9 +109,12 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/static/", s.handleStatic)
 	mux.HandleFunc("/ui/", s.requireSession(s.handleHome))
 	mux.HandleFunc("/ui/feed", s.requireSession(s.handleFeed))
+	mux.HandleFunc("/ui/all", s.requireSession(s.handleAllUnread))
+	mux.HandleFunc("/ui/starred", s.requireSession(s.handleStarred))
 	mux.HandleFunc("/ui/entry", s.requireSession(s.handleEntry))
 	mux.HandleFunc("/ui/entry/read", s.requireSession(s.handleSetRead))
 	mux.HandleFunc("/ui/entry/star", s.requireSession(s.handleSetStarred))
+	mux.HandleFunc("/ui/mark-all-read", s.requireSession(s.handleMarkAllRead))
 	return mux
 }
 
@@ -224,10 +228,20 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 type feedEntry struct {
-	Hash    string
-	Title   string
-	Read    bool
-	Starred bool
+	Hash      string
+	Title     string
+	Read      bool
+	Starred   bool
+	FeedTitle string // only set on cross-feed views
+}
+
+type entryListData struct {
+	baseData
+	Heading     string
+	Entries     []feedEntry
+	ShowMarkAll bool
+	Scope       string // "feed" | "all" | "starred"
+	ScopeID     string // feed URL when Scope == "feed"
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -256,12 +270,126 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		st := s.Store.EntryState(e.Hash)
 		entries = append(entries, feedEntry{Hash: e.Hash, Title: e.Title, Read: st.Read, Starred: st.Starred})
 	}
-	data := struct {
-		baseData
-		Feed    *store.Feed
-		Entries []feedEntry
-	}{s.base(r), feed, entries}
-	s.render(w, "feed", data)
+	s.render(w, "feed", entryListData{
+		baseData:    s.base(r),
+		Heading:     feed.Title,
+		Entries:     entries,
+		ShowMarkAll: true,
+		Scope:       "feed",
+		ScopeID:     urlS,
+	})
+}
+
+// handleAllUnread renders every unread entry across every feed, newest
+// first, with a small feed-title tag on each row.
+func (s *Server) handleAllUnread(w http.ResponseWriter, r *http.Request) {
+	s.crossFeed(w, r, "unread", "all", func(st store.EntryState) bool { return !st.Read })
+}
+
+// handleStarred renders every starred entry across every feed.
+func (s *Server) handleStarred(w http.ResponseWriter, r *http.Request) {
+	s.crossFeed(w, r, "starred", "starred", func(st store.EntryState) bool { return st.Starred })
+}
+
+type entryWithFeed struct {
+	entry     store.Entry
+	feedTitle string
+}
+
+func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scope string, keep func(store.EntryState) bool) {
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var all []entryWithFeed
+	for _, f := range op.Feeds {
+		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, e := range es {
+			if keep(s.Store.EntryState(e.Hash)) {
+				all = append(all, entryWithFeed{entry: e, feedTitle: f.Title})
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].entry.Published.After(all[j].entry.Published)
+	})
+	entries := make([]feedEntry, 0, len(all))
+	for _, x := range all {
+		st := s.Store.EntryState(x.entry.Hash)
+		entries = append(entries, feedEntry{
+			Hash:      x.entry.Hash,
+			Title:     x.entry.Title,
+			Read:      st.Read,
+			Starred:   st.Starred,
+			FeedTitle: x.feedTitle,
+		})
+	}
+	s.render(w, "feed", entryListData{
+		baseData:    s.base(r),
+		Heading:     heading,
+		Entries:     entries,
+		ShowMarkAll: scope == "all",
+		Scope:       scope,
+	})
+}
+
+// handleMarkAllRead marks every entry in a given scope as read. Scopes:
+// "feed" (requires id=feed-url), "all" (every unread entry across all
+// feeds).
+func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	scope := r.URL.Query().Get("scope")
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	mark := func(feedURL string) error {
+		es, err := s.Store.ListEntries(store.FeedHash(feedURL))
+		if err != nil {
+			return err
+		}
+		for _, e := range es {
+			if s.Store.EntryState(e.Hash).Read {
+				continue
+			}
+			if err := s.Store.SetRead(e.Hash, true); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	switch scope {
+	case "feed":
+		u := r.URL.Query().Get("id")
+		if u == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		if err := mark(u); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/ui/feed?id="+u, http.StatusSeeOther)
+	case "all":
+		for _, f := range op.Feeds {
+			if err := mark(f.XMLURL); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		http.Redirect(w, r, "/ui/all", http.StatusSeeOther)
+	default:
+		http.Error(w, "bad scope", http.StatusBadRequest)
+	}
 }
 
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {

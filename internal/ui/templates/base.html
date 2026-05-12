@@ -12,6 +12,11 @@
 <header>
 <a href="/ui/" class="brand">harborrs</a>
 {{if .User}}
+<nav class="nav">
+<a href="/ui/">feeds</a>
+<a href="/ui/all">unread</a>
+<a href="/ui/starred">starred</a>
+</nav>
 <form method="POST" action="/ui/logout" class="logout"><button type="submit">logout</button></form>
 {{end}}
 </header>
