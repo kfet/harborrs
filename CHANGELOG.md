@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI now serves htmx from the embedded asset (`/ui/static/htmx.min.js`)
+  instead of an unpkg.com CDN reference. The previous CDN reference
+  violated the AGENTS.md requirement that templates and static assets
+  ship via `go:embed`, and broke the UI on offline / air-gapped hosts.
+
 ## [0.1.0] - 2026-05-12
 
 ### Added

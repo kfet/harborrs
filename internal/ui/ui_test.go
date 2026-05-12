@@ -400,7 +400,7 @@ var errBoom = berr("boom")
 
 func TestStaticJSContentType(t *testing.T) {
 	_, mux, _, _, _, _ := fixture(t)
-	w := do(mux, req("GET", "/ui/static/htmx.js", "", nil))
+	w := do(mux, req("GET", "/ui/static/htmx.min.js", "", nil))
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("js: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
