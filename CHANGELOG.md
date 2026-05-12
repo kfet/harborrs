@@ -4,12 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Web UI: cross-feed views `/ui/all` (unread) and `/ui/starred`.
+- Web UI: mark-all-read button on per-feed and `/ui/all` pages.
+- Web UI: top nav linking feeds / unread / starred.
+- Web UI: read/star toggle buttons on the single-entry view, with htmx
+  fragment swap to update the panel in place.
+- Web UI: add-feed form and per-feed remove button on the home page.
+
 ### Fixed
 
 - Web UI now serves htmx from the embedded asset (`/ui/static/htmx.min.js`)
   instead of an unpkg.com CDN reference. The previous CDN reference
   violated the AGENTS.md requirement that templates and static assets
   ship via `go:embed`, and broke the UI on offline / air-gapped hosts.
+- `store.setFlag` no longer mutates in-memory read/starred state when
+  the state-log persist fails; the in-memory and on-disk views now
+  stay in sync across crashes.
 
 ## [0.1.0] - 2026-05-12
 

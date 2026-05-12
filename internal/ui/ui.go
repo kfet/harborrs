@@ -109,6 +109,8 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/static/", s.handleStatic)
 	mux.HandleFunc("/ui/", s.requireSession(s.handleHome))
 	mux.HandleFunc("/ui/feed", s.requireSession(s.handleFeed))
+	mux.HandleFunc("/ui/feed/add", s.requireSession(s.handleFeedAdd))
+	mux.HandleFunc("/ui/feed/remove", s.requireSession(s.handleFeedRemove))
 	mux.HandleFunc("/ui/all", s.requireSession(s.handleAllUnread))
 	mux.HandleFunc("/ui/starred", s.requireSession(s.handleStarred))
 	mux.HandleFunc("/ui/entry", s.requireSession(s.handleEntry))
@@ -338,6 +340,67 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 	})
 }
 
+// handleFeedAdd subscribes to a new feed.
+func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := strings.TrimSpace(r.FormValue("url"))
+	if u == "" {
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
+	}
+	title := strings.TrimSpace(r.FormValue("title"))
+	folder := strings.TrimSpace(r.FormValue("folder"))
+	if title == "" {
+		title = u
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	op.Add(store.Feed{XMLURL: u, Title: title, Folder: folder})
+	if err := s.OPML.Save(op); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+}
+
+// handleFeedRemove unsubscribes.
+func (s *Server) handleFeedRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := strings.TrimSpace(r.FormValue("url"))
+	if u == "" {
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	op.Remove(u)
+	if err := s.OPML.Save(op); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+}
+
 // handleMarkAllRead marks every entry in a given scope as read. Scopes:
 // "feed" (requires id=feed-url), "all" (every unread entry across all
 // feeds).
@@ -417,9 +480,12 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 				}
 				data := struct {
 					baseData
-					Entry store.Entry
-					Body  template.HTML
-				}{s.base(r), e, template.HTML(body)}
+					Entry     store.Entry
+					Body      template.HTML
+					State     store.EntryState
+					FeedURL   string
+					FeedTitle string
+				}{s.base(r), e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 				s.render(w, "entry", data)
 				return
 			}
@@ -453,12 +519,13 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Find the entry to re-render its row.
+	// Find the entry to re-render its row (or full detail).
 	op, err := s.OPML.Load()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	view := r.URL.Query().Get("view")
 	for _, f := range op.Feeds {
 		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
 		if err != nil {
@@ -468,8 +535,23 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		for _, e := range es {
 			if e.Hash == hash {
 				st := s.Store.EntryState(hash)
-				row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				if view == "detail" {
+					body := e.Content
+					if body == "" {
+						body = e.Summary
+					}
+					data := struct {
+						Entry     store.Entry
+						Body      template.HTML
+						State     store.EntryState
+						FeedURL   string
+						FeedTitle string
+					}{e, template.HTML(body), st, f.XMLURL, f.Title}
+					_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
+					return
+				}
+				row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
 				_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
 				return
 			}

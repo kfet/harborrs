@@ -3,11 +3,28 @@
 {{define "content"}}
 <section class="home">
 <h1>feeds <small>({{.Total}} unread)</small></h1>
+
+<form method="POST" action="/ui/feed/add" class="add-feed">
+<input type="url" name="url" placeholder="https://example.com/feed.xml" required>
+<input type="text" name="title" placeholder="title (optional)">
+<input type="text" name="folder" placeholder="folder (optional)">
+<button type="submit">add feed</button>
+</form>
+
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
 <ul class="feeds">
 {{range .Feeds}}
-<li><a href="/ui/feed?id={{.URL}}">{{.Title}}</a> <span class="count">{{.Unread}}</span></li>
+<li>
+<a href="/ui/feed?id={{.URL}}">{{.Title}}</a>
+<span class="count">{{.Unread}}</span>
+<form method="POST" action="/ui/feed/remove" class="inline" onsubmit="return confirm('remove this feed?');">
+<input type="hidden" name="url" value="{{.URL}}">
+<button type="submit" class="remove">×</button>
+</form>
+</li>
 {{else}}
-<li class="empty">no feeds yet — import an OPML file with <code>harborrs import</code></li>
+<li class="empty">no feeds yet — add one above, or import an OPML file with <code>harborrs import</code></li>
 {{end}}
 </ul>
 </section>

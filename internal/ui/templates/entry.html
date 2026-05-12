@@ -1,9 +1,17 @@
 {{define "entry"}}{{template "base" .}}{{end}}
 {{define "title"}}{{.Entry.Title}} — harborrs{{end}}
-{{define "content"}}
-<article class="entry-full">
+{{define "content"}}{{template "entry-detail" .}}{{end}}
+
+{{define "entry-detail"}}
+<article id="entry-detail-{{.Entry.Hash}}" class="entry-full {{if .State.Read}}read{{end}}{{if .State.Starred}} starred{{end}}">
 <h1>{{.Entry.Title}}</h1>
-<p class="meta">{{.Entry.Author}} · {{.Entry.Published.Format "2006-01-02 15:04"}} · <a href="{{.Entry.Link}}">source</a></p>
+<p class="meta">
+{{with .Entry.Author}}{{.}} · {{end}}{{.Entry.Published.Format "2006-01-02 15:04"}} · <a href="{{.Entry.Link}}">source</a>{{if .FeedURL}} · <a href="/ui/feed?id={{.FeedURL}}">{{.FeedTitle}}</a>{{end}}
+</p>
+<div class="actions">
+<button hx-post="/ui/entry/read?id={{.Entry.Hash}}&state={{if .State.Read}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML">{{if .State.Read}}mark unread{{else}}mark read{{end}}</button>
+<button hx-post="/ui/entry/star?id={{.Entry.Hash}}&state={{if .State.Starred}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML">{{if .State.Starred}}unstar{{else}}star{{end}}</button>
+</div>
 <div class="body">{{.Body}}</div>
 </article>
 {{end}}

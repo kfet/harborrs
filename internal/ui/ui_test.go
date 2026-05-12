@@ -564,6 +564,178 @@ func mustList(t *testing.T, st *store.Store, u string) []store.Entry {
 	return es
 }
 
+func TestEntryViewHasButtons(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	es, _ := st.ListEntries(store.FeedHash(u))
+	w := do(mux, req("GET", "/ui/entry?id="+es[0].Hash, tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "mark read") || !strings.Contains(body, "star") {
+		t.Fatalf("entry detail missing buttons: %s", body)
+	}
+	// feed back-link
+	if !strings.Contains(body, "Demo") {
+		t.Fatalf("entry detail missing feed link: %s", body)
+	}
+}
+
+func TestSetReadDetailView(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	es, _ := st.ListEntries(store.FeedHash(u))
+	h := es[0].Hash
+	w := do(mux, req("POST", "/ui/entry/read?id="+h+"&state=1&view=detail", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "entry-detail-"+h) {
+		t.Fatalf("expected detail fragment, got %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "mark unread") {
+		t.Fatalf("expected unread toggle: %s", w.Body.String())
+	}
+	// star toggle in detail view
+	w = do(mux, req("POST", "/ui/entry/star?id="+h+"&state=1&view=detail", tok, nil))
+	if !strings.Contains(w.Body.String(), "unstar") {
+		t.Fatalf("expected star: %s", w.Body.String())
+	}
+}
+
+func TestFeedAdd(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	form := url.Values{"url": {"https://new.example/feed"}, "title": {"New"}, "folder": {"News"}}
+	w := do(mux, req("POST", "/ui/feed/add", tok, form))
+	if w.Code != 303 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(op.op.Feeds) != 1 || op.op.Feeds[0].Folder != "News" {
+		t.Fatalf("feeds=%+v", op.op.Feeds)
+	}
+	// title defaults to url
+	form2 := url.Values{"url": {"https://other.example/feed"}}
+	if w := do(mux, req("POST", "/ui/feed/add", tok, form2)); w.Code != 303 {
+		t.Fatalf("default title code=%d", w.Code)
+	}
+	if op.op.Feeds[1].Title != "https://other.example/feed" {
+		t.Fatalf("title=%q", op.op.Feeds[1].Title)
+	}
+}
+
+func TestFeedAddErrors(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	// wrong method
+	if w := do(mux, req("GET", "/ui/feed/add", tok, nil)); w.Code != 405 {
+		t.Fatalf("method=%d", w.Code)
+	}
+	// missing url
+	if w := do(mux, req("POST", "/ui/feed/add", tok, url.Values{})); w.Code != 400 {
+		t.Fatalf("missing=%d", w.Code)
+	}
+	// load err
+	op.loadErr = errBoom
+	form := url.Values{"url": {"https://x/feed"}}
+	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 500 {
+		t.Fatalf("load=%d", w.Code)
+	}
+	op.loadErr = nil
+	op.saveErr = errBoom
+	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 500 {
+		t.Fatalf("save=%d", w.Code)
+	}
+}
+
+func TestFeedRemove(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	form := url.Values{"url": {"https://x/feed"}}
+	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 303 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if len(op.op.Feeds) != 0 {
+		t.Fatalf("not removed: %+v", op.op.Feeds)
+	}
+}
+
+func TestFeedRemoveErrors(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	if w := do(mux, req("GET", "/ui/feed/remove", tok, nil)); w.Code != 405 {
+		t.Fatalf("method=%d", w.Code)
+	}
+	if w := do(mux, req("POST", "/ui/feed/remove", tok, url.Values{})); w.Code != 400 {
+		t.Fatalf("missing=%d", w.Code)
+	}
+	op.loadErr = errBoom
+	form := url.Values{"url": {"x"}}
+	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 500 {
+		t.Fatalf("load=%d", w.Code)
+	}
+	op.loadErr = nil
+	op.saveErr = errBoom
+	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 500 {
+		t.Fatalf("save=%d", w.Code)
+	}
+}
+
+func TestSetReadDetailViewSummaryFallback(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := "https://nc.example/feed"
+	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "X"}}
+	now := time.Now().UTC()
+	st.AppendEntries(store.FeedHash(u), []store.Entry{
+		{GUID: "g", Link: "https://nc/x", Title: "T", Summary: "summ-only", Published: now, FetchedAt: now},
+	})
+	es, _ := st.ListEntries(store.FeedHash(u))
+	w := do(mux, req("POST", "/ui/entry/read?id="+es[0].Hash+"&state=1&view=detail", tok, nil))
+	if !strings.Contains(w.Body.String(), "summ-only") {
+		t.Fatalf("missing summary: %s", w.Body.String())
+	}
+}
+
+func TestFeedAddParseFormErr(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	// A POST with a malformed Content-Type: application/x-www-form-urlencoded
+	// but unparseable body triggers ParseForm error.
+	r := httptest.NewRequest("POST", "/ui/feed/add", strings.NewReader("%ZZ"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHomeShowsAddFormAndRemove(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "add feed") {
+		t.Fatalf("missing add form: %s", body)
+	}
+	if !strings.Contains(body, `name="url"`) {
+		t.Fatalf("missing url input: %s", body)
+	}
+	if !strings.Contains(body, "/ui/feed/remove") {
+		t.Fatalf("missing remove form: %s", body)
+	}
+}
+
+func TestFeedRemoveParseFormErr(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	r := httptest.NewRequest("POST", "/ui/feed/remove", strings.NewReader("%ZZ"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
 func TestStaticJSContentType(t *testing.T) {
 	_, mux, _, _, _, _ := fixture(t)
 	w := do(mux, req("GET", "/ui/static/htmx.min.js", "", nil))

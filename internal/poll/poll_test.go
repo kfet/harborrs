@@ -301,7 +301,9 @@ func TestRunRespectsContext(t *testing.T) {
 		io.WriteString(w, sampleRSS)
 	}))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	// Long enough timeout to guarantee the ticker fires at least once
+	// between tickOnce calls.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	feeds := func() []string { return []string{srv.URL} }
 	err := p.Run(ctx, feeds, 5*time.Millisecond)
