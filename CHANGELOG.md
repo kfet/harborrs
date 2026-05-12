@@ -16,3 +16,6 @@ All notable changes to this project will be documented in this file.
   (ETag / Last-Modified), 304 handling, exponential backoff on errors,
   `Retry-After` honouring on 429/503, and a simple `Run` loop ticking
   feeds whose `NextFetch` has passed.
+- `internal/auth`: single-user credential (stdlib SHA-256 salt-and-stretch),
+  opaque API + cookie-session token store persisted to `tokens.json`,
+  ClientLogin-style token extraction helpers.
