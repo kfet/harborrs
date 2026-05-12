@@ -12,3 +12,7 @@ All notable changes to this project will be documented in this file.
   hashing, NDJSON entry append with archive rollover, append-only state
   logs (read/starred) with periodic compaction, and per-feed conditional-
   GET state files.
+- `internal/poll`: feed poller — gofeed-based parsing, conditional GETs
+  (ETag / Last-Modified), 304 handling, exponential backoff on errors,
+  `Retry-After` honouring on 429/503, and a simple `Run` loop ticking
+  feeds whose `NextFetch` has passed.
