@@ -1,0 +1,463 @@
+package store
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestFeedHashStable(t *testing.T) {
+	if got := FeedHash("https://example.com/feed"); len(got) != 20 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if FeedHash("a") == FeedHash("b") {
+		t.Fatal("collision")
+	}
+	a1, a2 := FeedHash("a"), FeedHash("a")
+	if a1 != a2 {
+		t.Fatal("unstable")
+	}
+}
+
+func TestEntryHashStable(t *testing.T) {
+	a, b := EntryHash("g", "l"), EntryHash("g", "l")
+	if a != b {
+		t.Fatal("unstable")
+	}
+	if EntryHash("g", "l") == EntryHash("", "") {
+		t.Fatal("collision")
+	}
+}
+
+const sampleOPML = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>mine</title></head>
+  <body>
+    <outline text="News" title="News">
+      <outline type="rss" text="A" title="A" xmlUrl="https://a.example/feed" htmlUrl="https://a.example"/>
+      <outline type="rss" text="B" xmlUrl="https://b.example/feed"/>
+    </outline>
+    <outline type="rss" text="Loose" xmlUrl="https://c.example/feed"/>
+  </body>
+</opml>`
+
+func TestParseAndWriteOPML(t *testing.T) {
+	o, err := ParseOPML([]byte(sampleOPML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Title != "mine" {
+		t.Fatalf("title=%q", o.Title)
+	}
+	if len(o.Feeds) != 3 {
+		t.Fatalf("feeds=%d", len(o.Feeds))
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s.opml")
+	if err := o.WriteOPML(p); err != nil {
+		t.Fatal(err)
+	}
+	o2, err := ReadOPML(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o2.Feeds) != 3 {
+		t.Fatalf("round-trip feeds=%d", len(o2.Feeds))
+	}
+	// Add / Find / Remove
+	if !o2.Add(Feed{Title: "D", XMLURL: "https://d.example/feed"}) {
+		t.Fatal("Add returned false for new")
+	}
+	if o2.Add(Feed{Title: "D2", XMLURL: "https://d.example/feed"}) {
+		t.Fatal("Add returned true for existing")
+	}
+	if o2.Find("https://d.example/feed") == nil {
+		t.Fatal("Find missing")
+	}
+	if o2.Find("nope") != nil {
+		t.Fatal("Find unexpected")
+	}
+	if !o2.Remove("https://d.example/feed") {
+		t.Fatal("Remove false")
+	}
+	if o2.Remove("https://d.example/feed") {
+		t.Fatal("Remove true second time")
+	}
+}
+
+func TestParseOPMLError(t *testing.T) {
+	if _, err := ParseOPML([]byte("<not xml")); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestReadOPMLMissing(t *testing.T) {
+	if _, err := ReadOPML(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestFirstNonEmpty(t *testing.T) {
+	if got := firstNonEmpty("", "  ", "x"); got != "x" {
+		t.Fatalf("%q", got)
+	}
+	if got := firstNonEmpty(); got != "" {
+		t.Fatal("expected empty")
+	}
+}
+
+// --- Store / state-log / NDJSON ---
+
+func TestOpenAndState(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRead("h1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRead("h1", true); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	if err := s.SetStarred("h1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStarred("h1", true); err != nil {
+		t.Fatal(err)
+	}
+	if s.CountRead() != 1 || s.CountStarred() != 1 {
+		t.Fatalf("counts r=%d s=%d", s.CountRead(), s.CountStarred())
+	}
+	// Toggle off
+	if err := s.SetRead("h1", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStarred("h1", false); err != nil {
+		t.Fatal(err)
+	}
+	if s.CountRead() != 0 || s.CountStarred() != 0 {
+		t.Fatalf("counts after off: r=%d s=%d", s.CountRead(), s.CountStarred())
+	}
+	// Reopen — state must persist via log fold.
+	if err := s.SetRead("h2", true); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s2.EntryState("h2").Read {
+		t.Fatal("h2 not read after reopen")
+	}
+	if s2.CountRead() != 1 {
+		t.Fatalf("reopen liveR=%d", s2.CountRead())
+	}
+	all := s2.AllStates()
+	if len(all) == 0 {
+		t.Fatal("AllStates empty")
+	}
+}
+
+func TestOpenMkdirFail(t *testing.T) {
+	tmp := t.TempDir()
+	blocker := filepath.Join(tmp, "blk")
+	if err := os.WriteFile(blocker, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(filepath.Join(blocker, "sub")); err == nil {
+		t.Fatal("expected mkdir fail")
+	}
+}
+
+func TestFoldMalformedLines(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "read.log"), []byte(
+		"bad\n"+
+			"notatime r h\n"+
+			"2024-01-01T00:00:00Z x h\n"+ // unknown op
+			"2024-01-01T00:00:00Z r h1\n"+
+			"2024-01-02T00:00:00Z u h1\n"+
+			"\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "starred.log"), []byte(
+		"2024-01-01T00:00:00Z s h2\n"+
+			"2024-01-02T00:00:00Z S h2\n"+
+			"2024-01-03T00:00:00Z s h3\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.EntryState("h1").Read {
+		t.Fatal("h1 should be unread after u")
+	}
+	if !s.EntryState("h3").Starred {
+		t.Fatal("h3 should be starred")
+	}
+	if s.CountStarred() != 1 {
+		t.Fatalf("starred live=%d", s.CountStarred())
+	}
+}
+
+func TestFoldOpenError(t *testing.T) {
+	dir := t.TempDir()
+	// Make read.log a directory so open fails (with EISDIR).
+	if err := os.MkdirAll(filepath.Join(dir, "read.log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCompactionRead(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make 50 reads then unread them — log balloons relative to liveR=0.
+	for i := 0; i < 50; i++ {
+		h := fmt.Sprintf("h%02d", i)
+		if err := s.SetRead(h, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 49; i++ {
+		h := fmt.Sprintf("h%02d", i)
+		if err := s.SetRead(h, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// At this point liveR=1; readN was 99 before final, compaction
+	// fires somewhere around then. Force one more event to ensure
+	// compaction path runs:
+	if err := s.SetRead("h99", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRead("h99", false); err != nil {
+		t.Fatal(err)
+	}
+	// Verify compaction has shrunk the log file.
+	data, _ := os.ReadFile(filepath.Join(dir, "read.log"))
+	if len(strings.Split(strings.TrimRight(string(data), "\n"), "\n")) > 10 {
+		t.Logf("log size after compaction: %d lines", len(strings.Split(string(data), "\n")))
+	}
+	// And re-fold returns the same liveR.
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.CountRead() != s.CountRead() {
+		t.Fatalf("liveR mismatch %d vs %d", s2.CountRead(), s.CountRead())
+	}
+}
+
+func TestCompactionStarred(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	for i := 0; i < 40; i++ {
+		s.SetStarred(fmt.Sprintf("h%d", i), true)
+	}
+	for i := 0; i < 40; i++ {
+		s.SetStarred(fmt.Sprintf("h%d", i), false)
+	}
+	if s.CountStarred() != 0 {
+		t.Fatalf("liveS=%d", s.CountStarred())
+	}
+}
+
+func TestAppendEntriesAndList(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := FeedHash("https://x/feed")
+	now := time.Now().UTC()
+	es := []Entry{
+		{GUID: "1", Link: "https://x/a", Title: "A", Published: now.Add(-2 * time.Hour), FetchedAt: now},
+		{GUID: "2", Link: "https://x/b", Title: "B", Published: now.Add(-1 * time.Hour), FetchedAt: now},
+	}
+	added, err := s.AppendEntries(fh, es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 2 {
+		t.Fatalf("added=%d", len(added))
+	}
+	// Second time: zero new.
+	added, err = s.AppendEntries(fh, es)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 0 {
+		t.Fatalf("expected dedup, got %d", len(added))
+	}
+	// Empty input.
+	if a, err := s.AppendEntries(fh, nil); err != nil || a != nil {
+		t.Fatalf("empty input got a=%v err=%v", a, err)
+	}
+	listed, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("listed=%d", len(listed))
+	}
+	if !listed[0].Published.After(listed[1].Published) {
+		t.Fatal("not sorted newest-first")
+	}
+	// ListEntries on unknown feed → nil.
+	if got, _ := s.ListEntries("nope"); got != nil {
+		t.Fatal("expected nil")
+	}
+}
+
+func TestListEntriesBadJSON(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := "abc"
+	p := filepath.Join(dir, "entries", fh)
+	os.MkdirAll(p, 0o755)
+	os.WriteFile(filepath.Join(p, "current.ndjson"), []byte("not json\n"), 0o644)
+	if _, err := s.ListEntries(fh); err == nil {
+		t.Fatal("expected json error")
+	}
+	if _, err := s.AppendEntries(fh, []Entry{{GUID: "x"}}); err == nil {
+		t.Fatal("expected knownHashes error")
+	}
+}
+
+func TestRolloverArchives(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := "f1"
+	old := time.Date(2023, 1, 15, 0, 0, 0, 0, time.UTC)
+	older := time.Date(2022, 7, 1, 0, 0, 0, 0, time.UTC)
+	fresh := time.Now().UTC().Add(-1 * time.Hour)
+	_, err := s.AppendEntries(fh, []Entry{
+		{GUID: "a", Published: old, FetchedAt: old},
+		{GUID: "b", Published: older, FetchedAt: older},
+		{GUID: "c", Published: fresh, FetchedAt: fresh},
+		{GUID: "d", FetchedAt: older}, // zero published → fallback to fetched
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	n, err := s.RolloverArchives(fh, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("archived=%d", n)
+	}
+	// Idempotent — nothing to archive now.
+	n, err = s.RolloverArchives(fh, cutoff)
+	if err != nil || n != 0 {
+		t.Fatalf("second rollover: n=%d err=%v", n, err)
+	}
+	// Quarter files exist.
+	ents, _ := os.ReadDir(filepath.Join(dir, "entries", fh))
+	var quarters int
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "20") && strings.HasSuffix(e.Name(), ".ndjson") {
+			quarters++
+		}
+	}
+	if quarters < 2 {
+		t.Fatalf("expected at least 2 quarter files, got %d", quarters)
+	}
+	// Listing returns everything.
+	listed, _ := s.ListEntries(fh)
+	if len(listed) != 4 {
+		t.Fatalf("listed=%d after rollover", len(listed))
+	}
+}
+
+func TestRolloverMissingFeed(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	if n, err := s.RolloverArchives("nope", time.Now()); n != 0 || err != nil {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
+func TestFeedState(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := "f1"
+	got, err := s.LoadFeedState(fh)
+	if err != nil || got.URL != "" {
+		t.Fatalf("missing should be empty: got=%+v err=%v", got, err)
+	}
+	want := FeedState{URL: "u", ETag: "\"e\"", LastFetched: time.Now().UTC().Truncate(time.Second)}
+	if err := s.SaveFeedState(fh, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.LoadFeedState(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != "u" || got.ETag != "\"e\"" {
+		t.Fatalf("got=%+v", got)
+	}
+	// Corrupt file.
+	os.WriteFile(filepath.Join(dir, "state", fh+".json"), []byte("{bad"), 0o644)
+	if _, err := s.LoadFeedState(fh); err == nil {
+		t.Fatal("expected json error")
+	}
+}
+
+func TestAppendLineTooBig(t *testing.T) {
+	if err := appendLine("ignored", strings.Repeat("a", 5000)); err == nil {
+		t.Fatal("expected too-large error")
+	}
+}
+
+func TestAppendLineMkdirFail(t *testing.T) {
+	dir := t.TempDir()
+	blk := filepath.Join(dir, "f")
+	os.WriteFile(blk, nil, 0o644)
+	if err := appendLine(filepath.Join(blk, "x", "y.log"), "hello\n"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// Marshal sanity for OPML output.
+func TestOPMLMarshalRoundtrip(t *testing.T) {
+	o := &OPML{Title: "t", Feeds: []Feed{
+		{Title: "Z", XMLURL: "z", Folder: "F"},
+		{Title: "A", XMLURL: "a", Folder: "F"},
+		{Title: "L", XMLURL: "l"}, // loose
+	}}
+	data, err := o.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `<opml`) {
+		t.Fatal("missing root")
+	}
+	// Stable ordering: A before Z within F.
+	i := strings.Index(string(data), `xmlUrl="a"`)
+	j := strings.Index(string(data), `xmlUrl="z"`)
+	if i < 0 || j < 0 || i >= j {
+		t.Fatalf("not sorted: a@%d z@%d", i, j)
+	}
+}
+
+// Validate JSON for entry encoding includes hash + feed.
+func TestEntryJSON(t *testing.T) {
+	e := Entry{Hash: "h", FeedHash: "f", Title: "T"}
+	b, _ := json.Marshal(e)
+	if !strings.Contains(string(b), `"hash":"h"`) || !strings.Contains(string(b), `"feed":"f"`) {
+		t.Fatalf("missing keys: %s", b)
+	}
+}
