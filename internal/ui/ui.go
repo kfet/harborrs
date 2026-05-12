@@ -1,0 +1,386 @@
+// Package ui implements the embedded htmx web UI.
+//
+// Templates are embedded via `//go:embed templates/*.html`. On startup,
+// any matching files in `<configDir>/overrides/templates/*.html` are
+// parsed *after* the embedded set, so user files shadow embedded ones
+// by name. Likewise, `<configDir>/overrides/theme.css` (if present) is
+// served at `/ui/static/theme.css` and loaded after the bundled style.
+package ui
+
+import (
+	"embed"
+	"html/template"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/kfet/harborrs/internal/auth"
+	"github.com/kfet/harborrs/internal/store"
+)
+
+//go:embed templates/*.html
+var embeddedTemplates embed.FS
+
+//go:embed static/*
+var embeddedStatic embed.FS
+
+// OPMLProvider is the same shape used by internal/reader.
+type OPMLProvider interface {
+	Load() (*store.OPML, error)
+	Save(*store.OPML) error
+}
+
+// Server is the htmx UI HTTP surface. Construct via New and mount with
+// Routes(mux).
+type Server struct {
+	Store     *store.Store
+	Auth      *auth.Store
+	OPML      OPMLProvider
+	Theme     string
+	Overrides string // base config dir; "overrides/" is expected underneath
+	Secure    bool   // set Secure flag on session cookies (https deployments)
+
+	// pages maps page name -> a fully-parsed template tree rooted at
+	// `base`. Per-page trees keep title/content blocks isolated.
+	pages map[string]*template.Template
+}
+
+// New builds a UI server. Theme defaults to "light".
+func New(s *store.Store, a *auth.Store, o OPMLProvider, theme, overrides string) (*Server, error) {
+	if theme == "" {
+		theme = "light"
+	}
+	srv := &Server{Store: s, Auth: a, OPML: o, Theme: theme, Overrides: overrides}
+	if err := srv.loadTemplates(); err != nil {
+		return nil, err
+	}
+	return srv, nil
+}
+
+// pageNames are the per-page template files we expect to find under
+// templates/ (besides base.html, which is the shared layout).
+var pageNames = []string{"login", "home", "feed", "entry"}
+
+// pageExtra files (beyond base.html) parsed into each page. Override in
+// tests to trigger ParseFS error paths.
+var pageExtra = func(name string) []string {
+	return []string{"templates/base.html", "templates/" + name + ".html"}
+}
+
+func (s *Server) loadTemplates() error {
+	// Gather override files (if any).
+	var overrideFiles []string
+	if s.Overrides != "" {
+		dir := filepath.Join(s.Overrides, "overrides", "templates")
+		matches, err := filepath.Glob(filepath.Join(dir, "*.html"))
+		if err != nil {
+			return err
+		}
+		overrideFiles = matches
+	}
+	pages := make(map[string]*template.Template, len(pageNames))
+	for _, name := range pageNames {
+		t, err := template.New(name).ParseFS(embeddedTemplates, pageExtra(name)...)
+		if err != nil {
+			return err
+		}
+		// Apply override files in stable order. ParseFiles re-parses
+		// definitions on the same set, so user files shadow embedded
+		// ones by name.
+		if len(overrideFiles) > 0 {
+			if _, err := t.ParseFiles(overrideFiles...); err != nil {
+				return err
+			}
+		}
+		pages[name] = t
+	}
+	// entryrow is a fragment used by toggle handlers; it lives in feed.html.
+	s.pages = pages
+	return nil
+}
+
+// Routes registers UI endpoints on mux and returns the same mux for
+// chaining.
+func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
+	mux.HandleFunc("/ui/login", s.handleLogin)
+	mux.HandleFunc("/ui/logout", s.handleLogout)
+	mux.HandleFunc("/ui/static/", s.handleStatic)
+	mux.HandleFunc("/ui/", s.requireSession(s.handleHome))
+	mux.HandleFunc("/ui/feed", s.requireSession(s.handleFeed))
+	mux.HandleFunc("/ui/entry", s.requireSession(s.handleEntry))
+	mux.HandleFunc("/ui/entry/read", s.requireSession(s.handleSetRead))
+	mux.HandleFunc("/ui/entry/star", s.requireSession(s.handleSetStarred))
+	return mux
+}
+
+func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.Auth.CheckSession(auth.SessionFromRequest(r)) {
+			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+			return
+		}
+		h(w, r)
+	}
+}
+
+// --- pages ---
+
+type baseData struct {
+	Theme    string
+	User     string
+	ExtraCSS string
+	Error    string
+}
+
+func (s *Server) base(r *http.Request) baseData {
+	d := baseData{Theme: s.Theme}
+	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
+		d.User = s.Auth.Cfg.Username
+	}
+	if s.Overrides != "" {
+		if _, err := os.Stat(filepath.Join(s.Overrides, "overrides", "theme.css")); err == nil {
+			d.ExtraCSS = "/ui/static/theme.css"
+		}
+	}
+	return d
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.render(w, "login", struct {
+			baseData
+		}{s.base(r)})
+	case http.MethodPost:
+		_ = r.ParseForm()
+		u, p := r.FormValue("username"), r.FormValue("password")
+		tok, err := s.Auth.IssueSession(u, p)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			d := s.base(r)
+			d.Error = "invalid credentials"
+			s.render(w, "login", struct{ baseData }{d})
+			return
+		}
+		auth.SetSessionCookie(w, tok, s.Secure)
+		http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	tok := auth.SessionFromRequest(r)
+	if tok != "" {
+		_ = s.Auth.RevokeSession(tok)
+	}
+	auth.ClearSessionCookie(w)
+	http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+}
+
+type homeFeed struct {
+	Title  string
+	URL    string
+	Unread int
+}
+
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	// Only the exact /ui/ path is the home; reject everything else under
+	// /ui/ that isn't handled explicitly.
+	if r.URL.Path != "/ui/" {
+		http.NotFound(w, r)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	feeds := make([]homeFeed, 0, len(op.Feeds))
+	total := 0
+	for _, f := range op.Feeds {
+		fh := store.FeedHash(f.XMLURL)
+		es, err := s.Store.ListEntries(fh)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		count := 0
+		for _, e := range es {
+			if !s.Store.EntryState(e.Hash).Read {
+				count++
+			}
+		}
+		total += count
+		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count})
+	}
+	data := struct {
+		baseData
+		Feeds []homeFeed
+		Total int
+	}{s.base(r), feeds, total}
+	s.render(w, "home", data)
+}
+
+type feedEntry struct {
+	Hash    string
+	Title   string
+	Read    bool
+	Starred bool
+}
+
+func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
+	urlS := r.URL.Query().Get("id")
+	if urlS == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	feed := op.Find(urlS)
+	if feed == nil {
+		http.NotFound(w, r)
+		return
+	}
+	es, err := s.Store.ListEntries(store.FeedHash(urlS))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entries := make([]feedEntry, 0, len(es))
+	for _, e := range es {
+		st := s.Store.EntryState(e.Hash)
+		entries = append(entries, feedEntry{Hash: e.Hash, Title: e.Title, Read: st.Read, Starred: st.Starred})
+	}
+	data := struct {
+		baseData
+		Feed    *store.Feed
+		Entries []feedEntry
+	}{s.base(r), feed, entries}
+	s.render(w, "feed", data)
+}
+
+func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
+	hash := r.URL.Query().Get("id")
+	if hash == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, f := range op.Feeds {
+		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, e := range es {
+			if e.Hash == hash {
+				body := e.Content
+				if body == "" {
+					body = e.Summary
+				}
+				data := struct {
+					baseData
+					Entry store.Entry
+					Body  template.HTML
+				}{s.base(r), e, template.HTML(body)}
+				s.render(w, "entry", data)
+				return
+			}
+		}
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleSetRead(w http.ResponseWriter, r *http.Request) {
+	s.toggleFlag(w, r, true)
+}
+func (s *Server) handleSetStarred(w http.ResponseWriter, r *http.Request) {
+	s.toggleFlag(w, r, false)
+}
+
+func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool) {
+	hash := r.URL.Query().Get("id")
+	state := r.URL.Query().Get("state")
+	if hash == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	on := state == "1"
+	var err error
+	if isRead {
+		err = s.Store.SetRead(hash, on)
+	} else {
+		err = s.Store.SetStarred(hash, on)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Find the entry to re-render its row.
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, f := range op.Feeds {
+		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, e := range es {
+			if e.Hash == hash {
+				st := s.Store.EntryState(hash)
+				row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
+				return
+			}
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// handleStatic serves bundled CSS / overrides theme.css.
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/ui/static/")
+	if name == "theme.css" && s.Overrides != "" {
+		p := filepath.Join(s.Overrides, "overrides", "theme.css")
+		http.ServeFile(w, r, p)
+		return
+	}
+	data, err := embeddedStatic.ReadFile("static/" + name)
+	if err != nil {
+		// embed.FS.ReadFile only returns NotExist for missing files.
+		http.NotFound(w, r)
+		return
+	}
+	switch {
+	case strings.HasSuffix(name, ".css"):
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case strings.HasSuffix(name, ".js"):
+		w.Header().Set("Content-Type", "application/javascript")
+	}
+	w.Write(data)
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	t, ok := s.pages[name]
+	if !ok {
+		http.Error(w, "unknown template: "+name, http.StatusInternalServerError)
+		return
+	}
+	if err := t.ExecuteTemplate(w, name, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}

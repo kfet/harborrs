@@ -24,3 +24,8 @@ All notable changes to this project will be documented in this file.
   (per-feed/label/starred/read/reading-list), item id queries, item
   contents lookup, edit-tag (read/starred), mark-all-as-read with `ts`
   cutoff, unread-count.
+- `internal/ui`: htmx + html/template web UI — cookie-session login,
+  home (feed list with unread counts), per-feed entry list, single-entry
+  view, read/star toggles via hx-post returning fragment rows. Theme via
+  `[ui] theme` config (light/dark/sepia) and optional overrides at
+  `<config>/overrides/templates/*.html` and `<config>/overrides/theme.css`.

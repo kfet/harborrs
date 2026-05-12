@@ -1,0 +1,24 @@
+:root {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --accent: #2050b0;
+  --border: #ddd;
+}
+[data-theme="dark"] {
+  --bg: #181818; --fg: #ebebeb; --muted: #999; --accent: #6ba0ff; --border: #333;
+}
+[data-theme="sepia"] {
+  --bg: #f4ecd8; --fg: #3a2f1f; --muted: #7a6f5f; --accent: #884422; --border: #c8b89c;
+}
+html, body { background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; margin: 0; padding: 0; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 1.2em; border-bottom: 1px solid var(--border); }
+header .brand { font-weight: bold; color: var(--accent); text-decoration: none; }
+main { max-width: 60em; margin: 1em auto; padding: 0 1em; }
+.entry { padding: 0.4em 0; border-bottom: 1px solid var(--border); }
+.entry.read a { color: var(--muted); }
+.entry.starred::before { content: "★ "; color: gold; }
+.count { color: var(--muted); margin-left: 0.5em; }
+.login form { display: flex; flex-direction: column; gap: 0.5em; max-width: 18em; }
+.err { color: #c00; }
+button { cursor: pointer; }

@@ -1,0 +1,13 @@
+{{define "login"}}{{template "base" .}}{{end}}
+{{define "title"}}sign in — harborrs{{end}}
+{{define "content"}}
+<section class="login">
+<h1>sign in</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="POST" action="/ui/login">
+<label>username <input type="text" name="username" autocomplete="username"></label>
+<label>password <input type="password" name="password" autocomplete="current-password"></label>
+<button type="submit">sign in</button>
+</form>
+</section>
+{{end}}

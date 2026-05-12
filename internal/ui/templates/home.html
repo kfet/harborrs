@@ -1,0 +1,14 @@
+{{define "home"}}{{template "base" .}}{{end}}
+{{define "title"}}feeds — harborrs{{end}}
+{{define "content"}}
+<section class="home">
+<h1>feeds <small>({{.Total}} unread)</small></h1>
+<ul class="feeds">
+{{range .Feeds}}
+<li><a href="/ui/feed?id={{.URL}}">{{.Title}}</a> <span class="count">{{.Unread}}</span></li>
+{{else}}
+<li class="empty">no feeds yet — import an OPML file with <code>harborrs import</code></li>
+{{end}}
+</ul>
+</section>
+{{end}}

@@ -1,0 +1,9 @@
+{{define "entry"}}{{template "base" .}}{{end}}
+{{define "title"}}{{.Entry.Title}} — harborrs{{end}}
+{{define "content"}}
+<article class="entry-full">
+<h1>{{.Entry.Title}}</h1>
+<p class="meta">{{.Entry.Author}} · {{.Entry.Published.Format "2006-01-02 15:04"}} · <a href="{{.Entry.Link}}">source</a></p>
+<div class="body">{{.Body}}</div>
+</article>
+{{end}}
