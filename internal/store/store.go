@@ -165,19 +165,21 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 	now := s.now().UTC()
 	var op byte
 	var path string
+	// Compute the mutation but DO NOT apply it to in-memory state until
+	// the persist succeeds. Otherwise a persist failure leaves the
+	// reader showing a flag set that survives only until restart.
+	var newLiveR, newLiveS int = s.liveR, s.liveS
 	if isRead {
 		if st.Read == want {
 			return nil
 		}
 		if want {
 			op = 'r'
-			s.liveR++
+			newLiveR++
 		} else {
 			op = 'u'
-			s.liveR--
+			newLiveR--
 		}
-		st.Read = want
-		s.readN++
 		path = filepath.Join(s.Dir, "read.log")
 	} else {
 		if st.Starred == want {
@@ -185,21 +187,29 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 		}
 		if want {
 			op = 's'
-			s.liveS++
+			newLiveS++
 		} else {
 			op = 'S'
-			s.liveS--
+			newLiveS--
 		}
-		st.Starred = want
-		s.starN++
 		path = filepath.Join(s.Dir, "starred.log")
 	}
-	st.UpdatedAt = now
-	s.state[hash] = st
 	line := fmt.Sprintf("%s %c %s\n", now.Format(time.RFC3339), op, hash)
 	if err := appendLine(path, line); err != nil {
 		return err
 	}
+	// Persist succeeded — now apply the in-memory mutation.
+	if isRead {
+		st.Read = want
+		s.liveR = newLiveR
+		s.readN++
+	} else {
+		st.Starred = want
+		s.liveS = newLiveS
+		s.starN++
+	}
+	st.UpdatedAt = now
+	s.state[hash] = st
 	// Compact when log is 10× live set (and at least 32 entries to avoid churn).
 	if isRead && s.readN > 32 && s.readN > 10*s.liveR {
 		return s.compactLocked(path, 'r')
