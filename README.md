@@ -1,21 +1,99 @@
 # harborrs
 
-A small, single-binary self-hosted RSS server with a Google-Reader-compatible API.
+A small, single-binary self-hosted RSS server with a Google-Reader-
+compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
-**Status: pre-alpha, under construction.**
+## What it does
 
-## What it is
+- Polls RSS / Atom / JSON feeds (via `gofeed`), conditional GETs with
+  `ETag` / `Last-Modified`, exponential backoff on errors, `Retry-After`
+  honoured.
+- Stores subscriptions in OPML, entries as NDJSON in per-feed
+  directories with quarterly archives, read / starred state as append-
+  only logs that compact themselves.
+- Speaks the **Google Reader API** subset that
+  FreshRSS-compatible clients (Reeder Classic, NetNewsWire, Fiery Feeds,
+  ReadKit, Unread, lire, Newsify) talk: `ClientLogin`, token, user-info,
+  subscription list / edit / quickadd, tag list, stream contents, item
+  id queries, edit-tag, mark-all-as-read, unread-count.
+- Serves an embedded htmx web UI on the same port — login, home, per-
+  feed list, single-entry view, read / star toggles via hx-post.
+- Themeable via CSS-variable presets (`light`, `dark`, `sepia`) and
+  user overrides at `<data-dir>/overrides/templates/*.html` and
+  `<data-dir>/overrides/theme.css`.
+- Single static binary; subcommands `serve`, `import`, `poll-once`,
+  `hashpass`, `version`.
 
-- Polls RSS/Atom/JSON feeds, stores articles on disk as plain text (OPML + NDJSON).
-- Speaks a subset of the **Google Reader API** sufficient for Reeder, NetNewsWire,
-  FieryFeeds, ReadKit, Unread, lire, Newsify, and other FreshRSS-compatible clients.
-- Serves an embedded htmx-based web UI on the same port. Themeable via CSS/template
-  overrides in the config directory.
-- Single static binary, SQLite-free, stdlib-mostly.
+## Quick start
+
+```sh
+# build
+go build ./cmd/harborrs
+
+# generate a password hash for your config
+./harborrs hashpass 'my-strong-password'
+
+# write a minimal config
+mkdir -p ~/.local/share/harborrs
+cat > ~/.local/share/harborrs/config.json <<JSON
+{
+  "listen": ":8088",
+  "auth":   { "username": "me", "password_hash": "PASTE-FROM-hashpass" },
+  "ui":     { "theme": "dark" }
+}
+JSON
+
+# import your existing subscriptions
+./harborrs import subscriptions.opml
+
+# one-shot poll (handy for cron)
+./harborrs poll-once
+
+# serve (HTTP API + UI on :8088)
+./harborrs serve
+```
+
+Then point a FreshRSS-compatible client at `http://your-host:8088/` —
+log in with the same username / password you hashed above.
+
+The web UI lives at `/ui/`; visiting `/` redirects there.
+
+## Storage layout
+
+```
+<data-dir>/
+  config.json
+  subscriptions.opml
+  tokens.json
+  read.log
+  starred.log
+  state/<feed-hash>.json
+  entries/<feed-hash>/
+    current.ndjson
+    2024-Q3.ndjson
+    2024-Q4.ndjson
+  overrides/
+    templates/*.html     # user template overrides
+    theme.css            # user theme overrides
+```
 
 ## Design
 
-See [`AGENTS.md`](./AGENTS.md) for the project brief and constraints.
+See [`AGENTS.md`](./AGENTS.md) for the full design brief and
+constraints. Highlights:
+
+- Stdlib-mostly. The only third-party dependency is
+  `github.com/mmcdole/gofeed` for feed parsing.
+- `make all` runs gofmt + vet + staticcheck + race tests with a 100%
+  coverage gate (excluding entry-point and e2e via `.covignore`).
+- `make e2e` builds the binary and exercises the full surface end-to-
+  end against a canned RSS feed.
+
+## Status
+
+v0.1 — minimum viable single-user server. Roadmap: full-text search
+(SQLite FTS5 or bleve), more aggressive feed-shape coverage in the
+poller, optional multi-user.
 
 ## License
 

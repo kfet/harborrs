@@ -8,4 +8,4 @@ package harborrs
 // Version is the current build version, sourced from the VERSION file at
 // release time. Kept as a constant for runtime reporting; production
 // builds may override via -ldflags.
-const Version = "0.0.0"
+const Version = "0.1.0"
