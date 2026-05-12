@@ -1,0 +1,5 @@
+# Paths excluded from the coverage gate (regex over coverage-profile lines).
+# Keep this list small and well-justified.
+
+# Entry point — wiring, flag parsing, signal handling, no behaviour worth a test.
+github.com/kfet/harborrs/cmd/harborrs/main.go
