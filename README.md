@@ -28,7 +28,7 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
 ```sh
 # build
-go build ./cmd/harborrs
+go build -o harborrs ./cmd/harborrs
 
 # generate a password hash for your config
 ./harborrs hashpass 'my-strong-password'

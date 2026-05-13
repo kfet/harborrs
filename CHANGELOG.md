@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `make build` target produces `./harborrs`; wired into `make all` so a
+  plain `go build` failure is caught without relying on the e2e harness.
+- `make build-matrix` cross-compile check for linux/amd64, linux/arm64,
+  darwin/amd64, darwin/arm64 (CGO disabled, compile-only). Wired into
+  `make all`.
 - Web UI: cross-feed views `/ui/all` (unread) and `/ui/starred`.
 - Web UI: mark-all-read button on per-feed and `/ui/all` pages.
 - Web UI: top nav linking feeds / unread / starred.
