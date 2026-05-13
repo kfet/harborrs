@@ -16,6 +16,7 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 header .brand { font-weight: bold; color: var(--accent); text-decoration: none; }
 main { max-width: 60em; margin: 1em auto; padding: 0 1em; }
 .entry { padding: 0.4em 0; border-bottom: 1px solid var(--border); }
+.entry.kb-focus { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 3px solid var(--accent); padding-left: 0.5em; }
 .entry.read a { color: var(--muted); }
 .entry.starred::before { content: "★ "; color: gold; }
 .count { color: var(--muted); margin-left: 0.5em; }

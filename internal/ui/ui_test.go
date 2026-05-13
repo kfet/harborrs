@@ -742,6 +742,10 @@ func TestStaticJSContentType(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
 		t.Fatalf("js: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
+	w = do(mux, req("GET", "/ui/static/keys.js", "", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "harborrs keyboard nav") {
+		t.Fatalf("keys.js: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestHomeWithEntries(t *testing.T) {
