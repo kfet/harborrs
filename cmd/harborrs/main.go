@@ -8,6 +8,7 @@
 //	harborrs import [-data DIR] OPML
 //	harborrs poll-once [-data DIR]
 //	harborrs hashpass PASSWORD
+//	harborrs update [-check] [-version vX.Y.Z]
 //	harborrs version
 package main
 
@@ -30,6 +31,7 @@ import (
 	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/poll"
 	"github.com/kfet/harborrs/internal/reader"
+	"github.com/kfet/harborrs/internal/selfupdate"
 	"github.com/kfet/harborrs/internal/store"
 	uipkg "github.com/kfet/harborrs/internal/ui"
 )
@@ -47,7 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "version":
-		fmt.Fprintln(stdout, harborrs.Version)
+		fmt.Fprintf(stdout, "harborrs %s (commit %s, built %s)\n", harborrs.Version, harborrs.Commit, harborrs.BuildDate)
 		return 0
 	case "init":
 		return cmdInit(rest, stdout, stderr)
@@ -59,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPollOnce(rest, stdout, stderr)
 	case "hashpass":
 		return cmdHashpass(rest, stdout, stderr)
+	case "update":
+		return cmdUpdate(rest, stdout, stderr)
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, usage)
 		return 0
@@ -77,6 +81,7 @@ usage:
   harborrs import    [-data DIR] OPMLFILE
   harborrs poll-once [-data DIR]
   harborrs hashpass  PASSWORD
+  harborrs update    [-check] [-version vX.Y.Z]
   harborrs version
 
 bootstrap:
@@ -333,21 +338,22 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "init:", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, "✓ harborrs initialised")
-	fmt.Fprintln(stdout, "  data dir:  ", *data)
-	fmt.Fprintln(stdout, "  config:    ", cfgPath)
-	fmt.Fprintln(stdout, "  listen:    ", *listen)
-	fmt.Fprintln(stdout, "  username:  ", *user)
+	passwordLine := "  password:   (as supplied via -password)"
 	if generated {
-		fmt.Fprintln(stdout, "  password:  ", *pass, "  (generated — save it now, it won't be shown again)")
-	} else {
-		fmt.Fprintln(stdout, "  password:   (as supplied via -password)")
+		passwordLine = fmt.Sprintf("  password:   %s  (generated — save it now, it won't be shown again)", *pass)
 	}
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "next steps:")
-	fmt.Fprintln(stdout, "  harborrs import <your.opml>   # optional: import existing subscriptions")
-	fmt.Fprintln(stdout, "  harborrs serve                # start the server")
-	fmt.Fprintln(stdout, "then point a FreshRSS-compatible client (or a browser) at http://localhost"+*listen+"/")
+	fmt.Fprintf(stdout, `✓ harborrs initialised
+  data dir:   %s
+  config:     %s
+  listen:     %s
+  username:   %s
+%s
+
+next steps:
+  harborrs import <your.opml>   # optional: import existing subscriptions
+  harborrs serve                # start the server
+then point a FreshRSS-compatible client (or a browser) at http://localhost%s/
+`, *data, cfgPath, *listen, *user, passwordLine, *listen)
 	return 0
 }
 
@@ -362,5 +368,28 @@ func cmdHashpass(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, h)
+	return 0
+}
+
+func cmdUpdate(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	check := fs.Bool("check", false, "report whether an update is available, do not install")
+	ver := fs.String("version", "", "install a specific version (e.g. v0.2.0); default: latest")
+	repo := fs.String("repo", selfupdate.DefaultRepo, "github owner/repo to update from")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	err := selfupdate.Run(harborrs.Version, selfupdate.Options{
+		Repo:      *repo,
+		Version:   *ver,
+		CheckOnly: *check,
+		Stdout:    stdout,
+		Stderr:    stderr,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "update:", err)
+		return 1
+	}
 	return 0
 }

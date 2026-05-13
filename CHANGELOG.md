@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Distribution & self-update**:
+  - Homebrew formula (`Formula/harborrs.rb`) — `brew tap kfet/harborrs
+    https://github.com/kfet/harborrs && brew install kfet/harborrs/harborrs`.
+  - `install.sh` curl-pipe installer for Linux/macOS (linux/amd64,
+    linux/arm64, darwin/amd64, darwin/arm64); verifies sha256 against
+    `checksums.txt` from the release.
+  - `harborrs update [-check] [-version vX.Y.Z] [-repo owner/name]`
+    subcommand: downloads the matching release tarball, verifies
+    checksum, and atomically replaces the running binary. Refuses to
+    run when the binary lives under a package-manager-owned path
+    (Homebrew, linuxbrew, /usr/bin).
+  - GitHub Actions release workflow on tag push: builds the four-target
+    matrix, ships tarballs + `checksums.txt` as release assets.
+  - `make release-local`: build the same artefacts locally under
+    `dist/` for testing the installer / updater without cutting a tag.
+  - `harborrs version` now reports commit SHA + build date alongside
+    the semver, populated via `-ldflags -X` at build time.
 - `harborrs init` subcommand: one-shot bootstrap that creates the data
   dir, writes `config.json`, and generates (or accepts) a password.
   Flags: `-data`, `-username`, `-password`, `-listen`, `-theme`,

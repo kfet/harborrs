@@ -24,6 +24,39 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 - Single static binary; subcommands `serve`, `import`, `poll-once`,
   `hashpass`, `version`.
 
+## Install
+
+**macOS (and Linux with Homebrew):**
+
+```sh
+brew tap kfet/harborrs https://github.com/kfet/harborrs
+brew install kfet/harborrs/harborrs
+```
+
+Updates come via `brew upgrade`.
+
+**Raspberry Pi & other Linux:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh
+```
+
+Drops the binary in `/usr/local/bin` (or `~/.local/bin` if that isn't
+writable). Supports `linux/amd64`, `linux/arm64`, `darwin/amd64`,
+`darwin/arm64`. Override the target version with `VERSION=v0.1.0` or
+the install prefix with `PREFIX=$HOME/.local`.
+
+Once installed, `harborrs update` will pull the latest release in
+place — except when the binary is owned by a package manager (Homebrew,
+apt), in which case it'll tell you to use that instead. `harborrs
+update -check` reports without installing.
+
+**From source:**
+
+```sh
+go install github.com/kfet/harborrs/cmd/harborrs@latest
+```
+
 ## Quick start
 
 ```sh

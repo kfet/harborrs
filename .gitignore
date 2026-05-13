@@ -1,6 +1,7 @@
 # Build artefacts
 /harborrs
 /cmd/harborrs/harborrs
+/dist/
 
 # Coverage output
 /coverage.out
