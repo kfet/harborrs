@@ -1,4 +1,4 @@
-.PHONY: all check fmt fmtcheck vet staticcheck _staticcheck run-tests open_coverage clean e2e
+.PHONY: all check fmt fmtcheck vet staticcheck _staticcheck run-tests open_coverage clean e2e _all
 
 # Quiet runner: $(call RUN,label,cmd) — runs cmd silently, prints "✓ label" on
 # success, dumps captured output and exits non-zero on failure. Set V=1 for
@@ -19,15 +19,22 @@ else
   endef
 endif
 
-# Default (and only) target. gofmt + go vet + staticcheck + unit tests with
-# the race detector, shuffled order, fresh cache, a 100% coverage gate, AND
-# the end-to-end smoke build. This is exactly what CI runs — no separate
-# "fast" mode. If you want to iterate faster locally, run `go test ./...`
-# directly.
-all: run-tests e2e
+# Default target. Runs gofmt, go vet, staticcheck, race tests + 100%
+# coverage gate, and the e2e smoke — all in parallel via a recursive
+# `make -j`. Wall-time is roughly the slowest single task, not the sum.
+#
+# This is exactly what CI runs — no separate "fast" mode. If you want
+# to iterate faster locally, run `go test ./...` directly.
+all:
+	@$(MAKE) -j --no-print-directory _all
 	@echo "✓ all green"
 
-# Static gates (gofmt + go vet + staticcheck if installed).
+# Internal aggregate target — every prereq is independent and self-
+# contained, so `make -j` can fan them out.
+_all: fmtcheck vet staticcheck run-tests e2e
+
+# Static gates (gofmt + go vet + staticcheck if installed) — kept as an
+# explicit grouping for callers who only want the lints.
 check: fmtcheck vet staticcheck
 
 fmt:
@@ -51,7 +58,10 @@ _staticcheck:
 	$(call RUN,staticcheck clean,out=$$(staticcheck ./... 2>&1 | grep -v 'file requires newer Go version' || true); test -z "$$out" || { echo "$$out"; exit 1; })
 
 # Run unit tests with race + shuffle + fresh cache + 100% coverage gate.
-run-tests: check
+# Race tests + 100% coverage gate. Does not depend on the lint targets:
+# `make all` runs all of them in parallel, and the coverage gate stands
+# on its own.
+run-tests:
 	@go clean -testcache
 	$(call RUN,tests pass,go test -race -shuffle=on -cover ./... -coverprofile=coverage.tmp.out)
 	$(call RUN,coverage clean,go run github.com/kfet/covgate/cmd/covgate@v0.1.0 -profile=coverage.tmp.out -out=coverage.out -ignore=.covignore -min=100)

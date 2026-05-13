@@ -49,6 +49,16 @@ func (m *memOPML) Save(o *store.OPML) error {
 	return nil
 }
 
+var testPwHash = mustHashPw()
+
+func mustHashPw() string {
+	h, err := auth.HashPassword("p")
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
 // fixture builds a Server + ServerMux + valid API token + memOPML.
 func fixture(t *testing.T) (*Server, http.Handler, string, *memOPML, *store.Store) {
 	t.Helper()
@@ -57,8 +67,7 @@ func fixture(t *testing.T) (*Server, http.Handler, string, *memOPML, *store.Stor
 	if err != nil {
 		t.Fatal(err)
 	}
-	pwHash, _ := auth.HashPassword("p")
-	cfg := auth.Config{Username: "u", PasswordHash: pwHash}
+	cfg := auth.Config{Username: "u", PasswordHash: testPwHash}
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), cfg)
 	tok, _ := as.IssueAPIToken("u", "p")
 	op := &memOPML{}

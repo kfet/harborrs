@@ -42,6 +42,16 @@ func (m *memOPML) Save(o *store.OPML) error {
 // keeps the two packages aligned.
 var _ reader.OPMLProvider = (*memOPML)(nil)
 
+var testPwHash = mustHashPw()
+
+func mustHashPw() string {
+	h, err := auth.HashPassword("p")
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
 func fixture(t *testing.T) (*Server, *http.ServeMux, *store.Store, *memOPML, string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -49,8 +59,7 @@ func fixture(t *testing.T) (*Server, *http.ServeMux, *store.Store, *memOPML, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	pwHash, _ := auth.HashPassword("p")
-	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: pwHash})
+	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: testPwHash})
 	op := &memOPML{}
 	overrideDir := filepath.Join(dir, "cfg")
 	srv, err := New(st, as, op, "dark", overrideDir)
@@ -335,8 +344,7 @@ func TestThemeOverride(t *testing.T) {
 	), 0o644)
 
 	st, _ := store.Open(t.TempDir())
-	pwHash, _ := auth.HashPassword("p")
-	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: pwHash})
+	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: testPwHash})
 	srv, err := New(st, as, &memOPML{}, "", filepath.Join(dir, "cfg"))
 	if err != nil {
 		t.Fatal(err)
