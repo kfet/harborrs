@@ -1,4 +1,4 @@
-.PHONY: all check fmt fmtcheck vet staticcheck _staticcheck run-tests open_coverage clean e2e _all
+.PHONY: all check fmt vet staticcheck _staticcheck run-tests open_coverage clean e2e _all
 
 # Quiet runner: $(call RUN,label,cmd) — runs cmd silently, prints "✓ label" on
 # success, dumps captured output and exits non-zero on failure. Set V=1 for
@@ -31,17 +31,14 @@ all:
 
 # Internal aggregate target — every prereq is independent and self-
 # contained, so `make -j` can fan them out.
-_all: fmtcheck vet staticcheck run-tests e2e
+_all: fmt vet staticcheck run-tests e2e
 
-# Static gates (gofmt + go vet + staticcheck if installed) — kept as an
-# explicit grouping for callers who only want the lints.
-check: fmtcheck vet staticcheck
+# Static gates (gofmt-fix + go vet + staticcheck if installed) — kept as
+# an explicit grouping for callers who only want the lints.
+check: fmt vet staticcheck
 
 fmt:
-	@gofmt -w .
-
-fmtcheck:
-	$(call RUN,gofmt clean,out=$$(gofmt -l .); test -z "$$out" || { echo "gofmt offenders (run 'make fmt'):"; echo "$$out"; exit 1; })
+	$(call RUN,gofmt,gofmt -w .)
 
 vet:
 	$(call RUN,go vet clean,go vet ./...)
