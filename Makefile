@@ -20,10 +20,11 @@ else
 endif
 
 # Default (and only) target. gofmt + go vet + staticcheck + unit tests with
-# the race detector, shuffled order, fresh cache, and a 100% coverage gate.
-# This is also exactly what CI runs — no separate "fast" mode. If you want
-# to iterate faster locally, run `go test ./...` directly.
-all: run-tests
+# the race detector, shuffled order, fresh cache, a 100% coverage gate, AND
+# the end-to-end smoke build. This is exactly what CI runs — no separate
+# "fast" mode. If you want to iterate faster locally, run `go test ./...`
+# directly.
+all: run-tests e2e
 	@echo "✓ all green"
 
 # Static gates (gofmt + go vet + staticcheck if installed).

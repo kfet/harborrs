@@ -26,10 +26,7 @@ jobs:
           cache: false
       - run: go version
       # make all runs gofmt + vet + (staticcheck if present) + race +
-      # shuffle + 100% coverage gate.
+      # shuffle + 100% coverage gate + the e2e smoke.
       - run: make all
-        env:
-          GOTOOLCHAIN: auto
-      - run: make e2e
         env:
           GOTOOLCHAIN: auto
