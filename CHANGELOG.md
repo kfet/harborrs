@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `harborrs init` subcommand: one-shot bootstrap that creates the data
+  dir, writes `config.json`, and generates (or accepts) a password.
+  Flags: `-data`, `-username`, `-password`, `-listen`, `-theme`,
+  `-force`. The top-level usage text and `serve`'s missing-config error
+  now point at it.
 - `make build` target produces `./harborrs`; wired into `make all` so a
   plain `go build` failure is caught without relying on the e2e harness.
 - `make build-matrix` cross-compile check for linux/amd64, linux/arm64,

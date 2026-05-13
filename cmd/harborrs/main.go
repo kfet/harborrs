@@ -2,6 +2,8 @@
 //
 // Subcommands:
 //
+//	harborrs init [-data DIR] [-username NAME] [-password PASS]
+//	              [-listen ADDR] [-theme NAME] [-force]
 //	harborrs serve [-data DIR] [-config FILE]
 //	harborrs import [-data DIR] OPML
 //	harborrs poll-once [-data DIR]
@@ -11,6 +13,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
@@ -37,6 +41,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
+		fmt.Fprintln(stderr, "\nfirst time? run `harborrs init` to bootstrap a config.")
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
@@ -44,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, harborrs.Version)
 		return 0
+	case "init":
+		return cmdInit(rest, stdout, stderr)
 	case "serve":
 		return cmdServe(rest, stdout, stderr)
 	case "import":
@@ -64,11 +71,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 const usage = `harborrs — single-binary RSS server
 
 usage:
+  harborrs init      [-data DIR] [-username NAME] [-password PASS]
+                     [-listen ADDR] [-theme NAME] [-force]
   harborrs serve     [-data DIR] [-config FILE]
   harborrs import    [-data DIR] OPMLFILE
   harborrs poll-once [-data DIR]
   harborrs hashpass  PASSWORD
-  harborrs version`
+  harborrs version
+
+bootstrap:
+  harborrs init                  # writes <data>/config.json, prints a generated password
+  harborrs serve                 # start serving on the configured address
+
+data dir defaults to $HARBORRS_DATA, then $XDG_DATA_HOME/harborrs,
+then ~/.local/share/harborrs.`
 
 func defaultDataDir() string {
 	if v := os.Getenv("HARBORRS_DATA"); v != "" {
@@ -109,7 +125,8 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if cfg.Auth.PasswordHash == "" {
-		fmt.Fprintln(stderr, "no auth.password_hash set in config; generate one with `harborrs hashpass <password>`")
+		fmt.Fprintf(stderr, "no auth.password_hash in %s\n", cfgPath)
+		fmt.Fprintln(stderr, "run `harborrs init -data", data, "` to bootstrap, or set it manually with `harborrs hashpass <password>`.")
 		return 1
 	}
 	st, err := store.Open(data)
@@ -259,6 +276,78 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s: %d new\n", f.XMLURL, n)
 	}
 	fmt.Fprintf(stdout, "total new entries: %d\n", total)
+	return 0
+}
+
+// genPassword returns a 16-char URL-safe random password.
+func genPassword() (string, error) {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+func cmdInit(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	data := fs.String("data", defaultDataDir(), "data directory")
+	user := fs.String("username", "admin", "login username")
+	pass := fs.String("password", "", "login password (generated if empty)")
+	listen := fs.String("listen", ":8088", "listen address")
+	theme := fs.String("theme", "light", "ui theme: light|dark|sepia")
+	force := fs.Bool("force", false, "overwrite an existing config")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if err := os.MkdirAll(*data, 0o755); err != nil {
+		fmt.Fprintln(stderr, "init:", err)
+		return 1
+	}
+	cfgPath := filepath.Join(*data, "config.json")
+	if _, err := os.Stat(cfgPath); err == nil && !*force {
+		fmt.Fprintf(stderr, "config already exists: %s\nuse -force to overwrite, or edit it directly.\n", cfgPath)
+		return 1
+	}
+	generated := false
+	if *pass == "" {
+		p, err := genPassword()
+		if err != nil {
+			fmt.Fprintln(stderr, "init:", err)
+			return 1
+		}
+		*pass = p
+		generated = true
+	}
+	h, err := auth.HashPassword(*pass)
+	if err != nil {
+		fmt.Fprintln(stderr, "init:", err)
+		return 1
+	}
+	cfg := config.Default()
+	cfg.Listen = *listen
+	cfg.UI.Theme = *theme
+	cfg.Auth.Username = *user
+	cfg.Auth.PasswordHash = h
+	if err := config.Save(cfgPath, cfg); err != nil {
+		fmt.Fprintln(stderr, "init:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "✓ harborrs initialised")
+	fmt.Fprintln(stdout, "  data dir:  ", *data)
+	fmt.Fprintln(stdout, "  config:    ", cfgPath)
+	fmt.Fprintln(stdout, "  listen:    ", *listen)
+	fmt.Fprintln(stdout, "  username:  ", *user)
+	if generated {
+		fmt.Fprintln(stdout, "  password:  ", *pass, "  (generated — save it now, it won't be shown again)")
+	} else {
+		fmt.Fprintln(stdout, "  password:   (as supplied via -password)")
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "next steps:")
+	fmt.Fprintln(stdout, "  harborrs import <your.opml>   # optional: import existing subscriptions")
+	fmt.Fprintln(stdout, "  harborrs serve                # start the server")
+	fmt.Fprintln(stdout, "then point a FreshRSS-compatible client (or a browser) at http://localhost"+*listen+"/")
 	return 0
 }
 

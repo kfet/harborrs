@@ -30,20 +30,12 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 # build
 go build -o harborrs ./cmd/harborrs
 
-# generate a password hash for your config
-./harborrs hashpass 'my-strong-password'
+# one-shot bootstrap: creates data dir, writes config.json, prints a
+# generated password. Pass -password to set your own, -username to
+# change the login name (default "admin").
+./harborrs init
 
-# write a minimal config
-mkdir -p ~/.local/share/harborrs
-cat > ~/.local/share/harborrs/config.json <<JSON
-{
-  "listen": ":8088",
-  "auth":   { "username": "me", "password_hash": "PASTE-FROM-hashpass" },
-  "ui":     { "theme": "dark" }
-}
-JSON
-
-# import your existing subscriptions
+# import your existing subscriptions (optional)
 ./harborrs import subscriptions.opml
 
 # one-shot poll (handy for cron)
@@ -54,9 +46,13 @@ JSON
 ```
 
 Then point a FreshRSS-compatible client at `http://your-host:8088/` —
-log in with the same username / password you hashed above.
+log in with the username (default `admin`) and the password printed by
+`init`.
 
 The web UI lives at `/ui/`; visiting `/` redirects there.
+
+If you'd rather hand-roll the config, `harborrs hashpass <password>`
+prints a hash you can drop into `<data-dir>/config.json` by hand.
 
 ## Storage layout
 

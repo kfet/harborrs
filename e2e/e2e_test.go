@@ -122,16 +122,18 @@ func TestE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// hashpass to get a known hash for "secret".
-	out, err := exec.Command(bin, "hashpass", "secret").Output()
-	if err != nil {
-		t.Fatalf("hashpass: %v", err)
-	}
-	hash := strings.TrimSpace(string(out))
+	// 3a. Bootstrap config via the init subcommand.
 	addr := freePort(t)
-	cfg := fmt.Sprintf(`{"listen":"%s","auth":{"username":"u","password_hash":%q}}`, addr, hash)
-	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
+	initCmd := exec.Command(bin, "init",
+		"-data", dataDir,
+		"-username", "u",
+		"-password", "secret",
+		"-listen", addr,
+		"-force",
+	)
+	initCmd.Stdout, initCmd.Stderr = os.Stdout, os.Stderr
+	if err := initCmd.Run(); err != nil {
+		t.Fatalf("init: %v", err)
 	}
 
 	// 4. Import OPML.
