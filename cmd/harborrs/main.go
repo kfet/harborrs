@@ -14,7 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -276,6 +275,3 @@ func cmdHashpass(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, h)
 	return 0
 }
-
-// Keep imports satisfied when log isn't otherwise used.
-var _ = log.New
