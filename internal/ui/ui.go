@@ -455,6 +455,26 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// findEntry walks the OPML for the entry with the given hash. Returns
+// the entry, its owning feed, ok=true if found, and any I/O error from
+// ListEntries. The "owning feed" is the Feed in the current OPML; if the
+// entry's feed was removed from the OPML between fetch and now, this
+// returns ok=false (the entry is invisible to the UI by design).
+func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed, bool, error) {
+	for _, f := range op.Feeds {
+		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
+		if err != nil {
+			return store.Entry{}, store.Feed{}, false, err
+		}
+		for _, e := range es {
+			if e.Hash == hash {
+				return e, f, true, nil
+			}
+		}
+	}
+	return store.Entry{}, store.Feed{}, false, nil
+}
+
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("id")
 	if hash == "" {
@@ -466,32 +486,28 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, f := range op.Feeds {
-		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, e := range es {
-			if e.Hash == hash {
-				body := e.Content
-				if body == "" {
-					body = e.Summary
-				}
-				data := struct {
-					baseData
-					Entry     store.Entry
-					Body      template.HTML
-					State     store.EntryState
-					FeedURL   string
-					FeedTitle string
-				}{s.base(r), e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
-				s.render(w, "entry", data)
-				return
-			}
-		}
+	e, f, ok, err := s.findEntry(op, hash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	http.NotFound(w, r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	body := e.Content
+	if body == "" {
+		body = e.Summary
+	}
+	data := struct {
+		baseData
+		Entry     store.Entry
+		Body      template.HTML
+		State     store.EntryState
+		FeedURL   string
+		FeedTitle string
+	}{s.base(r), e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+	s.render(w, "entry", data)
 }
 
 func (s *Server) handleSetRead(w http.ResponseWriter, r *http.Request) {
@@ -525,39 +541,34 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	view := r.URL.Query().Get("view")
-	for _, f := range op.Feeds {
-		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, e := range es {
-			if e.Hash == hash {
-				st := s.Store.EntryState(hash)
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				if view == "detail" {
-					body := e.Content
-					if body == "" {
-						body = e.Summary
-					}
-					data := struct {
-						Entry     store.Entry
-						Body      template.HTML
-						State     store.EntryState
-						FeedURL   string
-						FeedTitle string
-					}{e, template.HTML(body), st, f.XMLURL, f.Title}
-					_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
-					return
-				}
-				row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
-				_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
-				return
-			}
-		}
+	e, f, ok, err := s.findEntry(op, hash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	http.NotFound(w, r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	st := s.Store.EntryState(hash)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.URL.Query().Get("view") == "detail" {
+		body := e.Content
+		if body == "" {
+			body = e.Summary
+		}
+		data := struct {
+			Entry     store.Entry
+			Body      template.HTML
+			State     store.EntryState
+			FeedURL   string
+			FeedTitle string
+		}{e, template.HTML(body), st, f.XMLURL, f.Title}
+		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
+		return
+	}
+	row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
+	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
 }
 
 // handleStatic serves bundled CSS / overrides theme.css.

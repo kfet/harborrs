@@ -168,7 +168,7 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 	// Compute the mutation but DO NOT apply it to in-memory state until
 	// the persist succeeds. Otherwise a persist failure leaves the
 	// reader showing a flag set that survives only until restart.
-	var newLiveR, newLiveS int = s.liveR, s.liveS
+	newLiveR, newLiveS := s.liveR, s.liveS
 	if isRead {
 		if st.Read == want {
 			return nil

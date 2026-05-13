@@ -540,7 +540,7 @@ func TestItemIDRoundtrip(t *testing.T) {
 	}
 }
 
-func TestReverseFeedURLNotFound(t *testing.T) {
+func TestUnknownFeedHashStillRenders(t *testing.T) {
 	srv, _, _, op, _ := fixture(t)
 	op.opml.Feeds = []store.Feed{{XMLURL: "https://known/feed"}}
 	o, _ := op.Load()
@@ -550,11 +550,17 @@ func TestReverseFeedURLNotFound(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatal(items)
 	}
+	// Unknown-hash entry gets an empty origin streamID.
+	if items[0].Origin.StreamID != "feed/" {
+		t.Fatalf("origin=%q", items[0].Origin.StreamID)
+	}
 }
 
-func TestReverseFeedURLNil(t *testing.T) {
-	if got := reverseFeedURL(nil, "x"); got != "" {
-		t.Fatalf("got %q", got)
+func TestToStreamItemsNilOPML(t *testing.T) {
+	srv, _, _, _, _ := fixture(t)
+	items := srv.toStreamItems([]store.Entry{{Hash: "h", Title: "T"}}, nil)
+	if len(items) != 1 {
+		t.Fatal(items)
 	}
 }
 

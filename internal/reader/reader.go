@@ -498,11 +498,13 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 	out := make([]streamItem, 0, len(es))
 	feedTitle := map[string]string{}
 	feedHTML := map[string]string{}
+	feedURL := map[string]string{}
 	if op != nil {
 		for _, f := range op.Feeds {
 			fh := store.FeedHash(f.XMLURL)
 			feedTitle[fh] = f.Title
 			feedHTML[fh] = f.HTMLURL
+			feedURL[fh] = f.XMLURL
 		}
 	}
 	for _, e := range es {
@@ -531,25 +533,13 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 			Alternate:     []streamLink{{HREF: e.Link, Type: "text/html"}},
 			Summary:       streamContent{Content: body},
 			Origin: streamOrigin{
-				StreamID: feedStreamID(reverseFeedURL(op, e.FeedHash)),
+				StreamID: feedStreamID(feedURL[e.FeedHash]),
 				Title:    feedTitle[e.FeedHash],
 				HTMLURL:  feedHTML[e.FeedHash],
 			},
 		})
 	}
 	return out
-}
-
-func reverseFeedURL(op *store.OPML, fh string) string {
-	if op == nil {
-		return ""
-	}
-	for _, f := range op.Feeds {
-		if store.FeedHash(f.XMLURL) == fh {
-			return f.XMLURL
-		}
-	}
-	return ""
 }
 
 // handleItemsIDs returns just the item ids for a stream (used to seed
