@@ -15,13 +15,9 @@
 <li>
 <a href="/ui/feed?id={{.URL}}">{{.Title}}</a>
 <span class="count">{{.Unread}}</span>
-<form method="POST" action="/ui/feed/remove" class="inline" onsubmit="return confirm('remove this feed?');">
-<input type="hidden" name="url" value="{{.URL}}">
-<button type="submit" class="remove">×</button>
-</form>
 </li>
 {{else}}
-<li class="empty">no feeds yet — add one above, or import an OPML file with <code>harborrs import</code></li>
+<li class="empty">no feeds yet — click <a href="/ui/feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code></li>
 {{end}}
 </ul>
 </section>

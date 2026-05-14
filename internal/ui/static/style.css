@@ -362,6 +362,14 @@ form.inline { display: inline; margin: 0; }
   color: var(--muted);
 }
 
+.unsubscribe-form { display: inline; margin: 0; font-size: 0.7em; vertical-align: middle; margin-left: 0.4em; }
+.unsubscribe {
+  font-size: 0.85em;
+  padding: 0.25em 0.7em;
+  color: var(--muted);
+}
+.unsubscribe:hover { color: var(--danger); border-color: var(--danger); }
+
 ul.entries {
   list-style: none;
   padding: 0;

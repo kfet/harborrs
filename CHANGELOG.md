@@ -28,6 +28,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- "remove feed" moved out of the home feed list (where a stray click
+  could unsubscribe by mistake) onto the per-feed page header, next
+  to "mark all read", as an explicit `unsubscribe` button with a
+  confirm prompt. Cross-feed views (`/ui/all`, `/ui/starred`) don't
+  show it — only the single-feed view (`/ui/feed?id=...`).
 - "mark all read" on a single-feed view now redirects to `/ui/all`
   (the unread cross-feed view) rather than back to the now-empty
   feed page — the natural triage flow.

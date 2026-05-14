@@ -717,19 +717,34 @@ func TestFeedAddParseFormErr(t *testing.T) {
 	}
 }
 
-func TestHomeShowsAddFormAndRemove(t *testing.T) {
+func TestHomeShowsAddLinkNoInlineRemove(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
 	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	w := do(mux, req("GET", "/ui/", tok, nil))
 	body := w.Body.String()
-	if !strings.Contains(body, "add feed") {
-		t.Fatalf("missing add form: %s", body)
+	// home should *link* to the add-feed page, not carry an inline form.
+	if !strings.Contains(body, `href="/ui/feed/new"`) {
+		t.Fatalf("missing add-feed link: %s", body)
 	}
-	if !strings.Contains(body, `name="url"`) {
-		t.Fatalf("missing url input: %s", body)
+	// home should NOT carry the unsubscribe form anymore — that moved
+	// onto the per-feed page so it isn't a single click from a glance.
+	if strings.Contains(body, "/ui/feed/remove") {
+		t.Fatalf("remove form should not be on /ui/: %s", body)
 	}
-	if !strings.Contains(body, "/ui/feed/remove") {
-		t.Fatalf("missing remove form: %s", body)
+}
+
+func TestFeedPageShowsUnsubscribe(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	w := do(mux, req("GET", "/ui/feed?id=https%3A%2F%2Fx%2Ffeed", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "/ui/feed/remove") || !strings.Contains(body, "unsubscribe") {
+		t.Fatalf("feed page should carry unsubscribe form: %s", body)
+	}
+	// Cross-feed views (all / starred) must not show it.
+	w = do(mux, req("GET", "/ui/all", tok, nil))
+	if strings.Contains(w.Body.String(), "unsubscribe") {
+		t.Fatalf("all-view should not show unsubscribe")
 	}
 }
 
