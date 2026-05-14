@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/kfet/harborrs/internal/auth"
+	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/store"
 )
 
@@ -42,6 +43,17 @@ type Server struct {
 	Overrides string // base config dir; "overrides/" is expected underneath
 	Secure    bool   // set Secure flag on session cookies (https deployments)
 
+	// StaticVer is appended to bundled-static URLs as a cache-busting
+	// query string (?v=...). Set this to the binary's commit / version
+	// at construction time so a binary upgrade automatically forces
+	// browsers to re-fetch CSS / JS without users having to hard-reload.
+	StaticVer string
+
+	// ConfigPath is the on-disk path to config.json. When set, the
+	// UI exposes /ui/settings with a change-password form. When empty,
+	// settings is hidden and the route returns 404.
+	ConfigPath string
+
 	// pages maps page name -> a fully-parsed template tree rooted at
 	// `base`. Per-page trees keep title/content blocks isolated.
 	pages map[string]*template.Template
@@ -61,7 +73,7 @@ func New(s *store.Store, a *auth.Store, o OPMLProvider, theme, overrides string)
 
 // pageNames are the per-page template files we expect to find under
 // templates/ (besides base.html, which is the shared layout).
-var pageNames = []string{"login", "home", "feed", "entry"}
+var pageNames = []string{"login", "home", "feed", "entry", "settings"}
 
 // pageExtra files (beyond base.html) parsed into each page. Override in
 // tests to trigger ParseFS error paths.
@@ -117,6 +129,8 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/entry/read", s.requireSession(s.handleSetRead))
 	mux.HandleFunc("/ui/entry/star", s.requireSession(s.handleSetStarred))
 	mux.HandleFunc("/ui/mark-all-read", s.requireSession(s.handleMarkAllRead))
+	mux.HandleFunc("/ui/settings", s.requireSession(s.handleSettings))
+	mux.HandleFunc("/ui/settings/passwd", s.requireSession(s.handlePasswd))
 	return mux
 }
 
@@ -133,14 +147,17 @@ func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
 // --- pages ---
 
 type baseData struct {
-	Theme    string
-	User     string
-	ExtraCSS string
-	Error    string
+	Theme         string
+	User          string
+	ExtraCSS      string
+	Error         string
+	StaticVer     string // "?v=<commit>" suffix used in base.html
+	Settings      bool   // true when /ui/settings is available
+	PasswdChanged bool   // set on login page after a successful change
 }
 
 func (s *Server) base(r *http.Request) baseData {
-	d := baseData{Theme: s.Theme}
+	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Settings: s.ConfigPath != ""}
 	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
 		d.User = s.Auth.Cfg.Username
 	}
@@ -155,9 +172,9 @@ func (s *Server) base(r *http.Request) baseData {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.render(w, "login", struct {
-			baseData
-		}{s.base(r)})
+		d := s.base(r)
+		d.PasswdChanged = r.URL.Query().Get("passwd") == "1"
+		s.render(w, "login", struct{ baseData }{d})
 	case http.MethodPost:
 		_ = r.ParseForm()
 		u, p := r.FormValue("username"), r.FormValue("password")
@@ -571,6 +588,89 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
 }
 
+// handleSettings renders the settings page (GET /ui/settings). Refuses
+// with 404 when ConfigPath isn't wired, e.g. test setups without a
+// disk-backed config.
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	if s.ConfigPath == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	d := s.base(r)
+	s.render(w, "settings", struct {
+		baseData
+		Ok bool
+	}{d, r.URL.Query().Get("ok") == "1"})
+}
+
+// handlePasswd handles POST /ui/settings/passwd. Verifies the current
+// password, hashes the new one, atomically updates config.json + the
+// in-memory auth.Cfg, then revokes every session (including this one)
+// and bounces the browser back to the login page so the user has to
+// authenticate with the new password.
+func (s *Server) handlePasswd(w http.ResponseWriter, r *http.Request) {
+	if s.ConfigPath == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		s.renderPasswdErr(w, r, "bad form")
+		return
+	}
+	old := r.FormValue("old")
+	newp := r.FormValue("new")
+	confirm := r.FormValue("confirm")
+	if newp != confirm {
+		s.renderPasswdErr(w, r, "new password and confirmation do not match")
+		return
+	}
+	if len(newp) < 8 {
+		s.renderPasswdErr(w, r, "new password must be at least 8 characters")
+		return
+	}
+	if err := s.Auth.Verify(s.Auth.Cfg.Username, old); err != nil {
+		s.renderPasswdErr(w, r, "current password is incorrect")
+		return
+	}
+	h, err := authHashPasswordHook(newp)
+	if err != nil {
+		s.renderPasswdErr(w, r, "hash: "+err.Error())
+		return
+	}
+	cfg, err := config.Load(s.ConfigPath)
+	if err != nil {
+		s.renderPasswdErr(w, r, "load config: "+err.Error())
+		return
+	}
+	cfg.Auth.PasswordHash = h
+	if err := config.Save(s.ConfigPath, cfg); err != nil {
+		s.renderPasswdErr(w, r, "save config: "+err.Error())
+		return
+	}
+	s.Auth.SetPasswordHash(h)
+	_ = s.Auth.RevokeAllSessions()
+	auth.ClearSessionCookie(w)
+	http.Redirect(w, r, "/ui/login?passwd=1", http.StatusSeeOther)
+}
+
+func (s *Server) renderPasswdErr(w http.ResponseWriter, r *http.Request, msg string) {
+	w.WriteHeader(http.StatusBadRequest)
+	d := s.base(r)
+	d.Error = msg
+	s.render(w, "settings", struct {
+		baseData
+		Ok bool
+	}{d, false})
+}
+
 // handleStatic serves bundled CSS / overrides theme.css.
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/ui/static/")
@@ -591,6 +691,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(name, ".js"):
 		w.Header().Set("Content-Type", "application/javascript")
 	}
+	// Aggressive cache when the URL is fingerprinted (?v=...). Without
+	// the fingerprint we still allow short caching but require revalidation.
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+	}
 	w.Write(data)
 }
 
@@ -605,3 +712,7 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
+
+// authHashPasswordHook is the seam tests swap to exercise the hash-error
+// branch of handlePasswd. Production callers go through auth.HashPassword.
+var authHashPasswordHook = auth.HashPassword

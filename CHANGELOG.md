@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `harborrs passwd [-data DIR] [-password NEW]` — CLI command to change
+  the configured password. Reads from `-password`, otherwise prompts on
+  stdin. Rewrites only `auth.password_hash` in `config.json`; a running
+  `serve` won't pick up the change until restart.
+- Web UI: `/ui/settings` with a change-password form (current + new +
+  confirm). On success: persists the new hash, revokes every existing
+  browser session, clears the current cookie, and bounces to
+  `/ui/login?passwd=1` with a friendly notice. Reader API tokens stay
+  valid until clients re-authenticate with the new password.
+- e2e regression check that `/ui/static/style.css` is non-trivial
+  (>4 KB and contains rules for key selectors), so the previous
+  stub-CSS regression cannot silently come back.
+
+### Fixed
+
+- Static asset URLs (`style.css`, `htmx.min.js`, `keys.js`,
+  `theme.css`) now carry a `?v=<commit>` cache-buster derived from the
+  binary's build commit. Combined with a stricter `Cache-Control`
+  (`immutable` when the version is pinned, `max-age=60` otherwise),
+  a binary upgrade now invalidates the browser cache automatically —
+  no more "I upgraded harborrs and the UI still looks unstyled".
+
 ### Fixed
 
 - Web UI was rendering with browser-default styling on every page

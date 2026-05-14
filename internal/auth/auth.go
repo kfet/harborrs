@@ -149,7 +149,7 @@ const TokenLifetime = 30 * 24 * time.Hour
 // IssueAPIToken authenticates and returns a new opaque token. The token
 // is also persisted to disk so it survives restarts.
 func (s *Store) IssueAPIToken(username, password string) (string, error) {
-	if err := s.Cfg.Verify(username, password); err != nil {
+	if err := s.Verify(username, password); err != nil {
 		return "", err
 	}
 	tok, err := newToken()
@@ -168,7 +168,7 @@ func (s *Store) IssueAPIToken(username, password string) (string, error) {
 
 // IssueSession authenticates and returns a new opaque session cookie value.
 func (s *Store) IssueSession(username, password string) (string, error) {
-	if err := s.Cfg.Verify(username, password); err != nil {
+	if err := s.Verify(username, password); err != nil {
 		return "", err
 	}
 	tok, err := newToken()
@@ -300,4 +300,34 @@ func newToken() (string, error) {
 		return "", fmt.Errorf("auth: read random: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// Verify checks (username, password) against the current Config under
+// the store's lock. Use this instead of s.Cfg.Verify directly so that
+// concurrent calls to SetPasswordHash don't race the read.
+func (s *Store) Verify(username, password string) error {
+	s.mu.RLock()
+	cfg := s.Cfg
+	s.mu.RUnlock()
+	return cfg.Verify(username, password)
+}
+
+// SetPasswordHash atomically replaces the stored password hash. Callers
+// are responsible for also persisting the new hash to config.json — the
+// auth store has no knowledge of where the Config lives on disk.
+func (s *Store) SetPasswordHash(h string) {
+	s.mu.Lock()
+	s.Cfg.PasswordHash = h
+	s.mu.Unlock()
+}
+
+// RevokeAllSessions drops every session cookie, forcing all browsers
+// to re-authenticate. Used after a password change. API tokens are
+// kept (clients re-authenticate with the new password lazily).
+func (s *Store) RevokeAllSessions() error {
+	s.mu.Lock()
+	s.sessions = map[string]time.Time{}
+	err := s.persistLocked()
+	s.mu.Unlock()
+	return err
 }

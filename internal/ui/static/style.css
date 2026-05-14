@@ -129,6 +129,10 @@ main {
 
 .empty { color: var(--muted); font-style: italic; }
 .err   { color: var(--danger); }
+.ok    { color: #2a7f3a; }
+[data-theme="dark"] .ok { color: #6cd97f; }
+[data-theme="sepia"] .ok { color: #5b6e1f; }
+.hint  { color: var(--muted); font-size: 0.9em; }
 
 /* ---- forms / buttons (generic) ------------------------------------ */
 
@@ -320,3 +324,9 @@ ul.entries {
   main { margin: 1em auto; padding: 0 0.8em; }
   .entry > a { white-space: normal; }
 }
+
+/* ---- settings page ----------------------------------------------- */
+
+.settings { max-width: 30em; }
+.passwd { display: flex; flex-direction: column; gap: 0.7em; max-width: 22em; margin-bottom: 1em; }
+.passwd label { display: flex; flex-direction: column; gap: 0.2em; font-size: 0.9em; color: var(--muted); }

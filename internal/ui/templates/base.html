@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <title>{{block "title" .}}harborrs{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/ui/static/style.css">
-{{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}">{{end}}
-<script src="/ui/static/htmx.min.js"></script>
-<script src="/ui/static/keys.js" defer></script>
+<link rel="stylesheet" href="/ui/static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
+{{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}{{with $.StaticVer}}?v={{.}}{{end}}">{{end}}
+<script src="/ui/static/htmx.min.js{{with .StaticVer}}?v={{.}}{{end}}"></script>
+<script src="/ui/static/keys.js{{with .StaticVer}}?v={{.}}{{end}}" defer></script>
 </head>
 <body data-theme="{{.Theme}}">
 <header>
@@ -17,6 +17,7 @@
 <a href="/ui/">feeds</a>
 <a href="/ui/all">unread</a>
 <a href="/ui/starred">starred</a>
+{{if .Settings}}<a href="/ui/settings">settings</a>{{end}}
 </nav>
 <form method="POST" action="/ui/logout" class="logout"><button type="submit">logout</button></form>
 {{end}}

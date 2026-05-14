@@ -1,0 +1,23 @@
+{{define "settings"}}{{template "base" .}}{{end}}
+{{define "title"}}settings — harborrs{{end}}
+{{define "content"}}
+<section class="settings">
+<h1>settings</h1>
+
+<h2>change password</h2>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+{{if .Ok}}<p class="ok">password updated — please log in again with the new password.</p>{{end}}
+<form method="POST" action="/ui/settings/passwd" class="passwd">
+<label>current password
+<input type="password" name="old" autocomplete="current-password" required></label>
+<label>new password
+<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
+<label>confirm new password
+<input type="password" name="confirm" autocomplete="new-password" minlength="8" required></label>
+<button type="submit">change password</button>
+</form>
+<p class="hint">All existing browser sessions (including this one) are
+signed out after a successful change. Reader API tokens stay valid
+until the client re-authenticates with the new password.</p>
+</section>
+{{end}}

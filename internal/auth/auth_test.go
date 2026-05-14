@@ -244,3 +244,38 @@ func TestIssuePersistFail(t *testing.T) {
 		t.Fatal("expected persist err")
 	}
 }
+
+func TestStoreVerifyAndSetPasswordHash(t *testing.T) {
+	hOrig, err := HashPassword("orig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), Config{Username: "u", PasswordHash: hOrig})
+	if err := s.Verify("u", "orig"); err != nil {
+		t.Fatalf("verify orig: %v", err)
+	}
+	hNew, _ := HashPassword("new!!")
+	s.SetPasswordHash(hNew)
+	if err := s.Verify("u", "orig"); err == nil {
+		t.Fatal("orig should no longer verify")
+	}
+	if err := s.Verify("u", "new!!"); err != nil {
+		t.Fatalf("new should verify: %v", err)
+	}
+}
+
+func TestRevokeAllSessions(t *testing.T) {
+	h, _ := HashPassword("p")
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), Config{Username: "u", PasswordHash: h})
+	t1, _ := s.IssueSession("u", "p")
+	t2, _ := s.IssueSession("u", "p")
+	if !s.CheckSession(t1) || !s.CheckSession(t2) {
+		t.Fatal("sessions should exist pre-revoke")
+	}
+	if err := s.RevokeAllSessions(); err != nil {
+		t.Fatal(err)
+	}
+	if s.CheckSession(t1) || s.CheckSession(t2) {
+		t.Fatal("sessions should be gone")
+	}
+}

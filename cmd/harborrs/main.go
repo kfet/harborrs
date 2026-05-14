@@ -8,6 +8,7 @@
 //	harborrs import [-data DIR] OPML
 //	harborrs poll-once [-data DIR]
 //	harborrs hashpass PASSWORD
+//	harborrs passwd [-data DIR] [-password NEW]
 //	harborrs update [-check] [-version vX.Y.Z]
 //	harborrs version
 package main
@@ -61,6 +62,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPollOnce(rest, stdout, stderr)
 	case "hashpass":
 		return cmdHashpass(rest, stdout, stderr)
+	case "passwd":
+		return cmdPasswd(rest, stdout, stderr)
 	case "update":
 		return cmdUpdate(rest, stdout, stderr)
 	case "-h", "--help", "help":
@@ -81,6 +84,7 @@ usage:
   harborrs import    [-data DIR] OPMLFILE
   harborrs poll-once [-data DIR]
   harborrs hashpass  PASSWORD
+  harborrs passwd    [-data DIR] [-password NEW]
   harborrs update    [-check] [-version vX.Y.Z]
   harborrs version
 
@@ -154,6 +158,8 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	uiSrv.Secure = cfg.UI.Secure
+	uiSrv.StaticVer = harborrs.Commit
+	uiSrv.ConfigPath = cfgPath
 	uiSrv.Routes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -392,4 +398,95 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// cmdPasswd changes the configured single-user password. It rewrites
+// only auth.password_hash in <data>/config.json (preserving every other
+// field) and prints a confirmation. The hot harborrs process (if any
+// is running) won't pick up the change until restart — there is no
+// signal-reload mechanism in v0.2.
+//
+// New password sources (first non-empty wins):
+//
+//	-password NEW         flag
+//	stdin (when piped)    one line, trailing newline stripped
+//	tty prompt            "new password: " — echoed; we don't link
+//	                      term-state libs from outside the stdlib.
+func cmdPasswd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("passwd", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	data := fs.String("data", defaultDataDir(), "data directory")
+	pass := fs.String("password", "", "new password (otherwise read from stdin)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfgPath := filepath.Join(*data, "config.json")
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "passwd: load config:", err)
+		return 1
+	}
+	if cfg.Auth.PasswordHash == "" {
+		fmt.Fprintln(stderr, "passwd: no existing password to replace — run `harborrs init` first.")
+		return 1
+	}
+	newp := *pass
+	if newp == "" {
+		newp, err = readPasswordFromStdin(stdout)
+		if err != nil {
+			fmt.Fprintln(stderr, "passwd:", err)
+			return 1
+		}
+	}
+	if len(newp) < 8 {
+		fmt.Fprintln(stderr, "passwd: new password must be at least 8 characters")
+		return 1
+	}
+	h, err := auth.HashPassword(newp)
+	if err != nil {
+		fmt.Fprintln(stderr, "passwd:", err)
+		return 1
+	}
+	cfg.Auth.PasswordHash = h
+	if err := config.Save(cfgPath, cfg); err != nil {
+		fmt.Fprintln(stderr, "passwd: save config:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "✓ password updated in %s\n", cfgPath)
+	fmt.Fprintln(stdout, "  restart any running `harborrs serve` to pick up the change.")
+	return 0
+}
+
+// readPasswordFromStdin reads a single line from os.Stdin. If stdin is
+// a terminal we prompt to stdout first. Either way, the input is
+// echoed — adding non-echo without dragging in golang.org/x/term needs
+// the aside-advisor escalation per AGENTS.md.
+var readPasswordFromStdin = func(stdout io.Writer) (string, error) {
+	st, _ := os.Stdin.Stat()
+	if st != nil && st.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprint(stdout, "new password: ")
+	}
+	buf := make([]byte, 0, 128)
+	one := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(one)
+		if n > 0 {
+			if one[0] == '\n' {
+				break
+			}
+			if one[0] != '\r' {
+				buf = append(buf, one[0])
+			}
+		}
+		if err != nil {
+			if len(buf) == 0 {
+				return "", fmt.Errorf("read password: %w", err)
+			}
+			break
+		}
+		if len(buf) > 1024 {
+			return "", fmt.Errorf("password too long")
+		}
+	}
+	return string(buf), nil
 }

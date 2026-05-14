@@ -271,6 +271,29 @@ func TestE2E(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "First post") {
 		t.Fatalf("ui feed: %d %s", resp.StatusCode, body)
 	}
+
+	// Bundled stylesheet must actually have rules — a previous stub
+	// regression shipped a 25-line CSS that left every page besides
+	// /ui/login looking unstyled in the browser. This assertion
+	// catches that without us needing to eyeball it.
+	resp = mustGet(t, uic, base+"/ui/static/style.css")
+	cssBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("css fetch: %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/css") {
+		t.Fatalf("css content-type: %q", ct)
+	}
+	if len(cssBody) < 4000 {
+		t.Fatalf("style.css suspiciously small (%d bytes) — looks like the stub regression",
+			len(cssBody))
+	}
+	for _, sel := range []string{"ul.feeds", "ul.entries", "header .nav", ".add-feed"} {
+		if !strings.Contains(string(cssBody), sel) {
+			t.Fatalf("style.css missing rule for %q — UI will render unstyled", sel)
+		}
+	}
 }
 
 func repoRoot(t *testing.T) string {

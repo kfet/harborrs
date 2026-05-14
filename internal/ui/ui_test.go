@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kfet/harborrs/internal/auth"
+	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/store"
 )
@@ -804,5 +805,225 @@ func TestRenderExecuteError(t *testing.T) {
 	srv.render(w, "broken", struct{}{})
 	if w.Code != 500 {
 		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+// ---- /ui/settings + /ui/settings/passwd -------------------------------
+
+// settingsFixture wires up an on-disk config.json so the password-change
+// flow has something to read and write. Returns the server, mux, auth
+// store, session token, and the config path.
+func settingsFixture(t *testing.T) (*Server, *http.ServeMux, *auth.Store, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := config.Default()
+	cfg.Auth.Username = "u"
+	cfg.Auth.PasswordHash = testPwHash
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), cfg.Auth)
+	srv, err := New(st, as, &memOPML{}, "light", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.ConfigPath = cfgPath
+	srv.StaticVer = "abc123"
+	mux := http.NewServeMux()
+	srv.Routes(mux)
+	tok, _ := as.IssueSession("u", "p")
+	return srv, mux, as, tok, cfgPath
+}
+
+func TestSettingsGet(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	w := do(mux, req("GET", "/ui/settings", tok, nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "change password") {
+		t.Fatalf("settings GET: %d %s", w.Code, w.Body.String())
+	}
+	// Cache-busting suffix appears.
+	if !strings.Contains(w.Body.String(), "style.css?v=abc123") {
+		t.Fatalf("missing static-ver bust: %s", w.Body.String())
+	}
+}
+
+func TestSettingsGetOkBanner(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	w := do(mux, req("GET", "/ui/settings?ok=1", tok, nil))
+	if !strings.Contains(w.Body.String(), "password updated") {
+		t.Fatalf("missing ok banner: %s", w.Body.String())
+	}
+}
+
+func TestSettingsMethodNotAllowed(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	r := httptest.NewRequest("PUT", "/ui/settings", nil)
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := do(mux, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestSettingsDisabledWhenNoConfigPath(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t) // fixture leaves ConfigPath == ""
+	w := do(mux, req("GET", "/ui/settings", tok, nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+	w = do(mux, req("POST", "/ui/settings/passwd", tok, url.Values{"old": {"p"}, "new": {"newpass1"}, "confirm": {"newpass1"}}))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("passwd expected 404, got %d", w.Code)
+	}
+}
+
+func TestPasswdSuccess(t *testing.T) {
+	_, mux, as, tok, cfgPath := settingsFixture(t)
+	form := url.Values{"old": {"p"}, "new": {"newsecret"}, "confirm": {"newsecret"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); !strings.Contains(loc, "/ui/login?passwd=1") {
+		t.Fatalf("redirect=%q", loc)
+	}
+	// Old password no longer verifies.
+	if err := as.Verify("u", "p"); err == nil {
+		t.Fatal("old password still verifies")
+	}
+	if err := as.Verify("u", "newsecret"); err != nil {
+		t.Fatalf("new password should verify: %v", err)
+	}
+	// Persisted to disk.
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Auth.PasswordHash == testPwHash {
+		t.Fatal("config.json was not rewritten")
+	}
+	// Existing session revoked.
+	if as.CheckSession(tok) {
+		t.Fatal("session should be revoked")
+	}
+}
+
+func TestPasswdLoginShowsBanner(t *testing.T) {
+	_, mux, _, _, _ := settingsFixture(t)
+	w := do(mux, req("GET", "/ui/login?passwd=1", "", nil))
+	if !strings.Contains(w.Body.String(), "password changed") {
+		t.Fatalf("missing banner: %s", w.Body.String())
+	}
+}
+
+func TestPasswdMethodNotAllowed(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	w := do(mux, req("GET", "/ui/settings/passwd", tok, nil))
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestPasswdMismatch(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	form := url.Values{"old": {"p"}, "new": {"aaaaaaaa"}, "confirm": {"bbbbbbbb"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "do not match") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswdTooShort(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	form := url.Values{"old": {"p"}, "new": {"short"}, "confirm": {"short"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "at least 8") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswdWrongOld(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	form := url.Values{"old": {"WRONG"}, "new": {"newsecret"}, "confirm": {"newsecret"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "current password") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswdParseFormError(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	r := httptest.NewRequest("POST", "/ui/settings/passwd", strings.NewReader("%%"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := do(mux, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "bad form") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswdSaveError(t *testing.T) {
+	srv, mux, _, tok, cfgPath := settingsFixture(t)
+	// Lock down the directory so Load (read) still works but Save
+	// (atomic write of a tempfile in the same dir) cannot.
+	dir := filepath.Dir(cfgPath)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	_ = srv // ConfigPath is left pointing at the real cfgPath
+	form := url.Values{"old": {"p"}, "new": {"newsecret"}, "confirm": {"newsecret"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "save config") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPasswdLoadError(t *testing.T) {
+	srv, mux, _, tok, _ := settingsFixture(t)
+	// Point at a path containing junk JSON so config.Load errors.
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv.ConfigPath = bad
+	form := url.Values{"old": {"p"}, "new": {"newsecret"}, "confirm": {"newsecret"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "load config") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// HashPassword unconditionally returns "hash" + nil under normal stdlib.
+// To cover the hash-error branch of handlePasswd, monkey-patch it for
+// the duration of this test.
+func TestPasswdHashError(t *testing.T) {
+	_, mux, _, tok, _ := settingsFixture(t)
+	orig := authHashPasswordHook
+	t.Cleanup(func() { authHashPasswordHook = orig })
+	authHashPasswordHook = func(string) (string, error) { return "", errBoom }
+	form := url.Values{"old": {"p"}, "new": {"newsecret"}, "confirm": {"newsecret"}}
+	w := do(mux, req("POST", "/ui/settings/passwd", tok, form))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "hash:") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// ---- handleStatic cache-busting ---------------------------------------
+
+func TestStaticCacheControl(t *testing.T) {
+	_, mux, _, _, _, _ := fixture(t)
+	w := do(mux, req("GET", "/ui/static/style.css?v=abc", "", nil))
+	if cc := w.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("immutable cache: %q", cc)
+	}
+	w = do(mux, req("GET", "/ui/static/style.css", "", nil))
+	if cc := w.Header().Get("Cache-Control"); cc != "public, max-age=60" {
+		t.Fatalf("revalidate cache: %q", cc)
 	}
 }
