@@ -275,6 +275,20 @@ button.primary:hover,
   font-size: 0.95em;
 }
 .home-actions .addlink:hover { filter: brightness(1.08); text-decoration: none; }
+.home-actions .filter {
+  display: inline-block;
+  padding: 0.45em 0.9em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-soft);
+  font-size: 0.95em;
+}
+.home-actions .filter:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.home-actions .filter.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 ul.feeds {
   list-style: none;

@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Home page (`/ui/`) gained a "show unread only" filter toggle. With
+  `?unread=1` the feed list hides feeds whose unread count is 0, so
+  triage-by-feed only walks the feeds that actually have something
+  new. Counter on the toggle shows how many feeds qualify. Empty
+  state when nothing's unread says "all caught up".
 - Each entry row now shows the published timestamp (compact relative:
   `now` / `Nm` / `Nh` / `Nd`, then `Jan 02` for same-year, ISO date for
   older). `title` attribute carries the full local time on hover.

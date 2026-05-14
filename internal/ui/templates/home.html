@@ -6,6 +6,7 @@
 
 <div class="home-actions">
 <a href="/ui/feed/new" class="addlink">+ add feed</a>
+{{if .UnreadOnly}}<a href="/ui/" class="filter active">unread only ({{.WithUnread}}) ×</a>{{else}}<a href="/ui/?unread=1" class="filter">show unread only ({{.WithUnread}})</a>{{end}}
 </div>
 
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
@@ -17,7 +18,7 @@
 <span class="count">{{.Unread}}</span>
 </li>
 {{else}}
-<li class="empty">no feeds yet — click <a href="/ui/feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code></li>
+<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="/ui/">show all feeds</a>{{else}}no feeds yet — click <a href="/ui/feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
 {{end}}
 </ul>
 </section>

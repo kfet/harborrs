@@ -228,8 +228,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	unreadOnly := r.URL.Query().Get("unread") == "1"
 	feeds := make([]homeFeed, 0, len(op.Feeds))
 	total := 0
+	withUnread := 0
 	for _, f := range op.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		es, err := s.Store.ListEntries(fh)
@@ -244,13 +246,21 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		total += count
+		if count > 0 {
+			withUnread++
+		}
+		if unreadOnly && count == 0 {
+			continue
+		}
 		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count})
 	}
 	data := struct {
 		baseData
-		Feeds []homeFeed
-		Total int
-	}{s.base(r), feeds, total}
+		Feeds      []homeFeed
+		Total      int
+		WithUnread int
+		UnreadOnly bool
+	}{s.base(r), feeds, total, withUnread, unreadOnly}
 	s.render(w, "home", data)
 }
 

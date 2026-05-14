@@ -1157,3 +1157,50 @@ func TestFormatPublished(t *testing.T) {
 		}
 	}
 }
+
+func TestHomeUnreadFilter(t *testing.T) {
+	srv, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://x/empty", Title: "Empty"},
+		{XMLURL: "https://x/hot", Title: "Hot"},
+	}
+	// Hot has an unread entry; Empty has nothing.
+	now := time.Now()
+	fh := store.FeedHash("https://x/hot")
+	if _, err := st.AppendEntries(fh, []store.Entry{
+		{GUID: "1", Title: "post", Published: now, FetchedAt: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = srv
+	// Without filter: both feeds + (1 unread).
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "Empty") || !strings.Contains(body, "Hot") {
+		t.Fatalf("expected both feeds in default view: %s", body)
+	}
+	if !strings.Contains(body, "show unread only (1)") {
+		t.Fatalf("expected toggle to say (1): %s", body)
+	}
+	// With filter: only Hot.
+	w = do(mux, req("GET", "/ui/?unread=1", tok, nil))
+	body = w.Body.String()
+	if strings.Contains(body, "Empty") {
+		t.Fatalf("Empty should be filtered out: %s", body)
+	}
+	if !strings.Contains(body, "Hot") {
+		t.Fatalf("Hot should still be there: %s", body)
+	}
+	if !strings.Contains(body, "unread only (1) ×") {
+		t.Fatalf("expected active filter pill: %s", body)
+	}
+}
+
+func TestHomeUnreadFilterAllCaughtUp(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/empty", Title: "Empty"}}
+	w := do(mux, req("GET", "/ui/?unread=1", tok, nil))
+	if !strings.Contains(w.Body.String(), "all caught up") {
+		t.Fatalf("expected caught-up empty state: %s", w.Body.String())
+	}
+}
