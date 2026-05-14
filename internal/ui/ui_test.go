@@ -1027,3 +1027,118 @@ func TestStaticCacheControl(t *testing.T) {
 		t.Fatalf("revalidate cache: %q", cc)
 	}
 }
+
+// ---- /ui/feed/new -----------------------------------------------------
+
+type stubPreviewer struct {
+	called string
+	out    *FeedPreview
+	err    error
+}
+
+func (s *stubPreviewer) Preview(u string) (*FeedPreview, error) {
+	s.called = u
+	return s.out, s.err
+}
+
+func TestFeedNewGet(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	w := do(mux, req("GET", "/ui/feed/new", tok, nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "feed URL") {
+		t.Fatalf("get: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestFeedNewPostPreview(t *testing.T) {
+	srv, mux, _, _, tok, _ := fixture(t)
+	srv.Previewer = &stubPreviewer{out: &FeedPreview{
+		Title:       "Example",
+		Description: "an example feed",
+		Link:        "https://example.com",
+		Items:       []FeedPreviewItem{{Title: "Hello"}, {Title: "World"}},
+	}}
+	w := do(mux, req("POST", "/ui/feed/new", tok, url.Values{"url": {"https://example.com/feed.xml"}}))
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	b := w.Body.String()
+	for _, want := range []string{"Example", "an example feed", "Hello", "World", "subscribe"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("missing %q in: %s", want, b)
+		}
+	}
+}
+
+func TestFeedNewPostMissingURL(t *testing.T) {
+	srv, mux, _, _, tok, _ := fixture(t)
+	srv.Previewer = &stubPreviewer{}
+	w := do(mux, req("POST", "/ui/feed/new", tok, url.Values{}))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "feed URL is required") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestFeedNewPostNoPreviewer(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t) // fixture leaves Previewer nil
+	w := do(mux, req("POST", "/ui/feed/new", tok, url.Values{"url": {"https://x/"}}))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestFeedNewPostPreviewError(t *testing.T) {
+	srv, mux, _, _, tok, _ := fixture(t)
+	srv.Previewer = &stubPreviewer{err: berr("nope")}
+	w := do(mux, req("POST", "/ui/feed/new", tok, url.Values{"url": {"https://x/"}}))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "could not fetch feed") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestFeedNewPostParseFormError(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	r := httptest.NewRequest("POST", "/ui/feed/new", strings.NewReader("%%"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := do(mux, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestFeedNewMethodNotAllowed(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	r := httptest.NewRequest("PUT", "/ui/feed/new", nil)
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := do(mux, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+// ---- formatPublished --------------------------------------------------
+
+func TestFormatPublished(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	cases := []struct{ in, want string }{
+		{"", ""}, // zero
+		{"2026-06-15T11:59:50Z", "now"},
+		{"2026-06-15T11:30:00Z", "30m"},
+		{"2026-06-15T08:00:00Z", "4h"},
+		{"2026-06-13T12:00:00Z", "2d"},
+		{"2026-05-15T12:00:00Z", "May 15"}, // same year, >7d
+		{"2025-06-15T12:00:00Z", "2025-06-15"},
+	}
+	for _, c := range cases {
+		var got string
+		if c.in == "" {
+			got = formatPublished(time.Time{}, now)
+		} else {
+			tp, _ := time.Parse(time.RFC3339, c.in)
+			got = formatPublished(tp, now)
+		}
+		if got != c.want {
+			t.Errorf("formatPublished(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+}

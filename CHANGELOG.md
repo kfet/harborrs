@@ -6,6 +6,40 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Each entry row now shows the published timestamp (compact relative:
+  `now` / `Nm` / `Nh` / `Nd`, then `Jan 02` for same-year, ISO date for
+  older). `title` attribute carries the full local time on hover.
+- Web UI: dedicated **add-feed page** at `/ui/feed/new`. GET shows an
+  empty form; POST fetches the URL with a bounded HTTP client (15 s
+  timeout, 5 MiB read cap) and renders a preview (feed title +
+  description + up to 10 recent item titles). User then clicks
+  *subscribe* to actually persist the subscription. Home page now
+  links to it instead of carrying an inline form.
+- New `internal/feedpreview` package wraps gofeed for the preview path
+  so the live polling path stays untouched.
+- Keyboard-help overlay: press <kbd>?</kbd> anywhere to toggle a
+  shortcuts cheatsheet (<kbd>Esc</kbd> or click backdrop to dismiss).
+  The list of shortcuts is rendered server-side in `base.html` so
+  overrides can rewrite it.
+- New `auto` theme that follows `prefers-color-scheme`. It is now the
+  default; existing configs with explicit `light` / `dark` / `sepia`
+  continue to work unchanged. Polished default light + Dracula-ish
+  dark palette.
+
+### Changed
+
+- "mark all read" on a single-feed view now redirects to `/ui/all`
+  (the unread cross-feed view) rather than back to the now-empty
+  feed page — the natural triage flow.
+- Default theme in `harborrs init`, `config.Default()`, and the UI
+  fallback is now `auto`.
+- Light stylesheet refresh: sticky header, accent-coloured focus
+  ring, pill-shaped unread count, hover-highlighted entry rows, a
+  proper card for login + add-feed + settings, blockquote +
+  underline styling tweaks for article body.
+
+### Added
+
 - `harborrs passwd [-data DIR] [-password NEW]` — CLI command to change
   the configured password. Reads from `-password`, otherwise prompts on
   stdin. Rewrites only `auth.password_hash` in `config.json`; a running

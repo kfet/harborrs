@@ -9,12 +9,14 @@ package ui
 
 import (
 	"embed"
+	"fmt"
 	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/config"
@@ -54,15 +56,20 @@ type Server struct {
 	// settings is hidden and the route returns 404.
 	ConfigPath string
 
+	// Previewer fetches+parses a feed for the add-feed preview page.
+	// Production callers point this at a poll.Poller-backed adapter.
+	// When nil, /ui/feed/new renders without preview support.
+	Previewer FeedPreviewer
+
 	// pages maps page name -> a fully-parsed template tree rooted at
 	// `base`. Per-page trees keep title/content blocks isolated.
 	pages map[string]*template.Template
 }
 
-// New builds a UI server. Theme defaults to "light".
+// New builds a UI server. Theme defaults to "auto".
 func New(s *store.Store, a *auth.Store, o OPMLProvider, theme, overrides string) (*Server, error) {
 	if theme == "" {
-		theme = "light"
+		theme = "auto"
 	}
 	srv := &Server{Store: s, Auth: a, OPML: o, Theme: theme, Overrides: overrides}
 	if err := srv.loadTemplates(); err != nil {
@@ -73,7 +80,7 @@ func New(s *store.Store, a *auth.Store, o OPMLProvider, theme, overrides string)
 
 // pageNames are the per-page template files we expect to find under
 // templates/ (besides base.html, which is the shared layout).
-var pageNames = []string{"login", "home", "feed", "entry", "settings"}
+var pageNames = []string{"login", "home", "feed", "entry", "settings", "newfeed"}
 
 // pageExtra files (beyond base.html) parsed into each page. Override in
 // tests to trigger ParseFS error paths.
@@ -121,6 +128,7 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/static/", s.handleStatic)
 	mux.HandleFunc("/ui/", s.requireSession(s.handleHome))
 	mux.HandleFunc("/ui/feed", s.requireSession(s.handleFeed))
+	mux.HandleFunc("/ui/feed/new", s.requireSession(s.handleFeedNew))
 	mux.HandleFunc("/ui/feed/add", s.requireSession(s.handleFeedAdd))
 	mux.HandleFunc("/ui/feed/remove", s.requireSession(s.handleFeedRemove))
 	mux.HandleFunc("/ui/all", s.requireSession(s.handleAllUnread))
@@ -247,11 +255,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 type feedEntry struct {
-	Hash      string
-	Title     string
-	Read      bool
-	Starred   bool
-	FeedTitle string // only set on cross-feed views
+	Hash         string
+	Title        string
+	Read         bool
+	Starred      bool
+	FeedTitle    string // only set on cross-feed views
+	Published    time.Time
+	PublishedFmt string // pre-formatted for display
 }
 
 type entryListData struct {
@@ -287,7 +297,14 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	entries := make([]feedEntry, 0, len(es))
 	for _, e := range es {
 		st := s.Store.EntryState(e.Hash)
-		entries = append(entries, feedEntry{Hash: e.Hash, Title: e.Title, Read: st.Read, Starred: st.Starred})
+		entries = append(entries, feedEntry{
+			Hash:         e.Hash,
+			Title:        e.Title,
+			Read:         st.Read,
+			Starred:      st.Starred,
+			Published:    e.Published,
+			PublishedFmt: formatPublished(e.Published, time.Now()),
+		})
 	}
 	s.render(w, "feed", entryListData{
 		baseData:    s.base(r),
@@ -341,11 +358,13 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 	for _, x := range all {
 		st := s.Store.EntryState(x.entry.Hash)
 		entries = append(entries, feedEntry{
-			Hash:      x.entry.Hash,
-			Title:     x.entry.Title,
-			Read:      st.Read,
-			Starred:   st.Starred,
-			FeedTitle: x.feedTitle,
+			Hash:         x.entry.Hash,
+			Title:        x.entry.Title,
+			Read:         st.Read,
+			Starred:      st.Starred,
+			FeedTitle:    x.feedTitle,
+			Published:    x.entry.Published,
+			PublishedFmt: formatPublished(x.entry.Published, time.Now()),
 		})
 	}
 	s.render(w, "feed", entryListData{
@@ -458,7 +477,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/ui/feed?id="+u, http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/all", http.StatusSeeOther)
 	case "all":
 		for _, f := range op.Feeds {
 			if err := mark(f.XMLURL); err != nil {
@@ -584,7 +603,14 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		return
 	}
-	row := feedEntry{Hash: hash, Title: e.Title, Read: st.Read, Starred: st.Starred}
+	row := feedEntry{
+		Hash:         hash,
+		Title:        e.Title,
+		Read:         st.Read,
+		Starred:      st.Starred,
+		Published:    e.Published,
+		PublishedFmt: formatPublished(e.Published, time.Now()),
+	}
 	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
 }
 
@@ -716,3 +742,99 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 // authHashPasswordHook is the seam tests swap to exercise the hash-error
 // branch of handlePasswd. Production callers go through auth.HashPassword.
 var authHashPasswordHook = auth.HashPassword
+
+// formatPublished returns a compact relative-or-absolute timestamp used
+// on entry list rows. <1h → "Nm", <24h → "Nh", <7d → "Nd", same year →
+// "Jan 02", older → "2006-01-02". Zero time renders as "" so old test
+// fixtures without a Published field don't show a stray label.
+func formatPublished(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	case t.Year() == now.Year():
+		return t.Format("Jan 02")
+	default:
+		return t.Format("2006-01-02")
+	}
+}
+
+// FeedPreview is the lightweight description the add-feed page renders
+// after a successful fetch. We deliberately don't reuse store.Entry —
+// the preview is purely visual and the user has not yet subscribed.
+type FeedPreview struct {
+	Title       string
+	Description string
+	Link        string
+	Items       []FeedPreviewItem
+}
+
+// FeedPreviewItem is one entry shown in the add-feed preview list.
+type FeedPreviewItem struct {
+	Title string
+}
+
+// FeedPreviewer fetches + parses a feed URL without persisting it.
+// Implementations should bound time + size and refuse non-feed content.
+type FeedPreviewer interface {
+	Preview(url string) (*FeedPreview, error)
+}
+
+// handleFeedNew renders the dedicated "add feed" page. GET shows an
+// empty form; POST fetches the URL via Previewer and shows a preview
+// underneath the form. The user then clicks "subscribe" which POSTs
+// to the existing /ui/feed/add handler.
+func (s *Server) handleFeedNew(w http.ResponseWriter, r *http.Request) {
+	type newFeedData struct {
+		baseData
+		URL     string
+		Folder  string
+		Preview *FeedPreview
+	}
+	d := newFeedData{baseData: s.base(r)}
+	switch r.Method {
+	case http.MethodGet:
+		s.render(w, "newfeed", d)
+	case http.MethodPost:
+		if err := r.ParseForm(); err != nil {
+			d.Error = err.Error()
+			w.WriteHeader(http.StatusBadRequest)
+			s.render(w, "newfeed", d)
+			return
+		}
+		d.URL = strings.TrimSpace(r.FormValue("url"))
+		d.Folder = strings.TrimSpace(r.FormValue("folder"))
+		if d.URL == "" {
+			d.Error = "feed URL is required"
+			w.WriteHeader(http.StatusBadRequest)
+			s.render(w, "newfeed", d)
+			return
+		}
+		if s.Previewer == nil {
+			d.Error = "preview not configured on this server"
+			w.WriteHeader(http.StatusServiceUnavailable)
+			s.render(w, "newfeed", d)
+			return
+		}
+		p, err := s.Previewer.Preview(d.URL)
+		if err != nil {
+			d.Error = "could not fetch feed: " + err.Error()
+			w.WriteHeader(http.StatusBadRequest)
+			s.render(w, "newfeed", d)
+			return
+		}
+		d.Preview = p
+		s.render(w, "newfeed", d)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}

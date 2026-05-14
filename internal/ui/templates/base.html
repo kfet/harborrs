@@ -23,5 +23,37 @@
 {{end}}
 </header>
 <main>{{block "content" .}}{{end}}</main>
+{{if .User}}
+<div id="kbd-backdrop" hidden></div>
+<div id="kbd-help" hidden role="dialog" aria-label="keyboard shortcuts">
+<h2>keyboard shortcuts</h2>
+<div class="kbd-section">
+<h3>navigation</h3>
+<table>
+<tr><td class="key"><kbd>j</kbd>/<kbd>↓</kbd></td><td>focus next entry</td></tr>
+<tr><td class="key"><kbd>k</kbd>/<kbd>↑</kbd></td><td>focus previous entry</td></tr>
+<tr><td class="key"><kbd>gg</kbd></td><td>first entry</td></tr>
+<tr><td class="key"><kbd>G</kbd></td><td>last entry</td></tr>
+<tr><td class="key"><kbd>Enter</kbd></td><td>open focused entry</td></tr>
+<tr><td class="key"><kbd>u</kbd></td><td>(entry view) back to parent feed</td></tr>
+</table>
+</div>
+<div class="kbd-section">
+<h3>actions</h3>
+<table>
+<tr><td class="key"><kbd>m</kbd></td><td>toggle read</td></tr>
+<tr><td class="key"><kbd>s</kbd></td><td>toggle star</td></tr>
+<tr><td class="key"><kbd>r</kbd></td><td>mark all read</td></tr>
+</table>
+</div>
+<div class="kbd-section">
+<h3>elsewhere</h3>
+<table>
+<tr><td class="key"><kbd>?</kbd></td><td>toggle this help</td></tr>
+<tr><td class="key"><kbd>Esc</kbd></td><td>close this help</td></tr>
+</table>
+</div>
+</div>
+{{end}}
 </body>
 </html>{{end}}

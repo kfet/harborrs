@@ -1,0 +1,40 @@
+{{define "newfeed"}}{{template "base" .}}{{end}}
+{{define "title"}}add feed — harborrs{{end}}
+{{define "content"}}
+<section class="add-feed">
+<h1>add feed</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+<form method="POST" action="/ui/feed/new">
+<label>feed URL
+<input type="url" name="url" value="{{.URL}}" placeholder="https://example.com/feed.xml" required autofocus></label>
+<button type="submit">preview</button>
+</form>
+
+{{if .Preview}}
+<div class="preview">
+<h2>{{.Preview.Title}}</h2>
+<p class="preview-meta">
+{{if .Preview.Description}}{{.Preview.Description}}<br>{{end}}
+<a href="{{.Preview.Link}}">{{.Preview.Link}}</a>
+{{if .Preview.Items}} · {{len .Preview.Items}} recent items{{end}}
+</p>
+
+{{if .Preview.Items}}
+<ul>
+{{range .Preview.Items}}<li>{{.Title}}</li>{{end}}
+</ul>
+{{end}}
+
+<form method="POST" action="/ui/feed/add" class="subscribe">
+<input type="hidden" name="url" value="{{.URL}}">
+<label>title
+<input type="text" name="title" value="{{.Preview.Title}}"></label>
+<label>folder (optional)
+<input type="text" name="folder" value="{{.Folder}}" placeholder="e.g. tech"></label>
+<button type="submit" class="primary">subscribe</button>
+</form>
+</div>
+{{end}}
+</section>
+{{end}}

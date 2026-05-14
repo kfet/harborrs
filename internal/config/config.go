@@ -31,7 +31,7 @@ type UIConfig struct {
 
 // Default returns a Config populated with sensible defaults.
 func Default() Config {
-	return Config{Listen: ":8088", UI: UIConfig{Theme: "light"}}
+	return Config{Listen: ":8088", UI: UIConfig{Theme: "auto"}}
 }
 
 // Load reads the config from path. Missing → Default(), no error.
@@ -51,7 +51,7 @@ func Load(path string) (Config, error) {
 		c.Listen = ":8088"
 	}
 	if c.UI.Theme == "" {
-		c.UI.Theme = "light"
+		c.UI.Theme = "auto"
 	}
 	return c, nil
 }

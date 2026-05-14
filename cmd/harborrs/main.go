@@ -30,6 +30,7 @@ import (
 	"github.com/kfet/harborrs"
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/config"
+	"github.com/kfet/harborrs/internal/feedpreview"
 	"github.com/kfet/harborrs/internal/poll"
 	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/selfupdate"
@@ -160,6 +161,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	uiSrv.Secure = cfg.UI.Secure
 	uiSrv.StaticVer = harborrs.Commit
 	uiSrv.ConfigPath = cfgPath
+	uiSrv.Previewer = feedpreview.New()
 	uiSrv.Routes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -306,7 +308,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	user := fs.String("username", "admin", "login username")
 	pass := fs.String("password", "", "login password (generated if empty)")
 	listen := fs.String("listen", ":8088", "listen address")
-	theme := fs.String("theme", "light", "ui theme: light|dark|sepia")
+	theme := fs.String("theme", "auto", "ui theme: auto|light|dark|sepia")
 	force := fs.Bool("force", false, "overwrite an existing config")
 	if err := fs.Parse(args); err != nil {
 		return 2

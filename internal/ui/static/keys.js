@@ -1,5 +1,9 @@
 // harborrs keyboard nav — minimal, no deps. Loaded from base.html.
 //
+// Global:
+//   ?      → toggle the keyboard-help overlay
+//   Esc    → close the overlay
+//
 // On entry-list views (/ui/feed, /ui/all, /ui/starred):
 //   j / ↓  → focus next entry row
 //   k / ↑  → focus previous entry row
@@ -15,9 +19,26 @@
 //   m      → mark read/unread
 //   s      → star/unstar
 //   u      → back to parent feed (the back-link in .meta)
-//   ?      → toggle a tiny help overlay
 (function () {
   "use strict";
+
+  // ---- global: ? help overlay --------------------------------------
+  const help = document.getElementById("kbd-help");
+  const backdrop = document.getElementById("kbd-backdrop");
+  const toggleHelp = (show) => {
+    if (!help) return;
+    const open = show === undefined ? help.hasAttribute("hidden") : show;
+    if (open) { help.removeAttribute("hidden"); backdrop && backdrop.removeAttribute("hidden"); }
+    else      { help.setAttribute("hidden", ""); backdrop && backdrop.setAttribute("hidden", ""); }
+  };
+  if (backdrop) backdrop.addEventListener("click", () => toggleHelp(false));
+  document.addEventListener("keydown", function (e) {
+    if (e.target.matches("input, textarea, select")) return;
+    if (e.key === "?") { toggleHelp(); e.preventDefault(); return; }
+    if (e.key === "Escape" && help && !help.hasAttribute("hidden")) {
+      toggleHelp(false); e.preventDefault(); return;
+    }
+  });
 
   const onListPage = !!document.querySelector("ul.entries");
   const onEntryPage = !!document.querySelector(".entry-full");
@@ -45,6 +66,7 @@
     let lastG = 0;
     document.addEventListener("keydown", function (e) {
       if (e.target.matches("input, textarea, select")) return;
+      if (help && !help.hasAttribute("hidden")) return; // help open → swallow
       switch (e.key) {
         case "j": case "ArrowDown": focusRow(idx + 1); e.preventDefault(); break;
         case "k": case "ArrowUp":   focusRow(idx - 1); e.preventDefault(); break;
@@ -74,6 +96,7 @@
   if (onEntryPage) {
     document.addEventListener("keydown", function (e) {
       if (e.target.matches("input, textarea, select")) return;
+      if (help && !help.hasAttribute("hidden")) return;
       switch (e.key) {
         case "m": {
           const b = document.querySelector(".actions button:nth-of-type(1)");
