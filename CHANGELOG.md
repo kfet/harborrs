@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Web UI was rendering with browser-default styling on every page
+  except `/ui/login` because the bundled `style.css` only had rules
+  for a handful of selectors. Fleshed out to a real (still
+  framework-less, ~7.5 KB) stylesheet covering header/nav, forms,
+  buttons, feed list, entry list/detail, the three themes
+  (light/dark/sepia), and a small-screen breakpoint. Overrides
+  (`<config_dir>/overrides/theme.css`) still load after this file
+  and continue to win.
+
 ### Changed
 
 - README: `brew tap kfet/harborrs` no longer needs the explicit URL

@@ -1,25 +1,322 @@
-:root {
+/* harborrs — bundled stylesheet.
+ *
+ * Themed via CSS custom properties on [data-theme="..."] so the built-in
+ * light/dark/sepia presets all share this one rule-set. Drop a
+ * <config_dir>/overrides/theme.css to override any of these vars (or any
+ * rule) — it's loaded *after* this file.
+ *
+ * Goals: legible, comfortable line lengths, no framework, no JS for
+ * layout. htmx swaps individual entry <li>s in place.
+ */
+
+/* ---- themes -------------------------------------------------------- */
+
+:root,
+[data-theme="light"] {
   --bg: #fafafa;
+  --bg-elev: #ffffff;
   --fg: #1a1a1a;
   --muted: #666;
   --accent: #2050b0;
+  --accent-fg: #ffffff;
   --border: #ddd;
+  --danger: #c00;
+  --star: #d4a017;
 }
+
 [data-theme="dark"] {
-  --bg: #181818; --fg: #ebebeb; --muted: #999; --accent: #6ba0ff; --border: #333;
+  --bg: #181818;
+  --bg-elev: #222;
+  --fg: #ebebeb;
+  --muted: #999;
+  --accent: #6ba0ff;
+  --accent-fg: #0b1320;
+  --border: #333;
+  --danger: #ff6b6b;
+  --star: #ffcd44;
 }
+
 [data-theme="sepia"] {
-  --bg: #f4ecd8; --fg: #3a2f1f; --muted: #7a6f5f; --accent: #884422; --border: #c8b89c;
+  --bg: #f4ecd8;
+  --bg-elev: #fbf6e6;
+  --fg: #3a2f1f;
+  --muted: #7a6f5f;
+  --accent: #884422;
+  --accent-fg: #fbf6e6;
+  --border: #c8b89c;
+  --danger: #a33;
+  --star: #b8860b;
 }
-html, body { background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; margin: 0; padding: 0; }
-header { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 1.2em; border-bottom: 1px solid var(--border); }
-header .brand { font-weight: bold; color: var(--accent); text-decoration: none; }
-main { max-width: 60em; margin: 1em auto; padding: 0 1em; }
-.entry { padding: 0.4em 0; border-bottom: 1px solid var(--border); }
-.entry.kb-focus { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 3px solid var(--accent); padding-left: 0.5em; }
-.entry.read a { color: var(--muted); }
-.entry.starred::before { content: "★ "; color: gold; }
-.count { color: var(--muted); margin-left: 0.5em; }
-.login form { display: flex; flex-direction: column; gap: 0.5em; max-width: 18em; }
-.err { color: #c00; }
-button { cursor: pointer; }
+
+/* ---- reset / base -------------------------------------------------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1, h2, h3 { font-weight: 600; line-height: 1.25; margin: 0 0 0.6em; }
+h1 { font-size: 1.6rem; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.05rem; }
+h1 small { font-size: 0.7em; color: var(--muted); font-weight: 400; }
+
+p { margin: 0 0 0.8em; }
+
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.3em;
+}
+pre { padding: 0.6em 0.8em; overflow-x: auto; }
+pre code { border: 0; padding: 0; background: transparent; }
+
+img { max-width: 100%; height: auto; }
+
+/* ---- header / nav -------------------------------------------------- */
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1em;
+  padding: 0.7em 1.2em;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+header .brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+header .nav {
+  display: flex;
+  gap: 1em;
+  flex: 1;
+}
+header .nav a { color: var(--fg); }
+header .nav a:hover { color: var(--accent); }
+header .logout { margin: 0; }
+header .logout button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 0.25em 0.7em;
+  border-radius: 3px;
+}
+header .logout button:hover { color: var(--fg); border-color: var(--fg); }
+
+/* ---- main / sections ---------------------------------------------- */
+
+main {
+  max-width: 60em;
+  margin: 1.5em auto;
+  padding: 0 1.2em;
+}
+
+.empty { color: var(--muted); font-style: italic; }
+.err   { color: var(--danger); }
+
+/* ---- forms / buttons (generic) ------------------------------------ */
+
+button,
+input[type="text"],
+input[type="url"],
+input[type="password"],
+input[type="email"] {
+  font: inherit;
+  color: inherit;
+  padding: 0.4em 0.7em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-elev);
+}
+input:focus, button:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button {
+  cursor: pointer;
+  background: var(--bg-elev);
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* primary submit-style buttons */
+.add-feed button,
+.login button {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.add-feed button:hover,
+.login button:hover {
+  filter: brightness(1.08);
+  color: var(--accent-fg);
+}
+
+/* ---- login -------------------------------------------------------- */
+
+.login {
+  max-width: 22em;
+  margin: 3em auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1.5em 1.8em;
+}
+.login form { display: flex; flex-direction: column; gap: 0.7em; }
+.login label { display: flex; flex-direction: column; gap: 0.2em; font-size: 0.9em; color: var(--muted); }
+
+/* ---- home (feed list) --------------------------------------------- */
+
+.add-feed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-bottom: 1.5em;
+}
+.add-feed input { flex: 1 1 14em; min-width: 10em; }
+
+ul.feeds {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+ul.feeds li {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.5em 0.2em;
+  border-bottom: 1px solid var(--border);
+}
+ul.feeds li a { flex: 1; color: var(--fg); }
+ul.feeds li a:hover { color: var(--accent); }
+ul.feeds li.empty {
+  display: block;
+  text-align: center;
+  padding: 1.2em;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9em;
+  min-width: 2em;
+  text-align: right;
+}
+
+form.inline { display: inline; margin: 0; }
+.remove {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  padding: 0 0.4em;
+  font-size: 1.1em;
+  line-height: 1;
+}
+.remove:hover { color: var(--danger); border-color: var(--danger); }
+
+/* ---- feed / entry list -------------------------------------------- */
+
+.markall-form { display: inline; margin: 0; font-size: 0.7em; vertical-align: middle; }
+.markall {
+  font-size: 0.85em;
+  padding: 0.2em 0.6em;
+  color: var(--muted);
+}
+
+ul.entries {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  padding: 0.55em 0.2em;
+  border-bottom: 1px solid var(--border);
+}
+.entry > a {
+  flex: 1;
+  color: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entry > a:hover { color: var(--accent); }
+.entry.read > a { color: var(--muted); font-weight: 400; }
+.entry:not(.read) > a { font-weight: 600; }
+.entry.starred::before { content: "★ "; color: var(--star); }
+.entry.kb-focus {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left: 3px solid var(--accent);
+  padding-left: 0.5em;
+}
+.entry .feed-tag {
+  color: var(--muted);
+  font-size: 0.8em;
+  flex-shrink: 0;
+}
+.entry .readbtn,
+.entry .starbtn {
+  font-size: 0.8em;
+  padding: 0.15em 0.5em;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ---- entry detail -------------------------------------------------- */
+
+.entry-full { max-width: 44em; margin: 0 auto; }
+.entry-full h1 { margin-bottom: 0.3em; }
+.entry-full .meta {
+  color: var(--muted);
+  font-size: 0.9em;
+  margin-bottom: 1em;
+  padding-bottom: 0.6em;
+  border-bottom: 1px solid var(--border);
+}
+.entry-full .actions {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 1.5em;
+}
+.entry-full .body {
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+.entry-full .body p { margin: 0 0 1em; }
+.entry-full .body blockquote {
+  margin: 0 0 1em;
+  padding: 0.2em 1em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.entry-full .body img { border-radius: 3px; margin: 0.5em 0; }
+
+/* ---- small screens ------------------------------------------------ */
+
+@media (max-width: 32em) {
+  header { gap: 0.6em; padding: 0.5em 0.8em; }
+  header .nav { gap: 0.6em; }
+  main { margin: 1em auto; padding: 0 0.8em; }
+  .entry > a { white-space: normal; }
+}
