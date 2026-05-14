@@ -33,6 +33,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `harborrs serve` now prints a clickable `http://host:port/` URL
+  instead of the raw `host:port` listen address — terminals (iTerm2,
+  Terminal.app, gnome-terminal, VS Code) auto-link it, so Cmd-click
+  opens the UI in the browser. Wildcard listens (`:8088`, `0.0.0.0`,
+  `[::]`) display as `localhost`.
 - "remove feed" moved out of the home feed list (where a stray click
   could unsubscribe by mistake) onto the per-feed page header, next
   to "mark all read", as an explicit `unsubscribe` button with a

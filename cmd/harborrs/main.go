@@ -197,7 +197,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 
 	errCh := make(chan error, 1)
 	go func() {
-		fmt.Fprintf(stdout, "harborrs listening on %s\n", cfg.Listen)
+		fmt.Fprintf(stdout, "harborrs listening on %s\n", listenURL(cfg.Listen))
 		errCh <- srv.ListenAndServe()
 	}()
 	select {
@@ -491,4 +491,70 @@ var readPasswordFromStdin = func(stdout io.Writer) (string, error) {
 		}
 	}
 	return string(buf), nil
+}
+
+// listenURL turns a Go-style listen address ("[host]:port") into a
+// clickable http://… URL. Terminals (Terminal.app, iTerm2, gnome-
+// terminal, VS Code) auto-link bare http URLs but not "host:port"
+// strings; printing the full scheme + path means cmd-click works.
+//
+// Rules:
+//
+//	:8088, 0.0.0.0:8088, [::]:8088  → http://localhost:8088/
+//	127.0.0.1:8088                   → http://127.0.0.1:8088/
+//	example.com:8088                 → http://example.com:8088/
+//
+// If parsing fails for any reason we return the raw addr so the user
+// still sees something useful.
+func listenURL(addr string) string {
+	host, port, ok := splitHostPort(addr)
+	if !ok {
+		return addr
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "localhost"
+	}
+	return fmt.Sprintf("http://%s:%s/", host, port)
+}
+
+// splitHostPort handles plain ":8088" (which net.SplitHostPort accepts)
+// and IPv6 in brackets. Returns ok=false on malformed input.
+func splitHostPort(addr string) (host, port string, ok bool) {
+	if addr == "" {
+		return "", "", false
+	}
+	// Strip an optional leading "[host]" form.
+	if addr[0] == ':' {
+		return "", addr[1:], len(addr) > 1
+	}
+	// Find the last ':' that isn't inside brackets.
+	last := -1
+	depth := 0
+	for i, c := range addr {
+		switch c {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ':':
+			if depth == 0 {
+				last = i
+			}
+		}
+	}
+	if last < 0 || last == len(addr)-1 {
+		return "", "", false
+	}
+	host = addr[:last]
+	port = addr[last+1:]
+	host = trimBrackets(host)
+	return host, port, true
+}
+
+func trimBrackets(s string) string {
+	if len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
