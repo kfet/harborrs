@@ -22,10 +22,13 @@ All notable changes to this project will be documented in this file.
   links to it instead of carrying an inline form.
 - New `internal/feedpreview` package wraps gofeed for the preview path
   so the live polling path stays untouched.
-- Keyboard-help overlay: press <kbd>?</kbd> anywhere to toggle a
-  shortcuts cheatsheet (<kbd>Esc</kbd> or click backdrop to dismiss).
-  The list of shortcuts is rendered server-side in `base.html` so
-  overrides can rewrite it.
+- Keyboard help: press <kbd>?</kbd> anywhere to toggle a shortcuts
+  cheatsheet. <kbd>j</kbd>/<kbd>k</kbd>/<kbd>gg</kbd>/<kbd>G</kbd>/
+  <kbd>Enter</kbd> now work on the **home feeds list** too (previously
+  only on entry-list views) — walk down feeds, hit Enter to open. The
+  `?` handler uses a capture-phase listener so it isn't shadowed by
+  page hotkeys, and the helper ignores keys typed inside any
+  `contenteditable` element on top of inputs/textareas/selects.
 - New `auto` theme that follows `prefers-color-scheme`. It is now the
   default; existing configs with explicit `light` / `dark` / `sepia`
   continue to work unchanged. Polished default light + Dracula-ish
