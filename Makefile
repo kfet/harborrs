@@ -1,4 +1,4 @@
-.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet run-tests open_coverage clean e2e release-local _all
+.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet lint-frontend run-tests open_coverage clean e2e release-local _all
 
 # Version metadata baked into the binary at link time. Override on the
 # command line for reproducible release builds: `make build VERSION=v0.1.1`.
@@ -41,7 +41,7 @@ all:
 
 # Internal aggregate target — every prereq is independent and self-
 # contained, so `make -j` can fan them out.
-_all: build build-matrix fmt vet run-tests e2e
+_all: build build-matrix fmt vet lint-frontend run-tests e2e
 
 # Build the harborrs binary into ./harborrs. Standalone target so a plain
 # `go build` failure is caught by `make all` without needing the e2e
@@ -91,6 +91,16 @@ fmt:
 
 vet:
 	$(call RUN,go vet clean,go vet ./...)
+
+# Static checks for the bundled CSS / HTML templates / JavaScript.
+# Pure-Go (no npm); if `node` is on PATH we also run `node --check`
+# on each JS file, otherwise the JS pass is skipped with a notice.
+# Fast (~500ms after first build); designed to catch the kinds of
+# regressions LLMs / humans keep introducing into these files (bad
+# CSS selector lists with at-rules, unterminated comments, broken
+# Go template syntax, JS that doesn't parse).
+lint-frontend:
+	$(call RUN,frontend lint,GOCACHE=$(CURDIR)/.cache/lintfrontend go run ./scripts/lintfrontend ./internal/ui)
 
 # Run unit tests with race + shuffle + fresh cache + 100% coverage gate.
 # Standalone — `make all` runs this in parallel with fmt/vet/e2e.

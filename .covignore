@@ -4,6 +4,10 @@
 # Entry point — wiring, flag parsing, signal handling, no behaviour worth a test.
 github.com/kfet/harborrs/cmd/harborrs/main.go
 
+# Frontend static-check helper — invoked via `make lint-frontend`,
+# not exercised by go test.
+github.com/kfet/harborrs/scripts/lintfrontend/main.go
+
 # End-to-end test package; exercised by `make e2e`, not unit tests.
 ^github.com/kfet/harborrs/e2e/
 
