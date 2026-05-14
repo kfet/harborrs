@@ -1,4 +1,4 @@
-.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 fmt vet run-tests open_coverage clean e2e release-local _all
+.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet run-tests open_coverage clean e2e release-local _all
 
 # Version metadata baked into the binary at link time. Override on the
 # command line for reproducible release builds: `make build VERSION=v0.1.1`.
@@ -52,12 +52,14 @@ build:
 # Cross-compile check across a matrix of targets. Compile-only, no
 # artefacts. CGO disabled to ensure portability. Pure-Go so each target
 # is just an env-var flip.
-build-matrix: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64
+build-matrix: build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64
 
 build-linux-amd64:
 	$(call RUN,build linux/amd64,CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
 build-linux-arm64:
 	$(call RUN,build linux/arm64,CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+build-linux-armv6:
+	$(call RUN,build linux/armv6,CGO_ENABLED=0 GOOS=linux  GOARCH=arm GOARM=6 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
 build-darwin-amd64:
 	$(call RUN,build darwin/amd64,CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
 build-darwin-arm64:
@@ -69,10 +71,12 @@ build-darwin-arm64:
 # without cutting a real release. Output is gitignored.
 release-local:
 	@rm -rf dist && mkdir -p dist
-	@for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
+	@for t in linux/amd64 linux/arm64 linux/armv6 darwin/amd64 darwin/arm64; do \
 		os=$${t%/*}; arch=$${t#*/}; name="harborrs-$(VERSION)-$$os-$$arch"; \
 		echo "→ $$name"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+		goarch=$$arch; goarm=; \
+		if [ "$$arch" = "armv6" ]; then goarch=arm; goarm=6; fi; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch GOARM=$$goarm go build -trimpath \
 			-ldflags='$(LDFLAGS)' -o dist/$$name/harborrs ./cmd/harborrs || exit $$?; \
 		cp LICENSE README.md dist/$$name/ 2>/dev/null || true; \
 		tar -C dist -czf dist/$$name.tar.gz $$name; \

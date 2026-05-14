@@ -117,7 +117,7 @@ func Run(currentVersion string, opts Options) error {
 
 	// 3. Download + verify.
 	verNoV := strings.TrimPrefix(target, "v")
-	asset := fmt.Sprintf("harborrs-%s-%s-%s.tar.gz", verNoV, runtime.GOOS, runtime.GOARCH)
+	asset := fmt.Sprintf("harborrs-%s-%s-%s.tar.gz", verNoV, runtime.GOOS, assetArch(runtime.GOARCH))
 	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", opts.Repo, target)
 	fmt.Fprintf(opts.Stdout, "downloading %s/%s\n", base, asset)
 
@@ -288,4 +288,13 @@ func extractBinary(tarPath, dst string) error {
 		return out.Close()
 	}
 	return errors.New("harborrs binary not found in archive")
+}
+
+// assetArch maps runtime.GOARCH to the arch suffix used in release asset
+// names. GOARCH=arm (with GOARM=6 in our matrix) is published as "armv6".
+func assetArch(goarch string) string {
+	if goarch == "arm" {
+		return "armv6"
+	}
+	return goarch
 }

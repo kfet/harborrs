@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-14
+
+### Added
+
+- Build matrix now also cross-compiles `linux/armv6` (Raspberry Pi 1 / Zero).
+- Release pipeline auto-publishes the Homebrew formula to the
+  `kfet/homebrew-harborrs` tap on every tagged release (rendered from
+  `packaging/homebrew/harborrs.rb.tmpl` using the just-built tarball
+  checksums). Requires a `HOMEBREW_TAP_TOKEN` repo secret.
+
+### Changed
+
+- `install.sh` and `harborrs update` now resolve `armv6l`/`armv7l` and
+  `GOARCH=arm` to the new `linux-armv6` release asset (previously
+  rejected as unsupported).
+
 ## [0.2.0] - 2026-05-13
 
 ### Added

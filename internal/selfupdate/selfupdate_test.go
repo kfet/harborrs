@@ -383,3 +383,16 @@ func TestResolveLatest_NewRequestError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestAssetArch(t *testing.T) {
+	cases := map[string]string{
+		"arm":   "armv6",
+		"arm64": "arm64",
+		"amd64": "amd64",
+	}
+	for in, want := range cases {
+		if got := assetArch(in); got != want {
+			t.Errorf("assetArch(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

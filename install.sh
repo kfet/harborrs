@@ -32,8 +32,7 @@ esac
 case "${uname_m}" in
     x86_64|amd64)   arch=amd64 ;;
     aarch64|arm64)  arch=arm64 ;;
-    armv7l|armv6l)
-        die "32-bit ARM (${uname_m}) is not prebuilt — install Go and run: go install github.com/${REPO}/cmd/harborrs@latest" ;;
+    armv6l|armv7l) arch=armv6 ;;
     *)              die "unsupported arch: ${uname_m}" ;;
 esac
 
