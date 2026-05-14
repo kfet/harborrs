@@ -43,9 +43,11 @@ All notable changes to this project will be documented in this file.
   to "mark all read", as an explicit `unsubscribe` button with a
   confirm prompt. Cross-feed views (`/ui/all`, `/ui/starred`) don't
   show it — only the single-feed view (`/ui/feed?id=...`).
-- "mark all read" on a single-feed view now redirects to `/ui/all`
-  (the unread cross-feed view) rather than back to the now-empty
-  feed page — the natural triage flow.
+- "mark all read" on a single-feed view now redirects to the home
+  feeds list filtered to unread-only (`/ui/?unread=1`) so you keep
+  walking the queue of feeds-with-unread instead of either staring
+  at the now-empty feed or context-switching into the flat unread
+  list.
 - Default theme in `harborrs init`, `config.Default()`, and the UI
   fallback is now `auto`.
 - Light stylesheet refresh: sticky header, accent-coloured focus

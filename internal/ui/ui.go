@@ -487,7 +487,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/ui/all", http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/?unread=1", http.StatusSeeOther)
 	case "all":
 		for _, f := range op.Feeds {
 			if err := mark(f.XMLURL); err != nil {

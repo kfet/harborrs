@@ -474,6 +474,12 @@ func TestMarkAllReadFeed(t *testing.T) {
 	if w.Code != 303 {
 		t.Fatalf("code=%d", w.Code)
 	}
+	// After marking a feed read, send the user back to the feeds list
+	// (unread-filtered) so they keep walking down the queue rather than
+	// staring at the feed they just cleared.
+	if loc := w.Header().Get("Location"); loc != "/ui/?unread=1" {
+		t.Fatalf("redirect=%q", loc)
+	}
 	for _, e := range mustList(t, st, u) {
 		if !st.EntryState(e.Hash).Read {
 			t.Fatalf("not read: %s", e.Hash)
