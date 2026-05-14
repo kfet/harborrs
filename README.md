@@ -29,7 +29,7 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 **macOS (and Linux with Homebrew):**
 
 ```sh
-brew tap kfet/harborrs https://github.com/kfet/harborrs
+brew tap kfet/harborrs
 brew install kfet/harborrs/harborrs
 ```
 
@@ -42,9 +42,10 @@ curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh
 ```
 
 Drops the binary in `/usr/local/bin` (or `~/.local/bin` if that isn't
-writable). Supports `linux/amd64`, `linux/arm64`, `darwin/amd64`,
-`darwin/arm64`. Override the target version with `VERSION=v0.1.0` or
-the install prefix with `PREFIX=$HOME/.local`.
+writable). Supports `linux/amd64`, `linux/arm64`, `linux/armv6`
+(Raspberry Pi 1 / Zero), `darwin/amd64`, `darwin/arm64`. Override the
+target version with `VERSION=v0.1.0` or the install prefix with
+`PREFIX=$HOME/.local`.
 
 Once installed, `harborrs update` will pull the latest release in
 place — except when the binary is owned by a package manager (Homebrew,

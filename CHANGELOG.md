@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- README: `brew tap kfet/harborrs` no longer needs the explicit URL
+  (proper `homebrew-harborrs` tap repo now exists); install.sh
+  arch list updated to include `linux/armv6`.
+
 ## [0.2.1] - 2026-05-14
 
 ### Added
