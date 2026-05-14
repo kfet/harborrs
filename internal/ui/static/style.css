@@ -40,11 +40,11 @@
   --mono:       ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* Dracula-ish (used by [data-theme="dark"] explicitly, AND by auto when
- * the system reports prefers-color-scheme: dark). */
-[data-theme="dark"],
+/* Dracula-ish dark: applied when [data-theme="auto"] resolves to
+ * dark via prefers-color-scheme, OR when [data-theme="dark"] is
+ * set explicitly. Kept in one variables block so both paths agree
+ * pixel-for-pixel. */
 @media (prefers-color-scheme: dark) {
-  :root,
   [data-theme="auto"] {
     --bg:         #282a36; /* dracula bg */
     --bg-elev:    #313442;
@@ -79,6 +79,7 @@
   --danger:     #ff5555;
   --ok:         #50fa7b;
   --star:       #f1fa8c;
+  --shadow:     0 1px 0 rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.3);
 }
 
 [data-theme="sepia"] {
