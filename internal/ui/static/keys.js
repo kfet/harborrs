@@ -5,6 +5,7 @@
 //   Esc    → close overlay
 //   u      → up the hierarchy (entry view → parent feed; any other
 //            authenticated page → home /ui/)
+//   N / n  → toggle "show unread only" filter (home + per-feed views)
 //
 // On any list view — home feeds (/ui/) and entry lists
 // (/ui/feed, /ui/all, /ui/starred):
@@ -111,6 +112,19 @@
     const path = window.location.pathname;
     if (path === "/ui/" || path === "/ui") return;  // already at top
     window.location.href = "/ui/";
+    e.preventDefault();
+  });
+
+  // ---- N — toggle "show unread only" filter ------------------------
+  // Wherever the page renders an `a.filter` pill (home and per-feed
+  // entry list), pressing N navigates to the URL the pill points to.
+  // No-op on pages without the pill (entry view, /ui/all, /ui/starred).
+  document.addEventListener("keydown", function (e) {
+    if (inEditable(e) || helpOpen()) return;
+    if (e.key !== "N" && e.key !== "n") return;
+    const pill = $("a.filter");
+    if (!pill) return;
+    window.location.href = pill.href;
     e.preventDefault();
   });
 

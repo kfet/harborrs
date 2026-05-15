@@ -6,6 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Keyboard shortcut: <kbd>N</kbd> toggles the "show unread only"
+  filter on the home feed list and per-feed entry list (anywhere the
+  pill is rendered). No-op on pages without the pill.
 - Theme toggle button in the header — small circular button (◐/●/○)
   that cycles **auto → dark → light → auto** on click. Choice is
   persisted in the browser's `localStorage` (key `harborrs.theme`)
