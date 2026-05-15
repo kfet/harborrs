@@ -104,14 +104,30 @@
   // ---- universal "u" — up the hierarchy ----------------------------
   // Entry view has its own `u` handler (back to parent feed) below.
   // On any other authenticated page that isn't already the home feed
-  // list, `u` goes to /ui/.
+  // list, `u` goes to /ui/. When we arrived from /ui/ (with whatever
+  // filter the user had), prefer history.back() so the pill state and
+  // scroll position are preserved.
+  const sameOriginRef = function () {
+    const r = document.referrer;
+    if (!r) return null;
+    try {
+      const u = new URL(r);
+      if (u.origin !== window.location.origin) return null;
+      return u;
+    } catch (_) { return null; }
+  };
   document.addEventListener("keydown", function (e) {
     if (inEditable(e) || helpOpen()) return;
     if (e.key !== "u") return;
     if ($(".entry-full")) return;          // entry view handles its own `u`
     const path = window.location.pathname;
     if (path === "/ui/" || path === "/ui") return;  // already at top
-    window.location.href = "/ui/";
+    const ref = sameOriginRef();
+    if (ref && (ref.pathname === "/ui/" || ref.pathname === "/ui")) {
+      window.history.back();
+    } else {
+      window.location.href = "/ui/";
+    }
     e.preventDefault();
   });
 
@@ -239,8 +255,22 @@
           break;
         }
         case "u": {
-          const a = $(".meta a[href^='/ui/feed?']");
-          if (a) window.location.href = a.href;
+          // Prefer going back via history when we came from a list
+          // page on the same origin — that restores the unread-only
+          // pill state, scroll position, and (via our bfcache reload)
+          // shows the fresh read/star state. Fall back to the
+          // canonical parent feed link in the meta line.
+          const ref = sameOriginRef();
+          const isListPath = function (p) {
+            return p === "/ui/" || p === "/ui" ||
+                   p === "/ui/feed" || p === "/ui/all" || p === "/ui/starred";
+          };
+          if (ref && isListPath(ref.pathname)) {
+            window.history.back();
+          } else {
+            const a = $(".meta a[href^='/ui/feed?']");
+            if (a) window.location.href = a.href;
+          }
           break;
         }
       }

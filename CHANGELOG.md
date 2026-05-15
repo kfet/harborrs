@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- The "source" link on the entry view opens the article in a new tab
+  (`target="_blank" rel="noopener noreferrer"`) so the harborrs UI
+  doesn't get clobbered by the article. Marked with a `↗` glyph.
+- Pressing <kbd>u</kbd> now prefers `history.back()` when you arrived
+  from a same-origin list page — so the "show unread only" pill state
+  and scroll position are preserved on the way up. Falls back to the
+  canonical parent URL when there's no list-page referrer.
 - Keyboard shortcut: <kbd>N</kbd> toggles the "show unread only"
   filter on the home feed list and per-feed entry list (anywhere the
   pill is rendered). No-op on pages without the pill.
