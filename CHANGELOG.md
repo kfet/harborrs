@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Per-feed entry list (`/ui/feed?id=…`) gained the same "show unread
+  only" toggle pill as the home feed list. `?unread=1` hides read
+  entries; counter shows how many are unread; empty state when nothing
+  is unread says "all caught up".
 - Keyboard nav: <kbd>u</kbd> now goes "up the hierarchy" universally —
   on the entry view it goes to the parent feed (unchanged), on
   `/ui/feed`, `/ui/all`, `/ui/starred`, `/ui/feed/new`, and `/ui/settings`

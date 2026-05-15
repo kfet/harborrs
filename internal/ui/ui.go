@@ -281,6 +281,8 @@ type entryListData struct {
 	ShowMarkAll bool
 	Scope       string // "feed" | "all" | "starred"
 	ScopeID     string // feed URL when Scope == "feed"
+	UnreadOnly  bool   // when true, Entries has been filtered to unread
+	UnreadCount int    // unread count for this scope (pre-filter)
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -304,9 +306,17 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	unreadOnly := r.URL.Query().Get("unread") == "1"
 	entries := make([]feedEntry, 0, len(es))
+	unreadCount := 0
 	for _, e := range es {
 		st := s.Store.EntryState(e.Hash)
+		if !st.Read {
+			unreadCount++
+		}
+		if unreadOnly && st.Read {
+			continue
+		}
 		entries = append(entries, feedEntry{
 			Hash:         e.Hash,
 			Title:        e.Title,
@@ -323,6 +333,8 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		ShowMarkAll: true,
 		Scope:       "feed",
 		ScopeID:     urlS,
+		UnreadOnly:  unreadOnly,
+		UnreadCount: unreadCount,
 	})
 }
 

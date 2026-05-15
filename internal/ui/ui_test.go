@@ -220,6 +220,21 @@ func TestFeedAndEntry(t *testing.T) {
 	if w := do(mux, req("GET", "/ui/entry?id=nosuch", tok, nil)); w.Code != 404 {
 		t.Fatalf("entry nosuch=%d", w.Code)
 	}
+	// unread-only filter on a feed: mark first entry read, then ?unread=1
+	// should hide it (and trigger the !st.Read==false continue branch).
+	if err := st.SetRead(es[0].Hash, true); err != nil {
+		t.Fatalf("setread: %v", err)
+	}
+	wu := do(mux, req("GET", "/ui/feed?id="+u+"&unread=1", tok, nil))
+	if wu.Code != 200 {
+		t.Fatalf("feed unread code=%d", wu.Code)
+	}
+	if strings.Contains(wu.Body.String(), "id=\"entry-"+es[0].Hash+"\"") {
+		t.Fatalf("read entry should be filtered out by ?unread=1")
+	}
+	if !strings.Contains(wu.Body.String(), "unread only") {
+		t.Fatalf("unread-only pill missing: %s", wu.Body.String())
+	}
 }
 
 func TestFeedAndEntryErrors(t *testing.T) {
