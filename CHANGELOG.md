@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-14
+
 ### Added
 
 - Home page (`/ui/`) gained a "show unread only" filter toggle. With
