@@ -18,20 +18,14 @@ real subscriptions DB.
 ## Confirm with the user before acting
 
 1. **Host** — ssh target (`user@host`). Linux or macOS.
-2. **Funnel layout** — harborrs serves at `/` and emits **absolute**
-   redirect/link paths (e.g. `Location: /ui/`). It has no path-prefix
-   flag, so the only working funnel layout is **root mount**:
-   - funnel `127.0.0.1:8088` on `/` (default).
-   - Public URL: `https://<host>.<tailnet>.ts.net/`.
-   - This means one harborrs per tailnet hostname. If the host already
-     funnels something else at `/`, give harborrs its own host (or
-     run it behind a real reverse proxy that can rewrite Location
-     headers — out of scope here).
-   - **Do not use `--set-path=/rss` etc.** Funnel will strip the
-     prefix correctly on the request side, but harborrs's responses
-     contain absolute paths like `/ui/login` which the browser
-     resolves against the funnel hostname — landing outside the
-     prefix and 404'ing at the tailscale edge.
+2. **Funnel layout**:
+   - **(a) Dedicated host** — funnel `127.0.0.1:8088` on `/`. Public
+     URL: `https://<host>.<tailnet>.ts.net/`.
+   - **(b) Prefix** — funnel `127.0.0.1:<port>` on `/<prefix>` (e.g.
+     `/rss`). Funnel **strips** `/<prefix>` before forwarding, and
+     harborrs's UI emits only relative URLs (since v0.3.1) so the
+     prefix is transparent to the app. Public URL:
+     `https://<host>.<tailnet>.ts.net/<prefix>/`.
 3. **Install method**:
    - **Linux**: `install.sh` from a tagged release (default).
    - **macOS**: `brew install kfet/harborrs/harborrs` (default).
@@ -159,11 +153,6 @@ launchctl print gui/$UID/dev.<user>.harborrs-test | head
 
 ### 4. Funnel the test port and verify end-to-end
 
-The test instance uses a prefix mount only because we have to coexist
-with the prod instance during verify — and we accept that some flows
-(anything that follows a redirect) will look broken under the prefix.
-The smoke tests below stay on single-hop endpoints that don't redirect.
-
 ```bash
 ssh <host> 'sudo tailscale funnel --bg --set-path=/rss-test 127.0.0.1:8089'
 ssh <host> 'tailscale serve status'
@@ -172,9 +161,12 @@ ssh <host> 'tailscale serve status'
 From your workstation:
 
 ```bash
-# Single-hop UI endpoint (avoids the absolute-redirect trap).
-curl -sf -o /dev/null -w '%{http_code}\n' \
-  https://<host>.<tailnet>.ts.net/rss-test/ui/login    # expect 200
+# Browser-equivalent: GET /rss-test/ follows the redirect chain to the
+# login page. With the relative-URL UI (v0.3.1+), this lands on
+# /rss-test/ui/login under the prefix, returning 200.
+curl -sL --max-time 20 -o /dev/null \
+  -w 'final=%{url_effective} code=%{http_code}\n' \
+  https://<host>.<tailnet>.ts.net/rss-test/
 
 # Reader API — ClientLogin against the test creds.
 curl -s -X POST \
@@ -182,15 +174,11 @@ curl -s -X POST \
   https://<host>.<tailnet>.ts.net/rss-test/accounts/ClientLogin
 ```
 
-Expect `200` for the login page, and a body containing `SID=` / `Auth=`
-lines for `ClientLogin`. `404` → funnel prefix mismatch on the
-single-hop endpoint itself. Connection refused → service didn't bind
-to 127.0.0.1; check unit logs (`journalctl --user -u harborrs-test -f`
-/ `tail -f ~/Library/Logs/harborrs-test.err.log`).
-
-Skip the `GET /rss-test/` smoke — it 303's to absolute `/ui/` which
-escapes the prefix and 404's. That's a property of the prefix mount,
-not a real bug; the prod mount at `/` won't have this issue.
+Expect the curl to end at `/rss-test/ui/login` with `code=200`, and
+`ClientLogin` to return `SID=…/Auth=…`. Connection refused → service
+didn't bind to 127.0.0.1; check unit logs
+(`journalctl --user -u harborrs-test -f` / `tail -f
+~/Library/Logs/harborrs-test.err.log`).
 
 ### 5. Promote: enable the prod unit, retire the test unit
 
@@ -211,23 +199,24 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.<user>.harborrs.plist
 (`loginctl enable-linger` keeps the user unit running across logouts
 and reboots; without it the service dies when the SSH session ends.)
 
-Switch funnel: replace the test-prefix mapping with a **root** mapping
-pointing at the prod port. The test prefix must go away — harborrs
-needs `/` to itself for absolute redirects to land back on the same
-host.
+Switch funnel: replace the test-prefix mapping with the prod
+mapping. The prod mapping can be either the host root or a prefix
+(`/rss`) — the UI is prefix-agnostic since v0.3.1.
 
 ```bash
 # Remove test mapping
 ssh <host> 'sudo tailscale funnel --https=443 --set-path=/rss-test off'
 
-# Mount prod at root
-ssh <host> 'sudo tailscale funnel --bg 127.0.0.1:8088'
+# Mount prod under the public path you want (here: /rss)
+ssh <host> 'sudo tailscale funnel --bg --set-path=/rss 127.0.0.1:8088'
 ssh <host> 'tailscale serve status'
 ```
 
-If a stale funnel mapping refuses to clear, `tailscale serve reset`
-wipes all mappings on the host (destructive on multi-tenant boxes,
-fine on a dedicated harborrs host).
+If you'd rather have harborrs at the host root, drop `--set-path` and
+the public URL becomes `https://<host>.<tailnet>.ts.net/`. If a stale
+funnel mapping refuses to clear, `tailscale serve reset` wipes all
+mappings on the host (destructive on multi-tenant boxes, fine on a
+dedicated harborrs host).
 
 Then tear down the test instance:
 
@@ -244,26 +233,27 @@ Optionally `rm -rf` the test data dir once you're sure prod is healthy.
 ### 6. Smoke test prod
 
 ```bash
-# Browser-equivalent: GET / follows 303 → /ui/ → /ui/login, lands on 200.
+# Browser-equivalent: GET <pub>/ follows the redirect chain to /ui/login,
+# lands on 200. Works whether the funnel mount is / or /rss.
 curl -sL --max-time 20 -o /dev/null \
   -w 'final=%{url_effective} code=%{http_code}\n' \
-  https://<host>.<tailnet>.ts.net/
+  https://<host>.<tailnet>.ts.net/<pub>/
 
-# Reader API ClientLogin (real prod credentials).
+# Reader API ClientLogin (use real prod credentials).
 curl -s -X POST \
   -d 'Email=<user>&Passwd=<prod-password>' \
-  https://<host>.<tailnet>.ts.net/accounts/ClientLogin
+  https://<host>.<tailnet>.ts.net/<pub>/accounts/ClientLogin
 ```
 
-Expect the curl to end at `/ui/login` with `code=200`, and
+Expect the curl to end at `<pub>/ui/login` with `code=200`, and
 `ClientLogin` to return `SID=…/Auth=…`. Note: `curl -I` (HEAD) returns
 `405` on `/ui/login` because the login handler doesn't implement HEAD;
 that's a curl-test artefact, not a server bug. Always smoke-test with
 `-L` (follow) on a GET.
 
 Then point one real RSS client (Reeder Classic / NetNewsWire / etc.)
-at `https://<host>.<tailnet>.ts.net/` with the FreshRSS API profile
-and the prod credentials. Confirm it lists subscriptions and
+at `https://<host>.<tailnet>.ts.net/<pub>/` with the FreshRSS API
+profile and the prod credentials. Confirm it lists subscriptions and
 `harborrs poll-once` works:
 
 ```bash
@@ -298,12 +288,6 @@ ssh <host> 'systemctl --user stop harborrs && \
 
 ## Pitfalls
 
-- **Funnel prefix breaks the UI** — harborrs serves at `/` and emits
-  **absolute** `Location: /ui/...` redirects. If you funnel a prefix
-  (`--set-path=/rss`), `GET /rss/` returns `303 Location: /ui/`, the
-  browser follows to `https://host/ui/`, which has no funnel mapping,
-  and tailscale's edge returns `404`. Mount at root or run a real
-  reverse proxy with Location rewriting.
 - **`curl -I` returns 405 on `/ui/login`** — the login handler
   doesn't implement HEAD. Use `curl -sL` (GET, follow) for smoke
   tests, not `-I`.

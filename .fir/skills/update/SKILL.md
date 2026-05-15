@@ -117,12 +117,10 @@ curl -sf https://<host>.<tailnet>.ts.net/rss-test/accounts/ClientLogin \
 ```
 
 Only proceed to prod if the test unit comes back clean (`ClientLogin`
-returns `SID=`/`Auth=`). The login form *page* under `/rss-test/ui/`
-will appear broken because harborrs's absolute `/ui/...` redirects
-escape the funnel prefix — that's expected and harmless. Test the
-single-hop endpoints (`/accounts/ClientLogin`, `/ui/login` directly)
-to side-step it. This still catches storage incompatibilities that
-would otherwise corrupt prod data.
+returns `SID=`/`Auth=`, browser flow lands on the login page under
+the prefix). With the relative-URL UI (v0.3.1+), the prefix mount is
+transparent — no special-casing required. This catches storage
+incompatibilities that would otherwise corrupt prod data.
 
 ### 5. Verify prod
 
