@@ -3,10 +3,12 @@ package ui
 import (
 	"html/template"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -491,8 +493,10 @@ func TestMarkAllReadFeed(t *testing.T) {
 	}
 	// After marking a feed read, send the user back to the feeds list
 	// (unread-filtered) so they keep walking down the queue rather than
-	// staring at the feed they just cleared.
-	if loc := w.Header().Get("Location"); loc != "/ui/?unread=1" {
+	// staring at the feed they just cleared. The Location is a relative
+	// reference: from POST /ui/mark-all-read, "./?unread=1" resolves
+	// against the request URI back up to /ui/?unread=1.
+	if loc := w.Header().Get("Location"); loc != "./?unread=1" {
 		t.Fatalf("redirect=%q", loc)
 	}
 	for _, e := range mustList(t, st, u) {
@@ -744,12 +748,14 @@ func TestHomeShowsAddLinkNoInlineRemove(t *testing.T) {
 	w := do(mux, req("GET", "/ui/", tok, nil))
 	body := w.Body.String()
 	// home should *link* to the add-feed page, not carry an inline form.
-	if !strings.Contains(body, `href="/ui/feed/new"`) {
+	// Link is relative (no leading slash) so the UI works under any
+	// deployment prefix.
+	if !strings.Contains(body, `href="feed/new"`) {
 		t.Fatalf("missing add-feed link: %s", body)
 	}
 	// home should NOT carry the unsubscribe form anymore — that moved
 	// onto the per-feed page so it isn't a single click from a glance.
-	if strings.Contains(body, "/ui/feed/remove") {
+	if strings.Contains(body, "feed/remove") {
 		t.Fatalf("remove form should not be on /ui/: %s", body)
 	}
 }
@@ -759,7 +765,7 @@ func TestFeedPageShowsUnsubscribe(t *testing.T) {
 	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	w := do(mux, req("GET", "/ui/feed?id=https%3A%2F%2Fx%2Ffeed", tok, nil))
 	body := w.Body.String()
-	if !strings.Contains(body, "/ui/feed/remove") || !strings.Contains(body, "unsubscribe") {
+	if !strings.Contains(body, "feed/remove") || !strings.Contains(body, "unsubscribe") {
 		t.Fatalf("feed page should carry unsubscribe form: %s", body)
 	}
 	// Cross-feed views (all / starred) must not show it.
@@ -925,7 +931,7 @@ func TestPasswdSuccess(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if loc := w.Header().Get("Location"); !strings.Contains(loc, "/ui/login?passwd=1") {
+	if loc := w.Header().Get("Location"); loc != "../login?passwd=1" {
 		t.Fatalf("redirect=%q", loc)
 	}
 	// Old password no longer verifies.
@@ -1224,4 +1230,365 @@ func TestHomeUnreadFilterAllCaughtUp(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "all caught up") {
 		t.Fatalf("expected caught-up empty state: %s", w.Body.String())
 	}
+}
+
+// ---- relative-URL invariants -----------------------------------------
+//
+// These tests pin down the deployment-prefix-agnostic property: every
+// URL the UI emits — Location headers, href/action attributes,
+// hx-post/hx-get attributes, <link> / <script> src — is a relative
+// reference (no leading slash). Browsers resolve relative references
+// against the effective request URI (RFC 7231 §7.1.2, RFC 3986 §5),
+// so the same handler set works whether mounted at "/" locally or
+// under "/rss/" behind tailscale funnel --set-path=/rss.
+
+// absURLRe matches src=, href= or action= attribute values that start
+// with "/", and hx-post=/hx-get= forms too. The negative lookahead is
+// not available in RE2; we instead allow scheme-prefixed absolute URLs
+// (https://…) by inspecting the matched value below.
+var absURLRe = regexp.MustCompile(`(?i)\b(?:src|href|action|hx-post|hx-get|hx-put|hx-delete)="(/[^"]*)"`)
+
+func assertNoAbsoluteURLs(t *testing.T, where, body string) {
+	t.Helper()
+	for _, m := range absURLRe.FindAllStringSubmatch(body, -1) {
+		// We allow nothing leading-slash. External absolute URLs
+		// (http://, https://, mailto:) won't match this regex at all.
+		t.Errorf("%s: absolute-path URL leaked into HTML: %q", where, m[1])
+	}
+}
+
+// TestNoAbsolutePathsInRenderedHTML walks every page the UI renders
+// and asserts none of them contain leading-slash href/action/src
+// attributes. This is the regression check for the relative-URL
+// invariant.
+func TestNoAbsolutePathsInRenderedHTML(t *testing.T) {
+	srv, mux, st, op, tok, _ := fixture(t)
+	srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
+	u := seed(t, st, op, 2)
+	es, _ := st.ListEntries(store.FeedHash(u))
+
+	for _, p := range []string{
+		"/ui/login",
+		"/ui/",
+		"/ui/?unread=1",
+		"/ui/all",
+		"/ui/starred",
+		"/ui/feed?id=" + u,
+		"/ui/feed?id=" + u + "&unread=1",
+		"/ui/entry?id=" + es[0].Hash,
+		"/ui/feed/new",
+		"/ui/settings",
+	} {
+		w := do(mux, req("GET", p, tok, nil))
+		if w.Code != 200 {
+			t.Fatalf("%s code=%d", p, w.Code)
+		}
+		assertNoAbsoluteURLs(t, p, w.Body.String())
+	}
+}
+
+// TestNoAbsolutePathsInLocationHeaders covers every UI handler that
+// issues a 3xx — each one must emit a relative reference so the
+// browser resolves it against its current URL (which may live under a
+// deployment prefix).
+func TestNoAbsolutePathsInLocationHeaders(t *testing.T) {
+	srv, mux, st, op, tok, _ := fixture(t)
+	// Wire up settings so /ui/settings/passwd is reachable.
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(cfgPath, config.Config{Auth: auth.Config{Username: "u", PasswordHash: testPwHash}}); err != nil {
+		t.Fatal(err)
+	}
+	srv.ConfigPath = cfgPath
+	u := seed(t, st, op, 1)
+
+	cases := []struct {
+		name, method, path string
+		form               url.Values
+		noAuth             bool
+	}{
+		{"requireSession-from-root", "GET", "/ui/", nil, true},
+		{"requireSession-from-deep", "GET", "/ui/feed/new", nil, true},
+		{"login-success", "POST", "/ui/login", url.Values{"username": {"u"}, "password": {"p"}}, true},
+		{"logout", "POST", "/ui/logout", nil, false},
+		{"feed-add", "POST", "/ui/feed/add", url.Values{"url": {"https://new.example/feed"}}, false},
+		{"feed-remove", "POST", "/ui/feed/remove", url.Values{"url": {u}}, false},
+		{"mark-all-read-feed", "POST", "/ui/mark-all-read?scope=feed&id=" + u, nil, false},
+		{"mark-all-read-all", "POST", "/ui/mark-all-read?scope=all", nil, false},
+		{"passwd-success", "POST", "/ui/settings/passwd", url.Values{"old": {"p"}, "new": {"newsecret"}, "confirm": {"newsecret"}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			useTok := tok
+			if c.noAuth {
+				useTok = ""
+			}
+			w := do(mux, req(c.method, c.path, useTok, c.form))
+			if w.Code/100 != 3 {
+				t.Fatalf("expected 3xx, got %d body=%s", w.Code, w.Body.String())
+			}
+			loc := w.Header().Get("Location")
+			if loc == "" {
+				t.Fatalf("empty Location")
+			}
+			if strings.HasPrefix(loc, "/") {
+				t.Fatalf("absolute-path Location leaked: %q", loc)
+			}
+			if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
+				t.Fatalf("absolute-URL Location leaked: %q", loc)
+			}
+		})
+	}
+}
+
+// TestUIWorksUnderPrefix mounts the UI mux behind http.StripPrefix and
+// walks the redirect chain manually, asserting at each hop that the
+// (request-URI, Location) pair combine via net/url.ResolveReference
+// into the expected next URI. This is the end-to-end proof that the
+// app can be served under any path prefix without baking it into
+// config.
+func TestUIWorksUnderPrefix(t *testing.T) {
+	_, mux, _, _, _, _ := fixture(t)
+	const prefix = "/rss"
+	root := http.NewServeMux()
+	root.Handle(prefix+"/", http.StripPrefix(prefix, mux))
+	srv := httptest.NewServer(root)
+	defer srv.Close()
+
+	// Don't auto-follow — we want to inspect each Location.
+	cli := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resolve := func(t *testing.T, fromURI, loc string) *url.URL {
+		t.Helper()
+		base, err := url.Parse(fromURI)
+		if err != nil {
+			t.Fatalf("parse base %q: %v", fromURI, err)
+		}
+		ref, err := url.Parse(loc)
+		if err != nil {
+			t.Fatalf("parse loc %q: %v", loc, err)
+		}
+		return base.ResolveReference(ref)
+	}
+
+	// Hop 1: GET /rss/ui/ → 303 → relative Location → /rss/ui/login
+	got, err := cli.Get(srv.URL + "/rss/ui/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != http.StatusSeeOther {
+		t.Fatalf("hop1 code=%d", got.StatusCode)
+	}
+	loc1 := got.Header.Get("Location")
+	if loc1 == "" || strings.HasPrefix(loc1, "/") {
+		t.Fatalf("hop1 expected relative Location, got %q", loc1)
+	}
+	next := resolve(t, srv.URL+"/rss/ui/", loc1)
+	if next.Path != "/rss/ui/login" {
+		t.Fatalf("hop1 resolved to %q, want /rss/ui/login", next.Path)
+	}
+
+	// Hop 2: GET /rss/ui/login → 200, body must reference no
+	// absolute paths and must include a form whose action resolves
+	// back to /rss/ui/login (so POSTing the form lands on the right
+	// handler under the prefix).
+	got, err = cli.Get(next.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != 200 {
+		t.Fatalf("hop2 code=%d", got.StatusCode)
+	}
+	body, _ := readAll(got.Body)
+	got.Body.Close()
+	assertNoAbsoluteURLs(t, "/rss/ui/login", body)
+	// Pull the login form action and verify it resolves to /rss/ui/login.
+	formRe := regexp.MustCompile(`(?is)<form[^>]+action="([^"]+)"[^>]*>\s*<label>username`)
+	m := formRe.FindStringSubmatch(body)
+	if len(m) < 2 {
+		t.Fatalf("login form not found in body:\n%s", body)
+	}
+	action := resolve(t, next.String(), m[1])
+	if action.Path != "/rss/ui/login" {
+		t.Fatalf("login form action resolves to %q, want /rss/ui/login", action.Path)
+	}
+
+	// Also: static asset URLs in the rendered page must resolve under
+	// the /rss prefix too. Grab the stylesheet href and confirm.
+	cssRe := regexp.MustCompile(`<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"`)
+	if cm := cssRe.FindStringSubmatch(body); len(cm) >= 2 {
+		css := resolve(t, next.String(), cm[1])
+		if !strings.HasPrefix(css.Path, "/rss/ui/static/") {
+			t.Fatalf("style.css resolves to %q, want /rss/ui/static/ prefix", css.Path)
+		}
+		// And the asset itself must be reachable through the prefix.
+		r, err := cli.Get(css.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.StatusCode != 200 {
+			t.Fatalf("style.css through prefix: code=%d", r.StatusCode)
+		}
+		r.Body.Close()
+	} else {
+		t.Fatalf("stylesheet link not found in login page")
+	}
+
+	// Hop 3: POST /rss/ui/login (good creds) → 303 → relative Location → /rss/ui/
+	form := url.Values{"username": {"u"}, "password": {"p"}}
+	got, err = cli.PostForm(srv.URL+"/rss/ui/login", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != http.StatusSeeOther {
+		t.Fatalf("hop3 code=%d body=%s", got.StatusCode, mustReadString(got.Body))
+	}
+	loc3 := got.Header.Get("Location")
+	if loc3 == "" || strings.HasPrefix(loc3, "/") {
+		t.Fatalf("hop3 expected relative Location, got %q", loc3)
+	}
+	if got := resolve(t, srv.URL+"/rss/ui/login", loc3).Path; got != "/rss/ui/" {
+		t.Fatalf("hop3 resolves to %q, want /rss/ui/", got)
+	}
+
+	// Hop 4: GET /rss/ui/ with the new session cookie → 200, body still relative-only.
+	cookie := got.Cookies()
+	r4, _ := http.NewRequest("GET", srv.URL+"/rss/ui/", nil)
+	for _, c := range cookie {
+		r4.AddCookie(c)
+	}
+	got, err = cli.Do(r4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != 200 {
+		t.Fatalf("hop4 code=%d", got.StatusCode)
+	}
+	body4, _ := readAll(got.Body)
+	got.Body.Close()
+	assertNoAbsoluteURLs(t, "/rss/ui/", body4)
+}
+
+// readAll / mustReadString are tiny stdlib wrappers kept local so the
+// import block stays narrow.
+func readAll(r interface {
+	Read(p []byte) (int, error)
+}) (string, error) {
+	buf := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	for {
+		n, err := r.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				return string(buf), nil
+			}
+			return string(buf), err
+		}
+	}
+}
+
+func mustReadString(r interface {
+	Read(p []byte) (int, error)
+}) string {
+	s, _ := readAll(r)
+	return s
+}
+
+// TestRelRedirectAbsolutePathPanics pins down the defence-in-depth
+// panic in relRedirect: callers must pass relative references. A
+// leading-slash Location would re-introduce the absolute-path bug
+// this package is built around avoiding, so we panic loud instead of
+// silently emitting the wrong thing.
+func TestRelRedirectAbsolutePathPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for absolute-path Location")
+		}
+	}()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/ui/", nil)
+	relRedirect(w, r, "/ui/login", http.StatusSeeOther)
+}
+
+// TestUIWorksUnderPrefixFullRoundTrip is the browser-equivalent test
+// the original /ui/ → 404-under-funnel bug would have caught: it spins
+// up an httptest server with the UI mux mounted behind
+// `http.StripPrefix("/rss", mux)` and the same root-catchall main.go
+// wires, then drives a real `http.Client` with a cookie jar and
+// auto-follow redirects through GET /rss/ → ... → /rss/ui/login →
+// POST creds → /rss/ui/. If any URL the app emits escapes the /rss
+// prefix, the client lands somewhere other than where this test
+// expects and the assertion fires.
+func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
+	_, mux, _, op, _, _ := fixture(t)
+	// Seed a feed so the post-login home page renders something we
+	// can assert on (rather than the "no feeds yet" empty state).
+	op.op.Feeds = []store.Feed{{XMLURL: "https://demo.example/feed", Title: "Demo"}}
+
+	// Mirror cmd/harborrs/main.go: GET / under the UI mux redirects
+	// to a relative "ui/" so the front-door redirect also rides any
+	// external prefix.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			relRedirect(w, r, "ui/", http.StatusSeeOther)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	const prefix = "/rss"
+	root := http.NewServeMux()
+	root.Handle(prefix+"/", http.StripPrefix(prefix, mux))
+	ts := httptest.NewServer(root)
+	defer ts.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := &http.Client{Jar: jar} // default CheckRedirect → auto-follow.
+
+	// Hop chain: GET /rss/ → 303 ui/ → /rss/ui/ → 303 login → /rss/ui/login
+	// → 200 (login page).
+	resp, err := cli.Get(ts.URL + prefix + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := readAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("login page code=%d landed=%s body=%s", resp.StatusCode, resp.Request.URL.Path, body)
+	}
+	if resp.Request.URL.Path != "/rss/ui/login" {
+		t.Fatalf("expected to land at /rss/ui/login, got %q", resp.Request.URL.Path)
+	}
+	if !strings.Contains(body, "sign in") {
+		t.Fatalf("login page missing 'sign in' heading: %s", body)
+	}
+	// Form action is relative ('login'), so POSTing to the same URL
+	// (the page the form is on) is what a real browser does.
+	creds := url.Values{"username": {"u"}, "password": {"p"}}
+	resp, err = cli.PostForm(resp.Request.URL.String(), creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = readAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("post-login code=%d landed=%s body=%s", resp.StatusCode, resp.Request.URL.Path, body)
+	}
+	if resp.Request.URL.Path != "/rss/ui/" {
+		t.Fatalf("expected to land at /rss/ui/ after login, got %q", resp.Request.URL.Path)
+	}
+	// Home page must render the seeded feed and have no absolute URLs.
+	if !strings.Contains(body, "Demo") {
+		t.Fatalf("home page missing seeded feed: %s", body)
+	}
+	assertNoAbsoluteURLs(t, "/rss/ui/ (after login)", body)
 }

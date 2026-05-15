@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- UI now emits only relative URLs in Location headers and templates,
+  so harborrs can be served under any URL prefix (e.g.
+  `tailscale funnel --set-path=/rss`) without breakage. Every
+  rendered `href`/`action`/`hx-*` attribute and every 3xx
+  `Location` header is now a relative reference resolved by the
+  browser against the effective request URI (RFC 7231 §7.1.2). No
+  config knob is needed — the prefix-agnosticism comes from the
+  URLs themselves.
+
 ### Added
 
 - The "source" link on the entry view opens the article in a new tab

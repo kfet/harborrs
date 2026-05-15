@@ -145,10 +145,69 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.Auth.CheckSession(auth.SessionFromRequest(r)) {
-			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+			relRedirect(w, r, uiBase(r)+"login", http.StatusSeeOther)
 			return
 		}
 		h(w, r)
+	}
+}
+
+// uiBase returns the relative URL prefix that, when resolved against
+// the effective request URI, points back at the /ui/ root. We pick
+// relative references over absolute paths so the app can be served
+// under any external prefix (e.g. tailscale funnel --set-path=/rss)
+// without baking a base-path config knob into the server.
+//
+// Precondition: r.URL.Path is under /ui/. Every call site is a UI
+// handler reached via Routes(), and Go's http.ServeMux redirects
+// "/ui" → "/ui/" before any handler runs, so we never see a path
+// without the trailing slash. Callers outside this package would
+// produce nonsense ("../../" for /foo/bar) — don't.
+//
+// Examples (request → returned prefix → resolves to):
+//
+//	/ui/             → "./"   → /ui/
+//	/ui/login        → "./"   → /ui/   (login is a sibling of /ui/)
+//	/ui/feed/new     → "../"  → /ui/
+//	/ui/settings/passwd → "../" → /ui/
+//
+// The prefix always ends in "/" so callers can append a path segment
+// directly: uiBase(r) + "login".
+func uiBase(r *http.Request) string {
+	rest := strings.TrimPrefix(r.URL.Path, "/ui/")
+	depth := strings.Count(rest, "/")
+	if depth == 0 {
+		return "./"
+	}
+	return strings.Repeat("../", depth)
+}
+
+// relRedirect writes a 3xx response whose Location header is the
+// verbatim relative reference loc — leading slash forbidden. We can't
+// use net/http.Redirect here because it eagerly resolves any relative
+// reference against r.URL into an absolute path, which is exactly the
+// rewriting we are trying to avoid. Browsers resolve a relative
+// Location against the effective request URI per RFC 7231 §7.1.2, and
+// that is what makes the UI work under an arbitrary path prefix.
+func relRedirect(w http.ResponseWriter, r *http.Request, loc string, code int) {
+	if strings.HasPrefix(loc, "/") {
+		// Defence in depth: a leading slash here would re-introduce
+		// the very absolute-path bug this function exists to prevent.
+		panic("ui: relRedirect called with absolute-path Location: " + loc)
+	}
+	h := w.Header()
+	h.Set("Location", loc)
+	if _, hasType := h["Content-Type"]; !hasType && r.Method == http.MethodGet {
+		h.Set("Content-Type", "text/html; charset=utf-8")
+	}
+	w.WriteHeader(code)
+	// Match http.Redirect's tiny body for GET so curl -i users see
+	// something. The href is HTML-escaped to keep template-injection-
+	// flavoured payloads inert; callers only ever pass static strings
+	// today, but defence is cheap.
+	if r.Method == http.MethodGet {
+		fmt.Fprintf(w, "<a href=\"%s\">%s</a>.\n",
+			template.HTMLEscapeString(loc), http.StatusText(code))
 	}
 }
 
@@ -162,16 +221,22 @@ type baseData struct {
 	StaticVer     string // "?v=<commit>" suffix used in base.html
 	Settings      bool   // true when /ui/settings is available
 	PasswdChanged bool   // set on login page after a successful change
+
+	// Base is the relative URL prefix from the effective request URI
+	// back up to the /ui/ root, always ending in "/". Templates prefix
+	// every internal href/action/hx-* with {{.Base}} so the rendered
+	// markup contains no leading-slash URLs.
+	Base string
 }
 
 func (s *Server) base(r *http.Request) baseData {
-	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Settings: s.ConfigPath != ""}
+	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Settings: s.ConfigPath != "", Base: uiBase(r)}
 	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
 		d.User = s.Auth.Cfg.Username
 	}
 	if s.Overrides != "" {
 		if _, err := os.Stat(filepath.Join(s.Overrides, "overrides", "theme.css")); err == nil {
-			d.ExtraCSS = "/ui/static/theme.css"
+			d.ExtraCSS = d.Base + "static/theme.css"
 		}
 	}
 	return d
@@ -195,7 +260,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auth.SetSessionCookie(w, tok, s.Secure)
-		http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+		relRedirect(w, r, "./", http.StatusSeeOther)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -207,7 +272,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = s.Auth.RevokeSession(tok)
 	}
 	auth.ClearSessionCookie(w)
-	http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+	relRedirect(w, r, "login", http.StatusSeeOther)
 }
 
 type homeFeed struct {
@@ -428,7 +493,7 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	relRedirect(w, r, "../", http.StatusSeeOther)
 }
 
 // handleFeedRemove unsubscribes.
@@ -456,7 +521,7 @@ func (s *Server) handleFeedRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	relRedirect(w, r, "../", http.StatusSeeOther)
 }
 
 // handleMarkAllRead marks every entry in a given scope as read. Scopes:
@@ -499,7 +564,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/ui/?unread=1", http.StatusSeeOther)
+		relRedirect(w, r, "./?unread=1", http.StatusSeeOther)
 	case "all":
 		for _, f := range op.Feeds {
 			if err := mark(f.XMLURL); err != nil {
@@ -507,7 +572,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		http.Redirect(w, r, "/ui/all", http.StatusSeeOther)
+		relRedirect(w, r, "all", http.StatusSeeOther)
 	default:
 		http.Error(w, "bad scope", http.StatusBadRequest)
 	}
@@ -706,7 +771,7 @@ func (s *Server) handlePasswd(w http.ResponseWriter, r *http.Request) {
 	s.Auth.SetPasswordHash(h)
 	_ = s.Auth.RevokeAllSessions()
 	auth.ClearSessionCookie(w)
-	http.Redirect(w, r, "/ui/login?passwd=1", http.StatusSeeOther)
+	relRedirect(w, r, "../login?passwd=1", http.StatusSeeOther)
 }
 
 func (s *Server) renderPasswdErr(w http.ResponseWriter, r *http.Request, msg string) {

@@ -165,7 +165,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	uiSrv.Routes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+			http.Redirect(w, r, "ui/", http.StatusSeeOther)
 			return
 		}
 		http.NotFound(w, r)

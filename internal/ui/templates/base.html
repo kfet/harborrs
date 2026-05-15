@@ -5,25 +5,25 @@
 <title>{{block "title" .}}harborrs{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('harborrs.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
-<link rel="stylesheet" href="/ui/static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
+<link rel="stylesheet" href="{{.Base}}static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
 {{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}{{with $.StaticVer}}?v={{.}}{{end}}">{{end}}
-<script src="/ui/static/htmx.min.js{{with .StaticVer}}?v={{.}}{{end}}"></script>
-<script src="/ui/static/keys.js{{with .StaticVer}}?v={{.}}{{end}}" defer></script>
+<script src="{{.Base}}static/htmx.min.js{{with .StaticVer}}?v={{.}}{{end}}"></script>
+<script src="{{.Base}}static/keys.js{{with .StaticVer}}?v={{.}}{{end}}" defer></script>
 </head>
 <body>
 <header>
-<a href="/ui/" class="brand">harborrs</a>
+<a href="{{.Base}}" class="brand">harborrs</a>
 {{if .User}}
 <nav class="nav">
-<a href="/ui/">feeds</a>
-<a href="/ui/all">unread</a>
-<a href="/ui/starred">starred</a>
-{{if .Settings}}<a href="/ui/settings">settings</a>{{end}}
+<a href="{{.Base}}">feeds</a>
+<a href="{{.Base}}all">unread</a>
+<a href="{{.Base}}starred">starred</a>
+{{if .Settings}}<a href="{{.Base}}settings">settings</a>{{end}}
 </nav>
 {{end}}
 <button id="theme-toggle" type="button" class="theme-toggle" title="cycle theme: auto → dark → light" aria-label="cycle theme">◐</button>
 {{if .User}}
-<form method="POST" action="/ui/logout" class="logout"><button type="submit">logout</button></form>
+<form method="POST" action="{{.Base}}logout" class="logout"><button type="submit">logout</button></form>
 {{end}}
 </header>
 <main>{{block "content" .}}{{end}}</main>

@@ -5,7 +5,7 @@
 <h1>add feed</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 
-<form method="POST" action="/ui/feed/new">
+<form method="POST" action="new">
 <label>feed URL
 <input type="url" name="url" value="{{.URL}}" placeholder="https://example.com/feed.xml" required autofocus></label>
 <button type="submit">preview</button>
@@ -26,7 +26,7 @@
 </ul>
 {{end}}
 
-<form method="POST" action="/ui/feed/add" class="subscribe">
+<form method="POST" action="add" class="subscribe">
 <input type="hidden" name="url" value="{{.URL}}">
 <label>title
 <input type="text" name="title" value="{{.Preview.Title}}"></label>

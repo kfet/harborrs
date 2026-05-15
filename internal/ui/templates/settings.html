@@ -7,7 +7,7 @@
 <h2>change password</h2>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 {{if .Ok}}<p class="ok">password updated — please log in again with the new password.</p>{{end}}
-<form method="POST" action="/ui/settings/passwd" class="passwd">
+<form method="POST" action="settings/passwd" class="passwd">
 <label>current password
 <input type="password" name="old" autocomplete="current-password" required></label>
 <label>new password

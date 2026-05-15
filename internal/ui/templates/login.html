@@ -5,7 +5,7 @@
 <h1>sign in</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 {{if .PasswdChanged}}<p class="ok">password changed — please log in.</p>{{end}}
-<form method="POST" action="/ui/login">
+<form method="POST" action="login">
 <label>username <input type="text" name="username" autocomplete="username"></label>
 <label>password <input type="password" name="password" autocomplete="current-password"></label>
 <button type="submit">sign in</button>
