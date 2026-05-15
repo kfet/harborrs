@@ -31,6 +31,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Auto-mark-read no longer races with a manual "mark unread" click —
+  if you click the read/star buttons (or hit <kbd>m</kbd>/<kbd>s</kbd>)
+  before the 2.5 s dwell elapses, the timer is cancelled. Previously
+  it would silently flip the entry back to read 2.5 s later.
+- Auto-mark-read now checks the response status before mutating local
+  DOM, so a 4xx/5xx from the server doesn't leave the UI thinking the
+  entry is read.
+- Theme toggle now sits on the right edge of the header on logged-out
+  pages too (was bunched next to the brand).
 - Dark mode no longer flashes a white background on overscroll
   (rubber-band scroll). All themes now declare the matching
   `color-scheme` so the browser uses a dark canvas + scrollbars.

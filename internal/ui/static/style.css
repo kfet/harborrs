@@ -206,6 +206,10 @@ header .theme-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* On logged-out pages there is no .nav with `flex: 1` to push us
+   * right, so claim the leftover space ourselves. Harmless when
+   * .nav is present (margin-left already absorbed by its flex: 1). */
+  margin-left: auto;
 }
 header .theme-toggle:hover { color: var(--fg); border-color: var(--border-strong); }
 header .theme-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }

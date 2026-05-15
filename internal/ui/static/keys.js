@@ -177,28 +177,37 @@
   }
 
   // ---- entry view --------------------------------------------------
-  if ($(".entry-full")) {
+  const article = $(".entry-full");
+  if (article) {
     // Auto-mark-read after a short dwell time. Skip if already read,
-    // skip if user navigates away first. Uses the same endpoint as the
-    // mark-read button so server-side accounting stays identical.
-    const article = $(".entry-full");
-    if (article && !article.classList.contains("read")) {
+    // skip if user navigates away first, skip if user toggles the
+    // read state manually before the timer fires (otherwise we'd
+    // race against an explicit "mark unread" click).
+    if (!article.classList.contains("read")) {
       const m = article.id.match(/^entry-detail-(.+)$/);
       if (m) {
         const hash = m[1];
         const dwellMs = 2500;
-        const timer = setTimeout(function () {
+        let timer = setTimeout(function () {
+          timer = null;
           fetch("/ui/entry/read?id=" + encodeURIComponent(hash) + "&state=1", {
             method: "POST",
             credentials: "same-origin",
-          }).then(function () {
+          }).then(function (r) {
+            if (!r.ok) return;
             article.classList.add("read");
             const btn = $(".actions button:nth-of-type(1)");
             if (btn) btn.textContent = "mark unread";
           }).catch(function () { /* network hiccup — user can still click */ });
         }, dwellMs);
-        // If the user leaves before the timer fires, don't mark.
-        window.addEventListener("pagehide", function () { clearTimeout(timer); });
+        const cancel = function () {
+          if (timer !== null) { clearTimeout(timer); timer = null; }
+        };
+        // If the user navigates away or interacts with read/star
+        // before the timer fires, don't mark.
+        window.addEventListener("pagehide", cancel);
+        const actions = $(".actions");
+        if (actions) actions.addEventListener("click", cancel, true);
       }
     }
 
