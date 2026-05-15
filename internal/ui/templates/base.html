@@ -1,15 +1,16 @@
 {{define "base"}}<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{{.Theme}}">
 <head>
 <meta charset="utf-8">
 <title>{{block "title" .}}harborrs{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>(function(){try{var t=localStorage.getItem('harborrs.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
 <link rel="stylesheet" href="/ui/static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
 {{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}{{with $.StaticVer}}?v={{.}}{{end}}">{{end}}
 <script src="/ui/static/htmx.min.js{{with .StaticVer}}?v={{.}}{{end}}"></script>
 <script src="/ui/static/keys.js{{with .StaticVer}}?v={{.}}{{end}}" defer></script>
 </head>
-<body data-theme="{{.Theme}}">
+<body>
 <header>
 <a href="/ui/" class="brand">harborrs</a>
 {{if .User}}
@@ -19,6 +20,9 @@
 <a href="/ui/starred">starred</a>
 {{if .Settings}}<a href="/ui/settings">settings</a>{{end}}
 </nav>
+{{end}}
+<button id="theme-toggle" type="button" class="theme-toggle" title="cycle theme: auto → dark → light" aria-label="cycle theme">◐</button>
+{{if .User}}
 <form method="POST" action="/ui/logout" class="logout"><button type="submit">logout</button></form>
 {{end}}
 </header>

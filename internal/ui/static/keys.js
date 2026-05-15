@@ -61,6 +61,37 @@
   };
   if (backdrop) backdrop.addEventListener("click", () => toggleHelp(false));
 
+  // ---- theme toggle (auto → dark → light → auto) -------------------
+  // Persisted client-side in localStorage so it survives reloads
+  // without needing a server roundtrip. The inline <head> bootstrap
+  // applies the stored value before paint to avoid theme flash.
+  const themeBtn = $("#theme-toggle");
+  if (themeBtn) {
+    const cycle = ["auto", "dark", "light"];
+    const glyph = { auto: "◐", dark: "●", light: "○", sepia: "◑" };
+    const label = {
+      auto:  "theme: auto (follows system) — click for dark",
+      dark:  "theme: dark — click for light",
+      light: "theme: light — click for auto",
+      sepia: "theme: sepia — click for auto",
+    };
+    const current = () => document.documentElement.getAttribute("data-theme") || "auto";
+    const paint = () => {
+      const t = current();
+      themeBtn.textContent = glyph[t] || "◐";
+      themeBtn.title = label[t] || ("theme: " + t);
+    };
+    paint();
+    themeBtn.addEventListener("click", function () {
+      const t = current();
+      const i = cycle.indexOf(t);
+      const next = cycle[(i + 1) % cycle.length] || "auto";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("harborrs.theme", next); } catch (e) { /* ignore */ }
+      paint();
+    });
+  }
+
   // ---- refresh on back/forward bfcache restore ---------------------
   // Without this, hitting "back" from an entry view shows the previous
   // list snapshot — read/star toggles done on the entry don't appear

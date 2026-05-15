@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Theme toggle button in the header — small circular button (◐/●/○)
+  that cycles **auto → dark → light → auto** on click. Choice is
+  persisted in the browser's `localStorage` (key `harborrs.theme`)
+  and applied before paint via an inline bootstrap, so there's no
+  flash between reloads. The server-side `[ui] theme = …` config
+  still acts as the default for users who never touch the toggle.
 - Per-feed entry list (`/ui/feed?id=…`) gained the same "show unread
   only" toggle pill as the home feed list. `?unread=1` hides read
   entries; counter shows how many are unread; empty state when nothing
