@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Keyboard nav: <kbd>u</kbd> now goes "up the hierarchy" universally —
+  on the entry view it goes to the parent feed (unchanged), on
+  `/ui/feed`, `/ui/all`, `/ui/starred`, `/ui/feed/new`, and `/ui/settings`
+  it goes to the home feeds list. Help overlay text updated.
+- Entry view auto-marks the entry as read after ~2.5 s of dwell. If
+  you navigate away or hit <kbd>m</kbd> first, nothing happens.
+
+### Changed
+
+- Pages restored from the browser's back/forward cache now
+  force-reload, so read / star toggles made on an entry are reflected
+  on the list when you hit Back — no more F5.
+
+### Fixed
+
+- Dark mode no longer flashes a white background on overscroll
+  (rubber-band scroll). All themes now declare the matching
+  `color-scheme` so the browser uses a dark canvas + scrollbars.
+- Keyboard-focused row on the home feeds list (`j`/`k`) is now
+  visible — previously the `.kb-focus` highlight only had styling for
+  entry rows, not feed rows.
+
 ## [0.3.0] - 2026-05-14
 
 ### Added

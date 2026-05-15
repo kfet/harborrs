@@ -3,6 +3,8 @@
 // Global (every authenticated page):
 //   ?      → toggle keyboard-help overlay
 //   Esc    → close overlay
+//   u      → up the hierarchy (entry view → parent feed; any other
+//            authenticated page → home /ui/)
 //
 // On any list view — home feeds (/ui/) and entry lists
 // (/ui/feed, /ui/all, /ui/starred):
@@ -20,6 +22,13 @@
 //   m      → mark read/unread
 //   s      → star/unstar
 //   u      → back to parent feed
+//
+// Behaviour:
+//   - The entry view auto-marks the entry as read after ~2.5 s of
+//     dwell. Navigating away earlier cancels.
+//   - When a page is restored from the browser's back/forward cache
+//     (e.g. you hit Back from an entry view), it is force-reloaded
+//     so read/star toggles you made are reflected without F5.
 (function () {
   "use strict";
 
@@ -51,6 +60,28 @@
     }
   };
   if (backdrop) backdrop.addEventListener("click", () => toggleHelp(false));
+
+  // ---- refresh on back/forward bfcache restore ---------------------
+  // Without this, hitting "back" from an entry view shows the previous
+  // list snapshot — read/star toggles done on the entry don't appear
+  // until you F5. Reload when the page is restored from bfcache.
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) window.location.reload();
+  });
+
+  // ---- universal "u" — up the hierarchy ----------------------------
+  // Entry view has its own `u` handler (back to parent feed) below.
+  // On any other authenticated page that isn't already the home feed
+  // list, `u` goes to /ui/.
+  document.addEventListener("keydown", function (e) {
+    if (inEditable(e) || helpOpen()) return;
+    if (e.key !== "u") return;
+    if ($(".entry-full")) return;          // entry view handles its own `u`
+    const path = window.location.pathname;
+    if (path === "/ui/" || path === "/ui") return;  // already at top
+    window.location.href = "/ui/";
+    e.preventDefault();
+  });
 
   document.addEventListener("keydown", function (e) {
     if (inEditable(e)) return;
@@ -116,6 +147,30 @@
 
   // ---- entry view --------------------------------------------------
   if ($(".entry-full")) {
+    // Auto-mark-read after a short dwell time. Skip if already read,
+    // skip if user navigates away first. Uses the same endpoint as the
+    // mark-read button so server-side accounting stays identical.
+    const article = $(".entry-full");
+    if (article && !article.classList.contains("read")) {
+      const m = article.id.match(/^entry-detail-(.+)$/);
+      if (m) {
+        const hash = m[1];
+        const dwellMs = 2500;
+        const timer = setTimeout(function () {
+          fetch("/ui/entry/read?id=" + encodeURIComponent(hash) + "&state=1", {
+            method: "POST",
+            credentials: "same-origin",
+          }).then(function () {
+            article.classList.add("read");
+            const btn = $(".actions button:nth-of-type(1)");
+            if (btn) btn.textContent = "mark unread";
+          }).catch(function () { /* network hiccup — user can still click */ });
+        }, dwellMs);
+        // If the user leaves before the timer fires, don't mark.
+        window.addEventListener("pagehide", function () { clearTimeout(timer); });
+      }
+    }
+
     document.addEventListener("keydown", function (e) {
       if (inEditable(e) || helpOpen()) return;
       switch (e.key) {
