@@ -116,9 +116,13 @@ curl -sf https://<host>.<tailnet>.ts.net/rss-test/accounts/ClientLogin \
   -X POST -d 'Email=<user>&Passwd=<test-password>' | head
 ```
 
-Only proceed to prod if the test unit comes back clean (UI 200, login
-returns `SID=`/`Auth=`). This catches schema migrations or storage
-incompatibilities that would otherwise corrupt prod data.
+Only proceed to prod if the test unit comes back clean (`ClientLogin`
+returns `SID=`/`Auth=`). The login form *page* under `/rss-test/ui/`
+will appear broken because harborrs's absolute `/ui/...` redirects
+escape the funnel prefix — that's expected and harmless. Test the
+single-hop endpoints (`/accounts/ClientLogin`, `/ui/login` directly)
+to side-step it. This still catches storage incompatibilities that
+would otherwise corrupt prod data.
 
 ### 5. Verify prod
 
@@ -133,7 +137,7 @@ workstation:
 
 ```bash
 curl -sf -o /dev/null -w '%{http_code}\n' \
-  https://<host>.<tailnet>.ts.net/rss/
+  https://<host>.<tailnet>.ts.net/
 ```
 
 Expect `200`.
