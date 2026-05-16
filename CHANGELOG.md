@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-16
+
 ### Changed
 
 - UI now emits only relative URLs in Location headers and templates,
