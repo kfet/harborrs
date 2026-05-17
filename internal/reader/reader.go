@@ -60,6 +60,8 @@ func (s *Server) Routes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/reader/api/0/subscription/edit", s.requireAuth(s.handleSubscriptionEdit))
 	mux.HandleFunc("/reader/api/0/subscription/quickadd", s.requireAuth(s.handleQuickAdd))
 	mux.HandleFunc("/reader/api/0/tag/list", s.requireAuth(s.handleTagList))
+	mux.HandleFunc("/reader/api/0/rename-tag", s.requireAuth(s.handleRenameTag))
+	mux.HandleFunc("/reader/api/0/disable-tag", s.requireAuth(s.handleDisableTag))
 	mux.HandleFunc("/reader/api/0/stream/items/ids", s.requireAuth(s.handleItemsIDs))
 	mux.HandleFunc("/reader/api/0/stream/items/contents", s.requireAuth(s.handleItemsContents))
 	mux.HandleFunc("/reader/api/0/edit-tag", s.requireAuth(s.handleEditTag))
@@ -170,8 +172,8 @@ func (s *Server) handleSubscriptionList(w http.ResponseWriter, r *http.Request) 
 			URL:     f.XMLURL,
 			HTMLURL: f.HTMLURL,
 		}
-		if f.Folder != "" {
-			item.Categories = []subCategory{{ID: labelStreamID(f.Folder), Label: f.Folder}}
+		for _, t := range f.Tags {
+			item.Categories = append(item.Categories, subCategory{ID: labelStreamID(t), Label: t})
 		}
 		out.Subscriptions = append(out.Subscriptions, item)
 	}
@@ -193,14 +195,24 @@ func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ac := r.FormValue("ac")
+	stripLabels := func(vals []string) []string {
+		out := make([]string, 0, len(vals))
+		for _, v := range vals {
+			v = strings.TrimPrefix(v, "user/-/label/")
+			if v != "" {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
 	switch ac {
 	case "subscribe":
 		title := r.FormValue("t")
 		if title == "" {
 			title = url
 		}
-		folder := strings.TrimPrefix(r.FormValue("a"), "user/-/label/")
-		op.Add(store.Feed{XMLURL: url, Title: title, Folder: folder})
+		tags := stripLabels(r.Form["a"])
+		op.Add(store.Feed{XMLURL: url, Title: title, Tags: tags})
 	case "unsubscribe":
 		op.Remove(url)
 	case "edit":
@@ -212,11 +224,11 @@ func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) 
 		if t := r.FormValue("t"); t != "" {
 			f.Title = t
 		}
-		if a := r.FormValue("a"); a != "" {
-			f.Folder = strings.TrimPrefix(a, "user/-/label/")
+		for _, t := range stripLabels(r.Form["a"]) {
+			f.AddTag(t)
 		}
-		if rem := r.FormValue("r"); rem != "" && f.Folder == strings.TrimPrefix(rem, "user/-/label/") {
-			f.Folder = ""
+		for _, t := range stripLabels(r.Form["r"]) {
+			f.RemoveTag(t)
 		}
 	default:
 		http.Error(w, "bad ac", http.StatusBadRequest)
@@ -260,12 +272,6 @@ func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	folders := map[string]bool{}
-	for _, f := range op.Feeds {
-		if f.Folder != "" {
-			folders[f.Folder] = true
-		}
-	}
 	type tag struct {
 		ID   string `json:"id"`
 		Type string `json:"type,omitempty"`
@@ -278,15 +284,63 @@ func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
 			{ID: stateReadID},
 		},
 	}
-	names := make([]string, 0, len(folders))
-	for n := range folders {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
+	for _, n := range op.AllTags() {
 		out.Tags = append(out.Tags, tag{ID: labelStreamID(n), Type: "folder"})
 	}
 	writeJSON(w, out)
+}
+
+// handleRenameTag implements `/reader/api/0/rename-tag`: rewrites every
+// feed's Tags so that `s=user/-/label/<old>` becomes
+// `dest=user/-/label/<new>`. Missing or malformed params → 400; an
+// unknown source tag is a no-op + 200 (idempotent rename semantics).
+func (s *Server) handleRenameTag(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	oldName := strings.TrimPrefix(r.FormValue("s"), "user/-/label/")
+	newName := strings.TrimPrefix(r.FormValue("dest"), "user/-/label/")
+	if oldName == "" || newName == "" {
+		http.Error(w, "missing s/dest", http.StatusBadRequest)
+		return
+	}
+	if store.IsReservedTag(newName) {
+		http.Error(w, "reserved tag name", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	op.RenameTag(oldName, newName)
+	if err := s.OPML.Save(op); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeText(w, "OK")
+}
+
+// handleDisableTag implements `/reader/api/0/disable-tag`: drops the
+// given tag from every feed. The feeds themselves remain subscribed.
+func (s *Server) handleDisableTag(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name := strings.TrimPrefix(r.FormValue("s"), "user/-/label/")
+	if name == "" {
+		http.Error(w, "missing s", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	op.DisableTag(name)
+	if err := s.OPML.Save(op); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeText(w, "OK")
 }
 
 // streamItem is one item in a stream/contents response.
@@ -411,8 +465,8 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 			return nil, err
 		}
 	case strings.HasPrefix(streamID, "user/-/label/"):
-		folder := strings.TrimPrefix(streamID, "user/-/label/")
-		if err := gather(func(f store.Feed) bool { return f.Folder == folder }); err != nil {
+		tag := strings.TrimPrefix(streamID, "user/-/label/")
+		if err := gather(func(f store.Feed) bool { return f.HasTag(tag) }); err != nil {
 			return nil, err
 		}
 	case streamID == streamStarred:

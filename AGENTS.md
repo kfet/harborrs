@@ -26,7 +26,7 @@ DB, single-user-first, stdlib-leaning Go.
   - `/reader/api/0/token`
   - `/reader/api/0/user-info`
   - `/reader/api/0/subscription/list`, `/edit`, `/quickadd`
-  - `/reader/api/0/tag/list`
+  - `/reader/api/0/tag/list`, `/rename-tag`, `/disable-tag`
   - `/reader/api/0/stream/contents/...`
   - `/reader/api/0/stream/items/ids`, `/contents`
   - `/reader/api/0/edit-tag`
@@ -52,7 +52,7 @@ Filesystem-only, single-user. Layout under the config / state dir
 (`$XDG_DATA_HOME/harborrs` or similar):
 
 ```
-subscriptions.opml          # source of truth for feeds + folders
+subscriptions.opml          # source of truth for feeds + tags
 state/<feed-hash>.json      # etag, last-modified, last-fetched, error count
 entries/<feed-hash>/
   current.ndjson            # hot file: last ~30 days
@@ -61,6 +61,11 @@ entries/<feed-hash>/
 read.log                    # append-only state log: "<ts> r <entry-hash>"
 starred.log                 # append-only
 ```
+
+- Feeds carry zero or more **tags** (many-to-many, flat — no nesting).
+  OPML writes the tag list as a comma-separated `category` attribute
+  per OPML 2.0; reads also accept nested folder outlines and merge
+  their parent name into the tag list.
 
 - `<feed-hash>` = sha1(feed URL) prefix; `<entry-hash>` = sha1(GUID||link).
 - **State log fold**: on startup, read `read.log` / `starred.log` into

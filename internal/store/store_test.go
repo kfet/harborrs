@@ -434,8 +434,8 @@ func TestAppendLineMkdirFail(t *testing.T) {
 // Marshal sanity for OPML output.
 func TestOPMLMarshalRoundtrip(t *testing.T) {
 	o := &OPML{Title: "t", Feeds: []Feed{
-		{Title: "Z", XMLURL: "z", Folder: "F"},
-		{Title: "A", XMLURL: "a", Folder: "F"},
+		{Title: "Z", XMLURL: "z", Tags: []string{"F"}},
+		{Title: "A", XMLURL: "a", Tags: []string{"F"}},
 		{Title: "L", XMLURL: "l"}, // loose
 	}}
 	data, err := o.Marshal()
@@ -459,5 +459,209 @@ func TestEntryJSON(t *testing.T) {
 	b, _ := json.Marshal(e)
 	if !strings.Contains(string(b), `"hash":"h"`) || !strings.Contains(string(b), `"feed":"f"`) {
 		t.Fatalf("missing keys: %s", b)
+	}
+}
+
+func TestNormalizeTagsDropsReserved(t *testing.T) {
+	// The pseudo-tag name __untagged__ collides with the UI's
+	// no-tags bucket. NormalizeTags must drop it silently so neither
+	// OPML, the API, nor the UI form can introduce a real tag with
+	// that name.
+	if got := NormalizeTags([]string{"a", ReservedTagUntagged, "b"}); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("got %v", got)
+	}
+	if got := NormalizeTags([]string{ReservedTagUntagged}); got != nil {
+		t.Fatalf("solo reserved → %v", got)
+	}
+	if !IsReservedTag(ReservedTagUntagged) {
+		t.Fatal("IsReservedTag false for the constant")
+	}
+	if IsReservedTag("ordinary") {
+		t.Fatal("IsReservedTag true for ordinary")
+	}
+}
+
+func TestFeedAddTagRejectsReserved(t *testing.T) {
+	f := &Feed{}
+	f.AddTag(ReservedTagUntagged)
+	if f.Tags != nil {
+		t.Fatalf("reserved leaked into tags: %v", f.Tags)
+	}
+	f.AddTag("ok")
+	f.AddTag(ReservedTagUntagged)
+	if len(f.Tags) != 1 || f.Tags[0] != "ok" {
+		t.Fatalf("got %v", f.Tags)
+	}
+}
+
+func TestNormalizeTags(t *testing.T) {
+	if got := NormalizeTags(nil); got != nil {
+		t.Fatalf("nil in → %v", got)
+	}
+	if got := NormalizeTags([]string{"", "   "}); got != nil {
+		t.Fatalf("empty-only in → %v", got)
+	}
+	got := NormalizeTags([]string{"b", " a ", "b", "c"})
+	want := []string{"a", "b", "c"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("got %v", got)
+	}
+}
+
+const taggedOPML = `<?xml version="1.0"?>
+<opml version="2.0"><body>
+  <outline type="rss" title="A" xmlUrl="https://a.example/feed" category="tech, daily"/>
+  <outline title="folder">
+    <outline type="rss" title="B" xmlUrl="https://b.example/feed" category="daily"/>
+  </outline>
+  <outline type="rss" title="C" xmlUrl="https://c.example/feed"/>
+</body></opml>`
+
+func TestParseOPMLTagsMergeAndUntagged(t *testing.T) {
+	o, err := ParseOPML([]byte(taggedOPML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]*Feed{}
+	for i := range o.Feeds {
+		byURL[o.Feeds[i].XMLURL] = &o.Feeds[i]
+	}
+	a := byURL["https://a.example/feed"]
+	if a == nil || len(a.Tags) != 2 || a.Tags[0] != "daily" || a.Tags[1] != "tech" {
+		t.Fatalf("a tags=%v", a)
+	}
+	b := byURL["https://b.example/feed"]
+	if b == nil || len(b.Tags) != 2 || b.Tags[0] != "daily" || b.Tags[1] != "folder" {
+		t.Fatalf("b tags=%v", b)
+	}
+	c := byURL["https://c.example/feed"]
+	if c == nil || len(c.Tags) != 0 {
+		t.Fatalf("c tags=%v", c)
+	}
+}
+
+func TestOPMLFlatMarshalCategoryAttr(t *testing.T) {
+	o := &OPML{Feeds: []Feed{
+		{Title: "A", XMLURL: "https://a/feed", Tags: []string{"x", "y"}},
+		{Title: "A", XMLURL: "https://b/feed"}, // tie-breaks on URL
+	}}
+	data, err := o.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, `category="x,y"`) {
+		t.Fatalf("missing category attr: %s", s)
+	}
+	// Tie-break on equal titles falls through to URL ordering.
+	i := strings.Index(s, "https://a/feed")
+	j := strings.Index(s, "https://b/feed")
+	if i < 0 || j < 0 || i >= j {
+		t.Fatalf("not sorted by url tiebreak: a=%d b=%d", i, j)
+	}
+	// Round-trip preserves tags.
+	o2, err := ParseOPML(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *Feed
+	for i := range o2.Feeds {
+		if o2.Feeds[i].XMLURL == "https://a/feed" {
+			got = &o2.Feeds[i]
+		}
+	}
+	if got == nil || len(got.Tags) != 2 || got.Tags[0] != "x" || got.Tags[1] != "y" {
+		t.Fatalf("round-trip tags=%v", got)
+	}
+}
+
+func TestOPMLAllTagsRenameDisable(t *testing.T) {
+	o := &OPML{Feeds: []Feed{
+		{XMLURL: "a", Tags: []string{"x", "y"}},
+		{XMLURL: "b", Tags: []string{"y"}},
+		{XMLURL: "c"},
+	}}
+	if got := o.AllTags(); len(got) != 2 || got[0] != "x" || got[1] != "y" {
+		t.Fatalf("alltags=%v", got)
+	}
+	// Empty → nil.
+	if (&OPML{}).AllTags() != nil {
+		t.Fatal("empty alltags non-nil")
+	}
+	// Rename no-ops.
+	if n := o.RenameTag("", "z"); n != 0 {
+		t.Fatalf("rename empty old=%d", n)
+	}
+	if n := o.RenameTag("x", ""); n != 0 {
+		t.Fatalf("rename empty new=%d", n)
+	}
+	if n := o.RenameTag("x", "x"); n != 0 {
+		t.Fatalf("rename same=%d", n)
+	}
+	if n := o.RenameTag("nope", "z"); n != 0 {
+		t.Fatalf("rename unknown=%d", n)
+	}
+	// Rename y → z everywhere.
+	if n := o.RenameTag("y", "z"); n != 2 {
+		t.Fatalf("rename count=%d", n)
+	}
+	if !o.Feeds[0].HasTag("z") || o.Feeds[0].HasTag("y") {
+		t.Fatalf("rename feed[0] tags=%v", o.Feeds[0].Tags)
+	}
+	// Disable empty no-op.
+	if n := o.DisableTag(""); n != 0 {
+		t.Fatalf("disable empty=%d", n)
+	}
+	if n := o.DisableTag("nope"); n != 0 {
+		t.Fatalf("disable unknown=%d", n)
+	}
+	// Disable z removes from both feeds.
+	if n := o.DisableTag("z"); n != 2 {
+		t.Fatalf("disable=%d", n)
+	}
+	if o.Feeds[1].Tags != nil {
+		t.Fatalf("expected nil tags, got %v", o.Feeds[1].Tags)
+	}
+}
+
+func TestFeedTagHelpers(t *testing.T) {
+	f := &Feed{}
+	// Add empty no-op.
+	f.AddTag("")
+	if f.Tags != nil {
+		t.Fatalf("add empty changed tags: %v", f.Tags)
+	}
+	f.AddTag("a")
+	f.AddTag("a") // dedup
+	f.AddTag("b")
+	if len(f.Tags) != 2 || f.Tags[0] != "a" || f.Tags[1] != "b" {
+		t.Fatalf("tags=%v", f.Tags)
+	}
+	if !f.HasTag("a") || f.HasTag("c") {
+		t.Fatalf("hastag=%v", f.Tags)
+	}
+	// Remove empty no-op.
+	f.RemoveTag("")
+	if len(f.Tags) != 2 {
+		t.Fatalf("remove empty changed: %v", f.Tags)
+	}
+	// Remove unknown no-op.
+	f.RemoveTag("zzz")
+	if len(f.Tags) != 2 {
+		t.Fatalf("remove unknown changed: %v", f.Tags)
+	}
+	f.RemoveTag("a")
+	if len(f.Tags) != 1 || f.Tags[0] != "b" {
+		t.Fatalf("after remove: %v", f.Tags)
+	}
+	f.RemoveTag("b")
+	if f.Tags != nil {
+		t.Fatalf("expected nil tags, got %v", f.Tags)
+	}
+	// OPML.Add normalises incoming tags.
+	o := &OPML{}
+	o.Add(Feed{XMLURL: "u", Tags: []string{"  b  ", "a", "a"}})
+	if len(o.Feeds[0].Tags) != 2 || o.Feeds[0].Tags[0] != "a" || o.Feeds[0].Tags[1] != "b" {
+		t.Fatalf("normalise on add: %v", o.Feeds[0].Tags)
 	}
 }

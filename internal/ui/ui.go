@@ -131,6 +131,7 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/feed/new", s.requireSession(s.handleFeedNew))
 	mux.HandleFunc("/ui/feed/add", s.requireSession(s.handleFeedAdd))
 	mux.HandleFunc("/ui/feed/remove", s.requireSession(s.handleFeedRemove))
+	mux.HandleFunc("/ui/feed/tag", s.requireSession(s.handleFeedTag))
 	mux.HandleFunc("/ui/all", s.requireSession(s.handleAllUnread))
 	mux.HandleFunc("/ui/starred", s.requireSession(s.handleStarred))
 	mux.HandleFunc("/ui/entry", s.requireSession(s.handleEntry))
@@ -279,6 +280,49 @@ type homeFeed struct {
 	Title  string
 	URL    string
 	Unread int
+	Tags   []string
+}
+
+// tagCount is one row in the home sidebar.
+type tagCount struct {
+	Name   string // tag name, or "" for "All", or store.ReservedTagUntagged for the no-tags bucket
+	Label  string // display label
+	Unread int
+}
+
+// unreadCounts walks every unread entry once and returns:
+//   - per-feed unread counts (keyed by feed XML URL)
+//   - special bucket "" → all-unread total
+//   - special bucket store.ReservedTagUntagged → untagged-feed unread total
+//   - one bucket per tag name
+//
+// A single tag is counted multiple times for a feed only if that feed's
+// Tags list contains duplicates — NormalizeTags prevents that, so this
+// is a strict O(unread * tags) pass.
+func (s *Server) unreadCounts(op *store.OPML) (perFeed map[string]int, buckets map[string]int, err error) {
+	perFeed = map[string]int{}
+	buckets = map[string]int{}
+	for _, f := range op.Feeds {
+		es, lerr := s.Store.ListEntries(store.FeedHash(f.XMLURL))
+		if lerr != nil {
+			return nil, nil, lerr
+		}
+		count := 0
+		for _, e := range es {
+			if !s.Store.EntryState(e.Hash).Read {
+				count++
+			}
+		}
+		perFeed[f.XMLURL] = count
+		buckets[""] += count
+		if len(f.Tags) == 0 {
+			buckets[store.ReservedTagUntagged] += count
+		}
+		for _, t := range f.Tags {
+			buckets[t] += count
+		}
+	}
+	return perFeed, buckets, nil
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -294,30 +338,44 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	unreadOnly := r.URL.Query().Get("unread") == "1"
+	tagFilter := r.URL.Query().Get("tag") // "" → all; store.ReservedTagUntagged → untagged
+	perFeed, buckets, err := s.unreadCounts(op)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	feeds := make([]homeFeed, 0, len(op.Feeds))
-	total := 0
 	withUnread := 0
+	scopedTotal := 0
 	for _, f := range op.Feeds {
-		fh := store.FeedHash(f.XMLURL)
-		es, err := s.Store.ListEntries(fh)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		count := 0
-		for _, e := range es {
-			if !s.Store.EntryState(e.Hash).Read {
-				count++
+		count := perFeed[f.XMLURL]
+		if tagFilter == store.ReservedTagUntagged {
+			if len(f.Tags) != 0 {
+				continue
+			}
+		} else if tagFilter != "" {
+			if !f.HasTag(tagFilter) {
+				continue
 			}
 		}
-		total += count
+		// In scope: contribute to the scope-aware totals.
+		scopedTotal += count
 		if count > 0 {
 			withUnread++
 		}
 		if unreadOnly && count == 0 {
 			continue
 		}
-		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count})
+		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count, Tags: f.Tags})
+	}
+	tags := op.AllTags()
+	pinned := []tagCount{
+		{Name: "", Label: "All", Unread: buckets[""]},
+		{Name: store.ReservedTagUntagged, Label: "Untagged", Unread: buckets[store.ReservedTagUntagged]},
+	}
+	sidebar := make([]tagCount, 0, len(tags))
+	for _, t := range tags {
+		sidebar = append(sidebar, tagCount{Name: t, Label: t, Unread: buckets[t]})
 	}
 	data := struct {
 		baseData
@@ -325,7 +383,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Total      int
 		WithUnread int
 		UnreadOnly bool
-	}{s.base(r), feeds, total, withUnread, unreadOnly}
+		Sidebar    []tagCount // pinned rows
+		Tags       []tagCount // real tag rows (empty when no tags exist)
+		TagFilter  string
+	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, sidebar, tagFilter}
 	s.render(w, "home", data)
 }
 
@@ -348,6 +409,7 @@ type entryListData struct {
 	ScopeID     string // feed URL when Scope == "feed"
 	UnreadOnly  bool   // when true, Entries has been filtered to unread
 	UnreadCount int    // unread count for this scope (pre-filter)
+	FeedTags    []string
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -400,6 +462,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		ScopeID:     urlS,
 		UnreadOnly:  unreadOnly,
 		UnreadCount: unreadCount,
+		FeedTags:    feed.Tags,
 	})
 }
 
@@ -479,7 +542,7 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := strings.TrimSpace(r.FormValue("title"))
-	folder := strings.TrimSpace(r.FormValue("folder"))
+	tags := parseTagInput(r.FormValue("tags"))
 	if title == "" {
 		title = u
 	}
@@ -488,12 +551,60 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	op.Add(store.Feed{XMLURL: u, Title: title, Folder: folder})
+	op.Add(store.Feed{XMLURL: u, Title: title, Tags: tags})
 	if err := s.OPML.Save(op); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	relRedirect(w, r, "../", http.StatusSeeOther)
+}
+
+// handleFeedTag adds or removes a single tag on a feed. POST with form
+// `url` + (`add` or `remove`). Re-renders the tag-chip fragment so the
+// caller (an hx-post button) can swap it in-place.
+func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := strings.TrimSpace(r.FormValue("url"))
+	add := strings.TrimSpace(r.FormValue("add"))
+	rem := strings.TrimSpace(r.FormValue("remove"))
+	if u == "" || (add == "" && rem == "") {
+		http.Error(w, "missing url and add/remove", http.StatusBadRequest)
+		return
+	}
+	op, err := s.OPML.Load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	f := op.Find(u)
+	if f == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if add != "" {
+		for _, t := range parseTagInput(add) {
+			f.AddTag(t)
+		}
+	}
+	if rem != "" {
+		f.RemoveTag(rem)
+	}
+	if err := s.OPML.Save(op); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = s.pages["feed"].ExecuteTemplate(w, "tagchips", struct {
+		ScopeID  string
+		FeedTags []string
+	}{u, f.Tags})
 }
 
 // handleFeedRemove unsubscribes.
@@ -830,6 +941,16 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 // branch of handlePasswd. Production callers go through auth.HashPassword.
 var authHashPasswordHook = auth.HashPassword
 
+// parseTagInput splits a comma-separated tag form value into a
+// normalised tag slice (trimmed, deduped, sorted).
+func parseTagInput(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	return store.NormalizeTags(parts)
+}
+
 // formatPublished returns a compact relative-or-absolute timestamp used
 // on entry list rows. <1h → "Nm", <24h → "Nh", <7d → "Nd", same year →
 // "Jan 02", older → "2006-01-02". Zero time renders as "" so old test
@@ -884,7 +1005,7 @@ func (s *Server) handleFeedNew(w http.ResponseWriter, r *http.Request) {
 	type newFeedData struct {
 		baseData
 		URL     string
-		Folder  string
+		Tags    string
 		Preview *FeedPreview
 	}
 	d := newFeedData{baseData: s.base(r)}
@@ -899,7 +1020,7 @@ func (s *Server) handleFeedNew(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.URL = strings.TrimSpace(r.FormValue("url"))
-		d.Folder = strings.TrimSpace(r.FormValue("folder"))
+		d.Tags = strings.TrimSpace(r.FormValue("tags"))
 		if d.URL == "" {
 			d.Error = "feed URL is required"
 			w.WriteHeader(http.StatusBadRequest)

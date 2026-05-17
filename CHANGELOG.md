@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Tags replace folders as the feed-organisation primitive.**
+  `Feed` now carries a `Tags []string` instead of `Folder string`;
+  feeds can be in many tags at once. OPML is now written flat with a
+  comma-separated `category` attribute per OPML 2.0; reads merge the
+  union of nested-outline parent names and the `category` attribute.
+  Pre-existing OPML files load transparently: a single folder becomes
+  a single tag, nested `a/b` folders become a single `a/b` tag (no
+  splitting). First write rewrites the file in the new layout.
+- `subscription/edit` now interprets multiple `a=` / `r=` params as
+  add/remove tag operations (previously: overwrite a single folder).
+- The "+ add feed" form takes a comma-separated `tags` input instead
+  of a single `folder` field.
+
+### Added
+
+- GReader API: `rename-tag` and `disable-tag` endpoints, used by
+  Reeder Classic + FreshRSS clients to manage labels.
+- Web UI home page now renders a sidebar with pinned `All` /
+  `Untagged` rows plus every tag, each with its unread count. The
+  feed list filters via `?tag=<name>` (or `?tag=__untagged__`).
+- Per-feed view shows clickable tag chips with hx-post add/remove.
+- The pseudo-tag name `__untagged__` is reserved (sentinel for the
+  no-tags sidebar bucket). User/client attempts to create or rename
+  to it are silently dropped at every entry point (UI form, reader
+  `subscription/edit`), except `rename-tag dest=` which 400s — that
+  endpoint is an explicit user-visible op and deserves feedback.
+
 ## [0.3.1] - 2026-05-16
 
 ### Changed

@@ -640,12 +640,12 @@ func TestSetReadDetailView(t *testing.T) {
 
 func TestFeedAdd(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	form := url.Values{"url": {"https://new.example/feed"}, "title": {"New"}, "folder": {"News"}}
+	form := url.Values{"url": {"https://new.example/feed"}, "title": {"New"}, "tags": {"News"}}
 	w := do(mux, req("POST", "/ui/feed/add", tok, form))
 	if w.Code != 303 {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if len(op.op.Feeds) != 1 || op.op.Feeds[0].Folder != "News" {
+	if len(op.op.Feeds) != 1 || !op.op.Feeds[0].HasTag("News") {
 		t.Fatalf("feeds=%+v", op.op.Feeds)
 	}
 	// title defaults to url
@@ -1591,4 +1591,260 @@ func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
 		t.Fatalf("home page missing seeded feed: %s", body)
 	}
 	assertNoAbsoluteURLs(t, "/rss/ui/ (after login)", body)
+}
+
+func TestParseTagInput(t *testing.T) {
+	if got := parseTagInput(""); got != nil {
+		t.Fatalf("empty → %v", got)
+	}
+	got := parseTagInput("  c , a, b , , a ")
+	want := []string{"a", "b", "c"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestHomeSidebarAndTagFilter(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}},
+		{XMLURL: "https://b/feed", Title: "B", Tags: []string{"tech", "daily"}},
+		{XMLURL: "https://c/feed", Title: "C"},
+	}
+	// Seed one unread entry per feed.
+	for _, f := range op.op.Feeds {
+		fh := store.FeedHash(f.XMLURL)
+		st.AppendEntries(fh, []store.Entry{{GUID: "g-" + f.XMLURL, Link: f.XMLURL + "/1", Title: "T", Published: time.Now(), FetchedAt: time.Now()}})
+	}
+	// Default home → sidebar shows All / Untagged / tags.
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"All", "Untagged", "tech", "daily", "A", "B", "C"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %s", want, body)
+		}
+	}
+	// tag filter
+	w = do(mux, req("GET", "/ui/?tag=tech", tok, nil))
+	body = w.Body.String()
+	if !strings.Contains(body, "A") || !strings.Contains(body, "B") || strings.Contains(body, ">C<") {
+		t.Fatalf("tech filter body=%s", body)
+	}
+	// untagged filter → only C
+	w = do(mux, req("GET", "/ui/?tag=__untagged__", tok, nil))
+	body = w.Body.String()
+	if !strings.Contains(body, ">C<") {
+		t.Fatalf("untagged missing C: %s", body)
+	}
+	// unread-only + tag combo, all entries are unread so result is same.
+	w = do(mux, req("GET", "/ui/?unread=1&tag=tech", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("unread+tag=%d", w.Code)
+	}
+	// Now mark every entry read so unread-filter empties C bucket.
+	for _, f := range op.op.Feeds {
+		fh := store.FeedHash(f.XMLURL)
+		es, _ := st.ListEntries(fh)
+		for _, e := range es {
+			st.SetRead(e.Hash, true)
+		}
+	}
+	// empty unread under tag filter → "all caught up — show all feeds"
+	w = do(mux, req("GET", "/ui/?unread=1&tag=tech", tok, nil))
+	if !strings.Contains(w.Body.String(), "all caught up") {
+		t.Fatalf("expected caught-up empty state: %s", w.Body.String())
+	}
+	// empty tag filter (no matches) when tag missing
+	w = do(mux, req("GET", "/ui/?tag=zzz", tok, nil))
+	if !strings.Contains(w.Body.String(), "no feeds in this view") {
+		t.Fatalf("expected empty-tag-view: %s", w.Body.String())
+	}
+}
+
+func TestHomeSidebarNoRealTags(t *testing.T) {
+	// When no feed carries any tag, the sidebar must still render the
+	// two pinned rows but skip the separator + real-tag block.
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "All") || !strings.Contains(body, "Untagged") {
+		t.Fatalf("pinned rows missing: %s", body)
+	}
+	if strings.Contains(body, `class="sep"`) {
+		t.Fatalf("stray separator with no real tags: %s", body)
+	}
+}
+
+func TestHomeBadgesAreScopeAware(t *testing.T) {
+	// With a tag filter active, "feeds (N unread)" and the
+	// "show unread only (N)" pill must reflect the filtered scope,
+	// not the global totals — otherwise the numbers confuse users.
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}},
+		{XMLURL: "https://b/feed", Title: "B"}, // untagged
+	}
+	for _, f := range op.op.Feeds {
+		fh := store.FeedHash(f.XMLURL)
+		st.AppendEntries(fh, []store.Entry{{GUID: "g-" + f.XMLURL, Link: f.XMLURL + "/1", Title: "T", Published: time.Now(), FetchedAt: time.Now()}})
+	}
+	// Default view: 2 unread total.
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	if !strings.Contains(w.Body.String(), "(2 unread)") {
+		t.Fatalf("global total wrong: %s", w.Body.String())
+	}
+	// Filter to ?tag=tech: only A is in scope → 1 unread.
+	w = do(mux, req("GET", "/ui/?tag=tech", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "(1 unread)") {
+		t.Fatalf("scoped total wrong: %s", body)
+	}
+	if !strings.Contains(body, "unread only (1)") {
+		t.Fatalf("scoped pill wrong: %s", body)
+	}
+}
+
+func TestHomeUnreadCountsErr(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed"}}
+	fh := store.FeedHash("https://x/feed")
+	feedDir := filepath.Join(st.Dir, "entries", fh)
+	os.MkdirAll(feedDir, 0o755)
+	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("nope\n"), 0o644)
+	if w := do(mux, req("GET", "/ui/", tok, nil)); w.Code != 500 {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestFeedTagChip(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	// Method check
+	if w := do(mux, req("GET", "/ui/feed/tag", tok, nil)); w.Code != 405 {
+		t.Fatalf("method=%d", w.Code)
+	}
+	// Add tag
+	form := url.Values{"url": {"https://x/feed"}, "add": {"news"}}
+	w := do(mux, req("POST", "/ui/feed/tag", tok, form))
+	if w.Code != 200 {
+		t.Fatalf("add code=%d body=%s", w.Code, w.Body.String())
+	}
+	if !op.op.Feeds[0].HasTag("news") {
+		t.Fatalf("not added: %v", op.op.Feeds[0].Tags)
+	}
+	if !strings.Contains(w.Body.String(), "news") {
+		t.Fatalf("fragment missing tag: %s", w.Body.String())
+	}
+	// Remove tag
+	form2 := url.Values{"url": {"https://x/feed"}, "remove": {"news"}}
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form2)); w.Code != 200 {
+		t.Fatalf("rem code=%d", w.Code)
+	}
+	if op.op.Feeds[0].HasTag("news") {
+		t.Fatalf("not removed: %v", op.op.Feeds[0].Tags)
+	}
+	// Missing inputs
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, url.Values{"url": {"https://x/feed"}})); w.Code != 400 {
+		t.Fatalf("missing add/rem=%d", w.Code)
+	}
+	// Unknown feed
+	form3 := url.Values{"url": {"https://nope/feed"}, "add": {"y"}}
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form3)); w.Code != 404 {
+		t.Fatalf("nope=%d", w.Code)
+	}
+	// Load error
+	op.loadErr = errBoom
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 500 {
+		t.Fatalf("load=%d", w.Code)
+	}
+	op.loadErr = nil
+	op.saveErr = errBoom
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 500 {
+		t.Fatalf("save=%d", w.Code)
+	}
+}
+
+func TestFeedAddDropsReservedTag(t *testing.T) {
+	// /ui/feed/add tags input must silently drop the reserved pseudo-
+	// tag name so the home sidebar's __untagged__ bucket can't be
+	// shadowed by a real tag of the same name.
+	_, mux, _, op, tok, _ := fixture(t)
+	form := url.Values{
+		"url":  {"https://x/feed"},
+		"tags": {"ok, " + store.ReservedTagUntagged},
+	}
+	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 303 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	got := op.op.Feeds[0].Tags
+	if len(got) != 1 || got[0] != "ok" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestFeedTagChipDropsReserved(t *testing.T) {
+	// /ui/feed/tag add=__untagged__ → 200 (silent drop), feed unchanged.
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	form := url.Values{"url": {"https://x/feed"}, "add": {store.ReservedTagUntagged}}
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if len(op.op.Feeds[0].Tags) != 0 {
+		t.Fatalf("reserved leaked: %v", op.op.Feeds[0].Tags)
+	}
+}
+
+func TestFeedTagChipExoticTagName(t *testing.T) {
+	// Tag names containing quotes / backslashes used to break the
+	// hx-vals JSON in the remove button. The chip is now a form, so a
+	// tag with `"` survives a round-trip: chips render the tag inside
+	// proper HTML-attribute-escaped form values, and the remove form
+	// POSTs the literal value.
+	_, mux, _, op, tok, _ := fixture(t)
+	odd := `a"b\c`
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{odd}}}
+	w := do(mux, req("GET", "/ui/feed?id=https://x/feed", tok, nil))
+	body := w.Body.String()
+	// Source must HTML-escape the tag inside the form's hidden input.
+	if !strings.Contains(body, `value="a&#34;b\c"`) {
+		t.Fatalf("expected escaped value attr: %s", body)
+	}
+	// Remove must succeed.
+	form := url.Values{"url": {"https://x/feed"}, "remove": {odd}}
+	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 200 {
+		t.Fatalf("remove code=%d", w.Code)
+	}
+	if op.op.Feeds[0].HasTag(odd) {
+		t.Fatalf("not removed: %v", op.op.Feeds[0].Tags)
+	}
+}
+
+func TestFeedTagChipBadForm(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	// invalid percent escape → ParseForm error
+	r := httptest.NewRequest("POST", "/ui/feed/tag", strings.NewReader("url=%ZZ"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestFeedViewIncludesTagChips(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"news"}}}
+	w := do(mux, req("GET", "/ui/feed?id=https://x/feed", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "tagchips") || !strings.Contains(w.Body.String(), "news") {
+		t.Fatalf("missing tag chips: %s", w.Body.String())
+	}
 }

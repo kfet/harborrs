@@ -7,6 +7,7 @@
 <div class="home-actions">
 {{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}" class="filter active">unread only ({{.UnreadCount}}) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only ({{.UnreadCount}})</a>{{end}}
 </div>
+<div id="feed-tags-{{.ScopeID}}">{{template "tagchips" .}}</div>
 {{end}}
 {{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}
 <ul class="entries">
@@ -23,4 +24,14 @@
 <button class="readbtn" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML">{{if .Read}}mark unread{{else}}mark read{{end}}</button>
 <button class="starbtn" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML">{{if .Starred}}unstar{{else}}star{{end}}</button>
 </li>
+{{end}}
+
+{{define "tagchips"}}
+<div class="tagchips">
+{{range .FeedTags}}<span class="tagchip">{{.}} <form class="tagchip-rm" hx-post="feed/tag" hx-target="#feed-tags-{{$.ScopeID}}" hx-swap="innerHTML"><input type="hidden" name="url" value="{{$.ScopeID}}"><input type="hidden" name="remove" value="{{.}}"><button class="tagchip-x" type="submit">×</button></form></span>{{end}}
+<form class="tagadd" hx-post="feed/tag" hx-target="#feed-tags-{{.ScopeID}}" hx-swap="innerHTML">
+<input type="hidden" name="url" value="{{.ScopeID}}">
+<input type="text" name="add" placeholder="+ add tag" required>
+</form>
+</div>
 {{end}}

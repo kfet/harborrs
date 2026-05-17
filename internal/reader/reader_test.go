@@ -142,7 +142,7 @@ func TestUserInfo(t *testing.T) {
 func TestSubscriptionListAndTagList(t *testing.T) {
 	_, mux, tok, op, _ := fixture(t)
 	op.opml.Feeds = []store.Feed{
-		{XMLURL: "https://a/feed", Title: "A", Folder: "News", HTMLURL: "https://a"},
+		{XMLURL: "https://a/feed", Title: "A", Tags: []string{"News"}, HTMLURL: "https://a"},
 		{XMLURL: "https://b/feed", Title: "B"},
 	}
 	w := do(t, mux, "GET", "/reader/api/0/subscription/list", tok, nil)
@@ -180,7 +180,7 @@ func TestSubscriptionEdit(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
 	}
-	if len(op.opml.Feeds) != 1 || op.opml.Feeds[0].Folder != "F" {
+	if len(op.opml.Feeds) != 1 || !op.opml.Feeds[0].HasTag("F") {
 		t.Fatalf("opml=%+v", op.opml.Feeds)
 	}
 	// subscribe without title falls back to url
@@ -193,16 +193,28 @@ func TestSubscriptionEdit(t *testing.T) {
 	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, edit); w.Code != 200 {
 		t.Fatalf("w=%d", w.Code)
 	}
-	if op.opml.Feeds[0].Title != "NewTitle" || op.opml.Feeds[0].Folder != "F2" {
+	if op.opml.Feeds[0].Title != "NewTitle" || !op.opml.Feeds[0].HasTag("F2") {
 		t.Fatalf("not edited: %+v", op.opml.Feeds[0])
 	}
-	// edit with r removing folder
+	// edit with r removing a tag (now: just F2; F remains)
 	edit2 := url.Values{"ac": {"edit"}, "s": {"feed/https://x/y"}, "r": {"user/-/label/F2"}}
 	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, edit2); w.Code != 200 {
 		t.Fatalf("w=%d", w.Code)
 	}
-	if op.opml.Feeds[0].Folder != "" {
-		t.Fatalf("folder not cleared: %+v", op.opml.Feeds[0])
+	if op.opml.Feeds[0].HasTag("F2") || !op.opml.Feeds[0].HasTag("F") {
+		t.Fatalf("tag not cleared: %+v", op.opml.Feeds[0])
+	}
+	// edit with multiple a + multiple r in one request
+	edit3 := url.Values{
+		"ac": {"edit"}, "s": {"feed/https://x/y"},
+		"a": {"user/-/label/X", "user/-/label/Y"},
+		"r": {"user/-/label/F"},
+	}
+	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, edit3); w.Code != 200 {
+		t.Fatalf("multi a/r w=%d", w.Code)
+	}
+	if !op.opml.Feeds[0].HasTag("X") || !op.opml.Feeds[0].HasTag("Y") || op.opml.Feeds[0].HasTag("F") {
+		t.Fatalf("multi a/r unexpected: %+v", op.opml.Feeds[0].Tags)
 	}
 	// edit on missing
 	miss := url.Values{"ac": {"edit"}, "s": {"feed/missing"}}
@@ -268,7 +280,7 @@ func TestQuickAdd(t *testing.T) {
 func seedFeed(t *testing.T, op *memOPML, st *store.Store, count int, folder string) string {
 	t.Helper()
 	u := "https://feed.example/" + folder
-	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: "F", Folder: folder, HTMLURL: "https://feed.example"})
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: "F", Tags: []string{folder}, HTMLURL: "https://feed.example"})
 	fh := store.FeedHash(u)
 	now := time.Now().UTC()
 	es := make([]store.Entry, count)
@@ -748,8 +760,144 @@ type boom string
 
 func (b boom) Error() string { return string(b) }
 
+func TestRenameTagRejectsReservedDest(t *testing.T) {
+	// rename-tag with dest=user/-/label/__untagged__ must 400 — the
+	// user-visible rename op deserves feedback rather than silent drop.
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "a", Tags: []string{"old"}}}
+	body := url.Values{"s": {"user/-/label/old"}, "dest": {"user/-/label/" + store.ReservedTagUntagged}}
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 400 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	// Tag must not be renamed.
+	if !op.opml.Feeds[0].HasTag("old") {
+		t.Fatalf("rename happened anyway: %v", op.opml.Feeds[0].Tags)
+	}
+}
+
+func TestSubscriptionEditDropsReserved(t *testing.T) {
+	// subscribe + edit must silently drop reserved names from a= so
+	// they never enter the OPML.
+	_, mux, tok, op, _ := fixture(t)
+	body := url.Values{
+		"ac": {"subscribe"}, "s": {"feed/https://r/y"},
+		"a": {"user/-/label/ok", "user/-/label/" + store.ReservedTagUntagged},
+	}
+	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, body); w.Code != 200 {
+		t.Fatalf("subscribe=%d", w.Code)
+	}
+	if !op.opml.Feeds[0].HasTag("ok") || op.opml.Feeds[0].HasTag(store.ReservedTagUntagged) {
+		t.Fatalf("reserved leaked: %v", op.opml.Feeds[0].Tags)
+	}
+	// Edit add path must also drop.
+	edit := url.Values{
+		"ac": {"edit"}, "s": {"feed/https://r/y"},
+		"a": {"user/-/label/" + store.ReservedTagUntagged},
+	}
+	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, edit); w.Code != 200 {
+		t.Fatalf("edit=%d", w.Code)
+	}
+	if op.opml.Feeds[0].HasTag(store.ReservedTagUntagged) {
+		t.Fatalf("reserved leaked on edit: %v", op.opml.Feeds[0].Tags)
+	}
+}
+
 // writeFileAtomically replaces the file directly (test helper).
 func writeFileAtomically(t *testing.T, p, content string) error {
 	t.Helper()
 	return os.WriteFile(p, []byte(content), 0o644)
+}
+
+func TestSubscriptionListMultipleTags(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"tech", "daily"}}}
+	w := do(t, mux, "GET", "/reader/api/0/subscription/list", tok, nil)
+	body := w.Body.String()
+	if !strings.Contains(body, "user/-/label/daily") || !strings.Contains(body, "user/-/label/tech") {
+		t.Fatalf("missing categories: %s", body)
+	}
+}
+
+func TestTagListUnion(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{
+		{XMLURL: "a", Tags: []string{"x", "y"}},
+		{XMLURL: "b", Tags: []string{"y"}},
+		{XMLURL: "c"},
+	}
+	w := do(t, mux, "GET", "/reader/api/0/tag/list", tok, nil)
+	if !strings.Contains(w.Body.String(), "user/-/label/x") || !strings.Contains(w.Body.String(), "user/-/label/y") {
+		t.Fatalf("body=%s", w.Body.String())
+	}
+}
+
+func TestRenameTag(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "a", Tags: []string{"old"}}}
+	// missing both s and dest → 400
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, url.Values{}); w.Code != 400 {
+		t.Fatalf("missing=%d", w.Code)
+	}
+	// missing dest only → 400
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, url.Values{"s": {"user/-/label/old"}}); w.Code != 400 {
+		t.Fatalf("missing dest=%d", w.Code)
+	}
+	body := url.Values{"s": {"user/-/label/old"}, "dest": {"user/-/label/new"}}
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if !op.opml.Feeds[0].HasTag("new") || op.opml.Feeds[0].HasTag("old") {
+		t.Fatalf("not renamed: %v", op.opml.Feeds[0].Tags)
+	}
+	// load error
+	op.loadErr = errBoom
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 500 {
+		t.Fatalf("load err=%d", w.Code)
+	}
+	op.loadErr = nil
+	op.saveErr = errBoom
+	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 500 {
+		t.Fatalf("save err=%d", w.Code)
+	}
+}
+
+func TestDisableTag(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "a", Tags: []string{"x", "y"}}}
+	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, url.Values{}); w.Code != 400 {
+		t.Fatalf("missing=%d", w.Code)
+	}
+	body := url.Values{"s": {"user/-/label/x"}}
+	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, body); w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if op.opml.Feeds[0].HasTag("x") {
+		t.Fatalf("still has x: %v", op.opml.Feeds[0].Tags)
+	}
+	op.loadErr = errBoom
+	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, body); w.Code != 500 {
+		t.Fatalf("load=%d", w.Code)
+	}
+	op.loadErr = nil
+	op.saveErr = errBoom
+	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, body); w.Code != 500 {
+		t.Fatalf("save=%d", w.Code)
+	}
+}
+
+// Verify a feed with multiple tags is matched by stream/contents on any
+// of its labels (multi-tag membership).
+func TestStreamLabelMultiTagMembership(t *testing.T) {
+	srv, mux, tok, op, st := fixture(t)
+	srv.MaxPage = 50
+	u := seedFeed(t, op, st, 2, "primary")
+	// Add a second tag to the seeded feed.
+	op.opml.Feeds[0].Tags = []string{"primary", "extra"}
+	w := do(t, mux, "GET", "/reader/api/0/stream/contents/user/-/label/extra", tok, nil)
+	var resp streamResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Items) != 2 {
+		t.Fatalf("items=%d", len(resp.Items))
+	}
+	_ = u
 }

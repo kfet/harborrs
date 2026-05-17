@@ -322,7 +322,7 @@ func TestOPMLNestedAndTiebreak(t *testing.T) {
 	}
 	var nested *Feed
 	for i := range o.Feeds {
-		if o.Feeds[i].Folder == "Outer/Inner" {
+		if o.Feeds[i].HasTag("Outer/Inner") {
 			nested = &o.Feeds[i]
 		}
 	}

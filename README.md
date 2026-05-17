@@ -14,8 +14,12 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 - Speaks the **Google Reader API** subset that
   FreshRSS-compatible clients (Reeder Classic, NetNewsWire, Fiery Feeds,
   ReadKit, Unread, lire, Newsify) talk: `ClientLogin`, token, user-info,
-  subscription list / edit / quickadd, tag list, stream contents, item
-  id queries, edit-tag, mark-all-as-read, unread-count.
+  subscription list / edit / quickadd, tag list, rename-tag, disable-tag,
+  stream contents, item id queries, edit-tag, mark-all-as-read,
+  unread-count.
+- Organises feeds with **tags** (many-to-many, flat). OPML 2.0
+  `category` attributes round-trip; pre-existing folder-style OPML
+  imports as one tag per folder name.
 - Serves an embedded htmx web UI on the same port — login, home, per-
   feed list, single-entry view, read / star toggles via hx-post.
 - Themeable via CSS-variable presets (`light`, `dark`, `sepia`) and

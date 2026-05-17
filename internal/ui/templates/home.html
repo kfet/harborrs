@@ -6,20 +6,38 @@
 
 <div class="home-actions">
 <a href="feed/new" class="addlink">+ add feed</a>
-{{if .UnreadOnly}}<a href="./" class="filter active">unread only ({{.WithUnread}}) ×</a>{{else}}<a href="./?unread=1" class="filter">show unread only ({{.WithUnread}})</a>{{end}}
+{{if .UnreadOnly}}<a href="./{{if .TagFilter}}?tag={{.TagFilter}}{{end}}" class="filter active">unread only ({{.WithUnread}}) ×</a>{{else}}<a href="./?unread=1{{if .TagFilter}}&tag={{.TagFilter}}{{end}}" class="filter">show unread only ({{.WithUnread}})</a>{{end}}
 </div>
 
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+<div class="home-grid">
+<aside class="tags">
+<ul class="taglist">
+{{range .Sidebar}}
+<li class="pinned{{if and (eq $.TagFilter "") (eq .Name "")}} active{{else if eq $.TagFilter .Name}} active{{end}}">
+<a href="./{{if .Name}}?tag={{.Name}}{{end}}">{{.Label}} <span class="count">{{.Unread}}</span></a>
+</li>
+{{end}}
+{{if .Tags}}<li class="sep"></li>{{range .Tags}}
+<li class="{{if eq $.TagFilter .Name}}active{{end}}">
+<a href="./?tag={{.Name}}">{{.Label}} <span class="count">{{.Unread}}</span></a>
+</li>
+{{end}}{{end}}
+</ul>
+</aside>
 
 <ul class="feeds">
 {{range .Feeds}}
 <li>
 <a href="feed?id={{.URL}}">{{.Title}}</a>
+{{range .Tags}}<small class="tagchip">{{.}}</small>{{end}}
 <span class="count">{{.Unread}}</span>
 </li>
 {{else}}
-<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
+<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./{{if $.TagFilter}}?tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
 {{end}}
 </ul>
+</div>
 </section>
 {{end}}
