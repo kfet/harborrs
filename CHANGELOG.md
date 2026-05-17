@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-16
+
 ### Changed
 
 - **Tags replace folders as the feed-organisation primitive.**
