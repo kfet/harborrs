@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Absolute-path `Location` headers in two root-level redirects defeated
+  the prefix-agnostic UI claim from 0.3.1 when served under a path
+  prefix (e.g. Tailscale Funnel `--set-path=/rss`, which strips the
+  prefix before forwarding). `GET /` now emits a relative `ui/`
+  Location (was `http.Redirect`, which Go resolves to absolute `/ui/`),
+  and an explicit `/ui` handler pre-empts `http.ServeMux`'s automatic
+  301 canonicalisation to `/ui/` (which also emitted an absolute
+  Location) with a relative `ui/` Location of its own. The
+  previously-private `relRedirect` helper in `internal/ui` is now
+  exported as `RelRedirect`.
+
 ## [0.4.0] - 2026-05-16
 
 ### Changed

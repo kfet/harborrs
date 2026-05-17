@@ -1501,7 +1501,7 @@ func mustReadString(r interface {
 }
 
 // TestRelRedirectAbsolutePathPanics pins down the defence-in-depth
-// panic in relRedirect: callers must pass relative references. A
+// panic in RelRedirect: callers must pass relative references. A
 // leading-slash Location would re-introduce the absolute-path bug
 // this package is built around avoiding, so we panic loud instead of
 // silently emitting the wrong thing.
@@ -1513,7 +1513,7 @@ func TestRelRedirectAbsolutePathPanics(t *testing.T) {
 	}()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/ui/", nil)
-	relRedirect(w, r, "/ui/login", http.StatusSeeOther)
+	RelRedirect(w, r, "/ui/login", http.StatusSeeOther)
 }
 
 // TestUIWorksUnderPrefixFullRoundTrip is the browser-equivalent test
@@ -1536,7 +1536,7 @@ func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
 	// external prefix.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
-			relRedirect(w, r, "ui/", http.StatusSeeOther)
+			RelRedirect(w, r, "ui/", http.StatusSeeOther)
 			return
 		}
 		http.NotFound(w, r)

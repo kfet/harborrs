@@ -146,7 +146,7 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.Auth.CheckSession(auth.SessionFromRequest(r)) {
-			relRedirect(w, r, uiBase(r)+"login", http.StatusSeeOther)
+			RelRedirect(w, r, uiBase(r)+"login", http.StatusSeeOther)
 			return
 		}
 		h(w, r)
@@ -183,18 +183,18 @@ func uiBase(r *http.Request) string {
 	return strings.Repeat("../", depth)
 }
 
-// relRedirect writes a 3xx response whose Location header is the
+// RelRedirect writes a 3xx response whose Location header is the
 // verbatim relative reference loc — leading slash forbidden. We can't
 // use net/http.Redirect here because it eagerly resolves any relative
 // reference against r.URL into an absolute path, which is exactly the
 // rewriting we are trying to avoid. Browsers resolve a relative
 // Location against the effective request URI per RFC 7231 §7.1.2, and
 // that is what makes the UI work under an arbitrary path prefix.
-func relRedirect(w http.ResponseWriter, r *http.Request, loc string, code int) {
+func RelRedirect(w http.ResponseWriter, r *http.Request, loc string, code int) {
 	if strings.HasPrefix(loc, "/") {
 		// Defence in depth: a leading slash here would re-introduce
 		// the very absolute-path bug this function exists to prevent.
-		panic("ui: relRedirect called with absolute-path Location: " + loc)
+		panic("ui: RelRedirect called with absolute-path Location: " + loc)
 	}
 	h := w.Header()
 	h.Set("Location", loc)
@@ -261,7 +261,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auth.SetSessionCookie(w, tok, s.Secure)
-		relRedirect(w, r, "./", http.StatusSeeOther)
+		RelRedirect(w, r, "./", http.StatusSeeOther)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -273,7 +273,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = s.Auth.RevokeSession(tok)
 	}
 	auth.ClearSessionCookie(w)
-	relRedirect(w, r, "login", http.StatusSeeOther)
+	RelRedirect(w, r, "login", http.StatusSeeOther)
 }
 
 type homeFeed struct {
@@ -556,7 +556,7 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	relRedirect(w, r, "../", http.StatusSeeOther)
+	RelRedirect(w, r, "../", http.StatusSeeOther)
 }
 
 // handleFeedTag adds or removes a single tag on a feed. POST with form
@@ -632,7 +632,7 @@ func (s *Server) handleFeedRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	relRedirect(w, r, "../", http.StatusSeeOther)
+	RelRedirect(w, r, "../", http.StatusSeeOther)
 }
 
 // handleMarkAllRead marks every entry in a given scope as read. Scopes:
@@ -675,7 +675,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		relRedirect(w, r, "./?unread=1", http.StatusSeeOther)
+		RelRedirect(w, r, "./?unread=1", http.StatusSeeOther)
 	case "all":
 		for _, f := range op.Feeds {
 			if err := mark(f.XMLURL); err != nil {
@@ -683,7 +683,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		relRedirect(w, r, "all", http.StatusSeeOther)
+		RelRedirect(w, r, "all", http.StatusSeeOther)
 	default:
 		http.Error(w, "bad scope", http.StatusBadRequest)
 	}
@@ -882,7 +882,7 @@ func (s *Server) handlePasswd(w http.ResponseWriter, r *http.Request) {
 	s.Auth.SetPasswordHash(h)
 	_ = s.Auth.RevokeAllSessions()
 	auth.ClearSessionCookie(w)
-	relRedirect(w, r, "../login?passwd=1", http.StatusSeeOther)
+	RelRedirect(w, r, "../login?passwd=1", http.StatusSeeOther)
 }
 
 func (s *Server) renderPasswdErr(w http.ResponseWriter, r *http.Request, msg string) {

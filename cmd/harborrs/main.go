@@ -117,6 +117,29 @@ func commonFlags(fs *flag.FlagSet) (*string, *string) {
 	return data, cfg
 }
 
+// installRootRedirects wires the two root-level redirects on mux:
+//
+//   - GET / → 303 to "ui/" (relative, so it works under any URL prefix).
+//   - GET /ui → 301 to "ui/" (relative; pre-empts http.ServeMux's
+//     auto-canonicalisation to /ui/, which would emit an absolute-path
+//     Location and break the prefix-agnostic UI under e.g. Tailscale
+//     Funnel --set-path=/rss).
+//
+// Both Location headers are verbatim relative references — never
+// leading-slash absolute. ui.RelRedirect enforces this with a panic.
+func installRootRedirects(mux *http.ServeMux) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			uipkg.RelRedirect(w, r, "ui/", http.StatusSeeOther)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc("/ui", func(w http.ResponseWriter, r *http.Request) {
+		uipkg.RelRedirect(w, r, "ui/", http.StatusMovedPermanently)
+	})
+}
+
 func cmdServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -163,13 +186,9 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	uiSrv.ConfigPath = cfgPath
 	uiSrv.Previewer = feedpreview.New()
 	uiSrv.Routes(mux)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			http.Redirect(w, r, "ui/", http.StatusSeeOther)
-			return
-		}
-		http.NotFound(w, r)
-	})
+	// Root + /ui redirects. Extracted so the test in main_test.go can
+	// exercise the exact handler wiring used at runtime.
+	installRootRedirects(mux)
 
 	srv := &http.Server{
 		Addr:         cfg.Listen,
