@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-19
+
 ### Fixed
 
 - `/reader/api/0/unread-count` now emits `newestItemTimestampUsec` on
