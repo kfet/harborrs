@@ -901,3 +901,251 @@ func TestStreamLabelMultiTagMembership(t *testing.T) {
 	}
 	_ = u
 }
+
+// seedFeedWithFetchedAt is like seedFeed but lets the caller control the
+// FetchedAt timestamps so we can assert per-entry newestItemTimestampUsec.
+// Returns the feed url and the entries (post-store, so .Hash is populated).
+func seedFeedWithFetchedAt(t *testing.T, op *memOPML, st *store.Store, name string, fetched []time.Time) (string, []store.Entry) {
+	t.Helper()
+	u := "https://feed.example/" + name
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: name, Tags: []string{name}, HTMLURL: "https://feed.example"})
+	fh := store.FeedHash(u)
+	es := make([]store.Entry, len(fetched))
+	base := time.Now().UTC()
+	for i, ft := range fetched {
+		es[i] = store.Entry{
+			GUID:      name + "-g" + strconv.Itoa(i),
+			Link:      "https://feed.example/" + name + "/" + strconv.Itoa(i),
+			Title:     name + " " + strconv.Itoa(i),
+			Content:   "c",
+			Summary:   "s",
+			Published: base.Add(time.Duration(-i) * time.Minute),
+			FetchedAt: ft,
+		}
+	}
+	if _, err := st.AppendEntries(fh, es); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u, got
+}
+
+// Bug fix: /reader/api/0/unread-count must emit newestItemTimestampUsec on
+// every row (per-feed and the reading-list aggregate). Reeder iOS uses the
+// field to decide whether its local cache is stale; without it the client
+// silently shows zero unread and never calls stream/items/ids.
+func TestUnreadCountIncludesNewestItemTimestampUsec(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	base := time.Unix(1_700_000_000, 0).UTC()
+	// Feed A: 3 entries with increasing FetchedAt.
+	urlA, _ := seedFeedWithFetchedAt(t, op, st, "A", []time.Time{
+		base, base.Add(1 * time.Hour), base.Add(2 * time.Hour),
+	})
+	// Feed B: one entry, later than any in A → should drive the global.
+	urlB, _ := seedFeedWithFetchedAt(t, op, st, "B", []time.Time{
+		base.Add(10 * time.Hour),
+	})
+	wantA := strconv.FormatInt(base.Add(2*time.Hour).UnixMicro(), 10)
+	wantB := strconv.FormatInt(base.Add(10*time.Hour).UnixMicro(), 10)
+	wantGlobal := wantB
+
+	w := do(t, mux, "GET", "/reader/api/0/unread-count?output=json", tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		UnreadCounts []struct {
+			ID                      string `json:"id"`
+			Count                   int    `json:"count"`
+			NewestItemTimestampUsec string `json:"newestItemTimestampUsec"`
+		} `json:"unreadcounts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	got := map[string]string{}
+	gotCount := map[string]int{}
+	for _, r := range resp.UnreadCounts {
+		got[r.ID] = r.NewestItemTimestampUsec
+		gotCount[r.ID] = r.Count
+		if r.NewestItemTimestampUsec == "" {
+			t.Errorf("row %q has empty newestItemTimestampUsec", r.ID)
+		}
+		for _, c := range r.NewestItemTimestampUsec {
+			if c < '0' || c > '9' {
+				t.Errorf("row %q newestItemTimestampUsec=%q not all digits", r.ID, r.NewestItemTimestampUsec)
+				break
+			}
+		}
+	}
+	if got["feed/"+urlA] != wantA {
+		t.Errorf("feed A: got %q want %q", got["feed/"+urlA], wantA)
+	}
+	if got["feed/"+urlB] != wantB {
+		t.Errorf("feed B: got %q want %q", got["feed/"+urlB], wantB)
+	}
+	if got[streamReadingList] != wantGlobal {
+		t.Errorf("reading-list: got %q want %q", got[streamReadingList], wantGlobal)
+	}
+	if gotCount[streamReadingList] != 4 {
+		t.Errorf("reading-list count: got %d want 4", gotCount[streamReadingList])
+	}
+}
+
+// Empty-feed case: a feed with no entries must still emit the field (value
+// "0") so the JSON shape matches what FreshRSS-compatible clients expect.
+func TestUnreadCountEmptyFeedEmitsZeroTimestamp(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: "https://empty.example/", Title: "E"})
+	w := do(t, mux, "GET", "/reader/api/0/unread-count", tok, nil)
+	body := w.Body.String()
+	if !strings.Contains(body, `"newestItemTimestampUsec":"0"`) {
+		t.Fatalf("expected zero-valued newestItemTimestampUsec; body=%s", body)
+	}
+}
+
+// Bug fix: /reader/api/0/stream/items/ids must paginate via the `c=`
+// continuation token. Previously the handler silently capped at MaxPage,
+// stranding clients with >MaxPage unread items.
+func TestItemsIDsPagination(t *testing.T) {
+	srv, mux, tok, op, st := fixture(t)
+	srv.MaxPage = 10
+	const total = 25
+	base := time.Unix(1_700_000_000, 0).UTC()
+	fetched := make([]time.Time, total)
+	for i := range fetched {
+		fetched[i] = base.Add(time.Duration(i) * time.Minute)
+	}
+	seedFeedWithFetchedAt(t, op, st, "F", fetched)
+
+	type ref struct {
+		ID            string `json:"id"`
+		TimestampUsec string `json:"timestampUsec"`
+	}
+	type page struct {
+		ItemRefs     []ref  `json:"itemRefs"`
+		Continuation string `json:"continuation,omitempty"`
+	}
+
+	seen := map[string]bool{}
+	cont := ""
+	pages := 0
+	for {
+		path := "/reader/api/0/stream/items/ids?s=" + streamReadingList + "&n=10"
+		if cont != "" {
+			path += "&c=" + cont
+		}
+		w := do(t, mux, "GET", path, tok, nil)
+		if w.Code != 200 {
+			t.Fatalf("page %d code=%d body=%s", pages, w.Code, w.Body.String())
+		}
+		var p page
+		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		for _, r := range p.ItemRefs {
+			if seen[r.ID] {
+				t.Fatalf("duplicate id %s on page %d", r.ID, pages)
+			}
+			seen[r.ID] = true
+		}
+		pages++
+		switch pages {
+		case 1, 2:
+			if len(p.ItemRefs) != 10 {
+				t.Fatalf("page %d itemRefs=%d, want 10", pages, len(p.ItemRefs))
+			}
+			if p.Continuation == "" {
+				t.Fatalf("page %d expected continuation", pages)
+			}
+			// Decode and sanity-check the offset.
+			dec, err := base64.RawURLEncoding.DecodeString(p.Continuation)
+			if err != nil {
+				t.Fatalf("decode cont: %v", err)
+			}
+			var st struct {
+				Offset int `json:"o"`
+			}
+			if err := json.Unmarshal(dec, &st); err != nil {
+				t.Fatalf("decode cont json: %v", err)
+			}
+			if st.Offset != pages*10 {
+				t.Fatalf("page %d offset=%d, want %d", pages, st.Offset, pages*10)
+			}
+		case 3:
+			if len(p.ItemRefs) != 5 {
+				t.Fatalf("final page itemRefs=%d, want 5", len(p.ItemRefs))
+			}
+			if p.Continuation != "" {
+				t.Fatalf("final page should have empty continuation, got %q", p.Continuation)
+			}
+		}
+		if p.Continuation == "" {
+			break
+		}
+		cont = p.Continuation
+		if pages > 10 {
+			t.Fatal("walked too many pages — infinite loop?")
+		}
+	}
+	if pages != 3 {
+		t.Fatalf("pages=%d, want 3", pages)
+	}
+	if len(seen) != total {
+		t.Fatalf("saw %d distinct ids, want %d", len(seen), total)
+	}
+}
+
+// A `c=` token whose offset has run past the end (because entries were
+// marked read between requests, say) must return empty refs and no
+// continuation rather than panic on the slice.
+func TestItemsIDsContinuationPastEnd(t *testing.T) {
+	srv, mux, tok, op, st := fixture(t)
+	srv.MaxPage = 10
+	seedFeed(t, op, st, 3, "F")
+	raw, _ := json.Marshal(struct {
+		Offset int `json:"o"`
+	}{Offset: 99})
+	cont := base64.RawURLEncoding.EncodeToString(raw)
+	w := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList+"&c="+cont, tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var p struct {
+		ItemRefs     []any  `json:"itemRefs"`
+		Continuation string `json:"continuation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if len(p.ItemRefs) != 0 || p.Continuation != "" {
+		t.Fatalf("got refs=%d cont=%q", len(p.ItemRefs), p.Continuation)
+	}
+}
+
+// Asking for n bigger than MaxPage must clamp to MaxPage, not silently
+// fall through to the default.
+func TestItemsIDsClampsLargeN(t *testing.T) {
+	srv, mux, tok, op, st := fixture(t)
+	srv.MaxPage = 5
+	seedFeed(t, op, st, 20, "F")
+	w := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList+"&n=9999", tok, nil)
+	var p struct {
+		ItemRefs []struct {
+			ID string `json:"id"`
+		} `json:"itemRefs"`
+		Continuation string `json:"continuation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if len(p.ItemRefs) != 5 {
+		t.Fatalf("got %d refs, want 5 (MaxPage)", len(p.ItemRefs))
+	}
+	if p.Continuation == "" {
+		t.Fatal("expected continuation for clamped page")
+	}
+}

@@ -243,6 +243,30 @@ func TestE2E(t *testing.T) {
 	if !strings.Contains(string(body), `"count":0`) {
 		t.Fatalf("unread-count expected 0: %s", body)
 	}
+	// Reeder iOS (and other FreshRSS-compatible clients) require the
+	// newestItemTimestampUsec field on every unreadcounts row; without it
+	// the client silently shows zero unread. Assert the field is present.
+	if !strings.Contains(string(body), `"newestItemTimestampUsec"`) {
+		t.Fatalf("unread-count missing newestItemTimestampUsec: %s", body)
+	}
+	var ucResp struct {
+		UnreadCounts []struct {
+			ID                      string `json:"id"`
+			Count                   int    `json:"count"`
+			NewestItemTimestampUsec string `json:"newestItemTimestampUsec"`
+		} `json:"unreadcounts"`
+	}
+	if err := json.Unmarshal(body, &ucResp); err != nil {
+		t.Fatalf("unread-count unmarshal: %v %s", err, body)
+	}
+	if len(ucResp.UnreadCounts) == 0 {
+		t.Fatalf("unread-count empty: %s", body)
+	}
+	for _, row := range ucResp.UnreadCounts {
+		if row.NewestItemTimestampUsec == "" {
+			t.Fatalf("row %q has empty newestItemTimestampUsec: %s", row.ID, body)
+		}
+	}
 
 	// 8. Web UI: login + home.
 	jar, _ := cookiejar.New(nil)

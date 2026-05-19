@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `/reader/api/0/unread-count` now emits `newestItemTimestampUsec` on
+  every row — per-feed and the `user/-/state/com.google/reading-list`
+  aggregate. The field was missing entirely from the JSON; Reeder iOS
+  (and other FreshRSS-compatible clients) use it to decide whether the
+  local cache is stale and silently showed zero unread without ever
+  calling `stream/items/ids` when it was absent. Empty feeds emit
+  `"0"`, matching FreshRSS.
+- `/reader/api/0/stream/items/ids` now supports the `c=` continuation
+  token (base64 RawURL of `{"o":offset}`), matching `stream/contents`.
+  Previously the handler silently capped responses at `MaxPage` (100)
+  with no way to walk further, so clients with >100 unread items could
+  only ever see the first 100. The `n=` parameter is also now clamped
+  to `MaxPage` rather than falling through to the default when larger.
 - Absolute-path `Location` headers in two root-level redirects defeated
   the prefix-agnostic UI claim from 0.3.1 when served under a path
   prefix (e.g. Tailscale Funnel `--set-path=/rss`, which strips the

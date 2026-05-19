@@ -597,7 +597,9 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 }
 
 // handleItemsIDs returns just the item ids for a stream (used to seed
-// "what's new" queries).
+// "what's new" queries). Supports the `c=` continuation token in the same
+// shape as writeStreamPage, so clients with more than MaxPage unread items
+// can walk the full set.
 func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	streamID := r.FormValue("s")
 	if streamID == "" {
@@ -610,12 +612,36 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	}
 	n := s.MaxPage
 	if v := r.FormValue("n"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil && i > 0 && i < s.MaxPage {
+		if i, err := strconv.Atoi(v); err == nil && i > 0 {
+			if i > s.MaxPage {
+				i = s.MaxPage
+			}
 			n = i
 		}
 	}
-	if n > len(entries) {
-		n = len(entries)
+	offset := 0
+	if c := r.FormValue("c"); c != "" {
+		if dec, err := base64.RawURLEncoding.DecodeString(c); err == nil {
+			var st struct {
+				Offset int `json:"o"`
+			}
+			if json.Unmarshal(dec, &st) == nil && st.Offset > 0 {
+				offset = st.Offset
+			}
+		}
+	}
+	if offset > len(entries) {
+		offset = len(entries)
+	}
+	hi := offset + n
+	cont := ""
+	if hi < len(entries) {
+		raw, _ := json.Marshal(struct {
+			Offset int `json:"o"`
+		}{Offset: hi})
+		cont = base64.RawURLEncoding.EncodeToString(raw)
+	} else if hi > len(entries) {
+		hi = len(entries)
 	}
 	type ref struct {
 		ID            string   `json:"id"`
@@ -623,9 +649,10 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 		TimestampUsec string   `json:"timestampUsec"`
 	}
 	out := struct {
-		ItemRefs []ref `json:"itemRefs"`
-	}{}
-	for _, e := range entries[:n] {
+		ItemRefs     []ref  `json:"itemRefs"`
+		Continuation string `json:"continuation,omitempty"`
+	}{Continuation: cont}
+	for _, e := range entries[offset:hi] {
 		out.ItemRefs = append(out.ItemRefs, ref{
 			ID:            itemID(e.Hash),
 			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
@@ -715,13 +742,14 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 	type uc struct {
 		ID                      string `json:"id"`
 		Count                   int    `json:"count"`
-		NewestItemTimestampUsec string `json:"newestItemTimestampUsec,omitempty"`
+		NewestItemTimestampUsec string `json:"newestItemTimestampUsec"`
 	}
 	out := struct {
 		Max          int  `json:"max"`
 		UnreadCounts []uc `json:"unreadcounts"`
 	}{Max: 1000}
 	total := 0
+	var globalNewest int64
 	for _, f := range op.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		es, err := s.Store.ListEntries(fh)
@@ -740,16 +768,20 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 				newest = ts
 			}
 		}
-		total += count
-		entry := uc{ID: feedStreamID(f.XMLURL), Count: count}
-		if newest > 0 {
-			entry.NewestItemTimestampUsec = strconv.FormatInt(newest, 10)
+		if newest > globalNewest {
+			globalNewest = newest
 		}
-		out.UnreadCounts = append(out.UnreadCounts, entry)
+		total += count
+		out.UnreadCounts = append(out.UnreadCounts, uc{
+			ID:                      feedStreamID(f.XMLURL),
+			Count:                   count,
+			NewestItemTimestampUsec: strconv.FormatInt(newest, 10),
+		})
 	}
 	out.UnreadCounts = append(out.UnreadCounts, uc{
-		ID:    streamReadingList,
-		Count: total,
+		ID:                      streamReadingList,
+		Count:                   total,
+		NewestItemTimestampUsec: strconv.FormatInt(globalNewest, 10),
 	})
 	writeJSON(w, out)
 }
