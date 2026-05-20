@@ -222,6 +222,12 @@ main {
   padding: 0 1.4em;
 }
 
+/* Wider column on list pages (per-feed, all, starred) so the
+ * split-panel detail view has room to breathe on big screens. The
+ * narrow-screen layout collapses back into a single column via
+ * .detail-pane's display:none, so this width is harmless there. */
+main.wide { max-width: 78em; }
+
 .site-footer {
   max-width: 60em;
   margin: 2em auto 1.5em;
@@ -480,7 +486,49 @@ ul.entries {
   flex-shrink: 0;
 }
 
-/* ---- entry detail -------------------------------------------------- */
+/* ---- split panel (entry list + detail) ---------------------------- */
+
+/* On narrow screens (< 64em) the split collapses: the entries pane
+ * takes the full width and .detail-pane is hidden, so clicking an
+ * entry follows its href like before. On wide screens we get a
+ * two-column grid with the list on the left and a sticky detail pane
+ * on the right that htmx populates on row clicks.
+ *
+ * The hx-trigger expression on each row gates the htmx swap to wide
+ * viewports only; below the breakpoint the native <a href> wins. */
+.split { display: block; }
+.detail-pane { display: none; }
+
+@media (min-width: 64em) {
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+    gap: 1.6em;
+    align-items: start;
+  }
+  .entries-pane { min-width: 0; }
+  .detail-pane {
+    display: block;
+    position: sticky;
+    top: 4.2em;
+    max-height: calc(100vh - 5em);
+    overflow: auto;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.2em 1.4em;
+    box-shadow: var(--shadow);
+  }
+  .detail-pane .detail-placeholder {
+    color: var(--muted);
+    font-style: italic;
+    text-align: center;
+    margin: 2em 0;
+  }
+  /* Cancel the entry-full max-width when it's living in the right
+   * pane — the pane itself constrains the width. */
+  .detail-pane .entry-full { max-width: none; margin: 0; }
+}
 
 .entry-full { max-width: 44em; margin: 0 auto; }
 .entry-full h1 { margin-bottom: 0.3em; }

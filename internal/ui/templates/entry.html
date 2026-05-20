@@ -9,8 +9,8 @@
 {{with .Entry.Author}}{{.}} · {{end}}{{.Entry.Published.Format "2006-01-02 15:04"}} · <a href="{{.Entry.Link}}" target="_blank" rel="noopener noreferrer">source ↗</a>{{if .FeedURL}} · <a href="feed?id={{.FeedURL}}">{{.FeedTitle}}</a>{{end}}
 </p>
 <div class="actions">
-<button class="readbtn icon" aria-label="{{if .State.Read}}mark unread{{else}}mark read{{end}}" title="{{if .State.Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Entry.Hash}}&state={{if .State.Read}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .State.Read}}○{{else}}●{{end}}</span> {{if .State.Read}}mark unread{{else}}mark read{{end}}</button>
-<button class="starbtn icon" aria-label="{{if .State.Starred}}unstar{{else}}star{{end}}" title="{{if .State.Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Entry.Hash}}&state={{if .State.Starred}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .State.Starred}}★{{else}}☆{{end}}</span> {{if .State.Starred}}unstar{{else}}star{{end}}</button>
+<button class="readbtn icon" aria-label="{{if .State.Read}}mark unread{{else}}mark read{{end}}" title="{{if .State.Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Entry.Hash}}&state={{if .State.Read}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .State.Read}}○{{else}}●{{end}}</span></button>
+<button class="starbtn icon" aria-label="{{if .State.Starred}}unstar{{else}}star{{end}}" title="{{if .State.Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Entry.Hash}}&state={{if .State.Starred}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .State.Starred}}★{{else}}☆{{end}}</span></button>
 </div>
 <div class="body">{{.Body}}</div>
 </article>

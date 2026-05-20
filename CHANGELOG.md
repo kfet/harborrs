@@ -16,6 +16,27 @@ All notable changes to this project will be documented in this file.
   baseline). Trips if anyone reintroduces a per-request disk scan or
   bypasses the in-memory entry index. Auto-skips under `-short`,
   `-race`, or on architectures other than amd64/arm64.
+- Web UI now uses a two-panel layout on wide screens (≥ 64em): the
+  entry-list pages (`/ui/feed`, `/ui/all`, `/ui/starred`) keep the list
+  on the left and load the selected entry into a sticky detail pane on
+  the right via htmx — no full page navigation. Narrow screens
+  (phones, small tablets) keep the existing single-column behaviour:
+  entry-row clicks follow the native `href` because the htmx swap is
+  gated by a `matchMedia('(min-width: 64em)')` trigger filter. The new
+  fragment endpoint is `GET /ui/entry?id=<hash>&panel=1`, which
+  returns the bare `entry-detail` template (no page chrome) and is
+  themable through the existing template-overrides mechanism (the
+  `entry-detail` block in `entry.html` is the override point, and the
+  split scaffolding lives in `feed.html`). Read/star toggles fired
+  from inside the detail pane patch the matching list row in the same
+  response via an out-of-band htmx swap, so the two panes stay in
+  sync. Keyboard navigation (j/k) on wide screens auto-previews the
+  focused row into the detail pane (140 ms debounced).
+- Read / star toggles are now icon-only buttons (● / ○ and ☆ / ★) with
+  the human action carried in `title=` and `aria-label=` so hover
+  tooltips and screen readers still work. Saves horizontal space on
+  the entry rows and reads more naturally in the split-panel detail
+  view.
 
 ## [0.4.12] - 2026-05-24
 

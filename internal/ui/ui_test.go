@@ -627,16 +627,28 @@ func TestSetReadDetailView(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "entry-detail-"+h) {
-		t.Fatalf("expected detail fragment, got %s", w.Body.String())
+	body := w.Body.String()
+	if !strings.Contains(body, "entry-detail-"+h) {
+		t.Fatalf("expected detail fragment, got %s", body)
 	}
-	if !strings.Contains(w.Body.String(), "mark unread") {
-		t.Fatalf("expected unread toggle: %s", w.Body.String())
+	if !strings.Contains(body, "mark unread") {
+		t.Fatalf("expected unread toggle: %s", body)
 	}
-	// star toggle in detail view
+	// Out-of-band row patch keeps the list row in sync with the
+	// detail toggle in split-panel mode.
+	if !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("expected OOB row fragment: %s", body)
+	}
+	if !strings.Contains(body, `id="entry-`+h+`"`) {
+		t.Fatalf("expected OOB row to carry list-row id: %s", body)
+	}
+	// star toggle in detail view — also emits OOB row.
 	w = do(mux, req("POST", "/ui/entry/star?id="+h+"&state=1&view=detail", tok, nil))
 	if !strings.Contains(w.Body.String(), "unstar") {
 		t.Fatalf("expected star: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `hx-swap-oob="true"`) {
+		t.Fatalf("expected OOB row fragment on star toggle: %s", w.Body.String())
 	}
 }
 
@@ -2157,5 +2169,115 @@ func TestWriteUnreadCookieNoopWhenAbsent(t *testing.T) {
 	writeUnreadCookie(w, r, false)
 	if cs := w.Result().Cookies(); len(cs) != 0 {
 		t.Fatalf("garbage value should not set cookie, got %v", cs)
+	}
+}
+
+// TestEntryPanelFragment verifies that /ui/entry?id=...&panel=1 returns
+// just the entry-detail fragment (no <html>/<head>/<body> chrome). This
+// is the endpoint the split-panel layout's hx-get on entry rows hits.
+func TestEntryPanelFragment(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	es, _ := st.ListEntries(store.FeedHash(u))
+	h := es[0].Hash
+	w := do(mux, req("GET", "/ui/entry?id="+h+"&panel=1", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "entry-detail-"+h) {
+		t.Fatalf("expected detail fragment id, got: %s", body)
+	}
+	// Fragment must NOT include the page chrome.
+	if strings.Contains(body, "<html") || strings.Contains(body, "<header") {
+		t.Fatalf("panel fragment leaked page chrome: %s", body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("content-type=%q", ct)
+	}
+}
+
+// TestEntryPanelFragmentSummary covers the Content=="" branch of the
+// panel renderer so the summary fallback runs.
+func TestEntryPanelFragmentSummary(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := "https://demo.example/feed"
+	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "Demo"}}
+	now := time.Now().UTC()
+	st.AppendEntries(store.FeedHash(u), []store.Entry{{
+		GUID: "g1", Link: "https://demo.example/p", Title: "T",
+		Summary: "fallback-summary", Published: now, FetchedAt: now,
+	}})
+	es, _ := st.ListEntries(store.FeedHash(u))
+	w := do(mux, req("GET", "/ui/entry?id="+es[0].Hash+"&panel=1", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "fallback-summary") {
+		t.Fatalf("expected summary fallback, got: %s", w.Body.String())
+	}
+}
+
+// TestSplitLayoutMarkup verifies the entry-list pages render the
+// split-panel scaffolding (left list + right detail pane with hx-get
+// rows gated by a media-query event filter).
+func TestSplitLayoutMarkup(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	for _, p := range []string{
+		"/ui/feed?id=" + u,
+		"/ui/all",
+		"/ui/starred",
+	} {
+		w := do(mux, req("GET", p, tok, nil))
+		if w.Code != 200 {
+			t.Fatalf("%s: code=%d", p, w.Code)
+		}
+		body := w.Body.String()
+		// Wide main column on list pages so the split has room.
+		if !strings.Contains(body, `<main class="wide">`) {
+			t.Fatalf("%s: missing wide main: %s", p, body)
+		}
+		if !strings.Contains(body, `class="split"`) {
+			t.Fatalf("%s: missing .split: %s", p, body)
+		}
+		if !strings.Contains(body, `id="detail-pane"`) {
+			t.Fatalf("%s: missing #detail-pane: %s", p, body)
+		}
+		if !strings.Contains(body, `aria-live="polite"`) {
+			t.Fatalf("%s: detail-pane missing aria-live: %s", p, body)
+		}
+	}
+	// Entry rows on a populated feed must carry the hx-get + media-
+	// query trigger so wide screens swap into the pane and narrow
+	// screens fall back to native navigation.
+	w := do(mux, req("GET", "/ui/feed?id="+u, tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, `hx-target="#detail-pane"`) {
+		t.Fatalf("missing hx-target on row: %s", body)
+	}
+	if !strings.Contains(body, `panel=1`) {
+		t.Fatalf("missing panel=1 hx-get on row: %s", body)
+	}
+	if !strings.Contains(body, "matchMedia") {
+		t.Fatalf("missing matchMedia trigger filter on row: %s", body)
+	}
+}
+
+// TestSplitLayoutCSS — the bundled stylesheet must carry the rules the
+// split layout depends on (the .detail-pane visibility flip lives in a
+// media query; if it ever regresses, narrow screens get a broken pane
+// and wide screens get no panel).
+func TestSplitLayoutCSS(t *testing.T) {
+	_, mux, _, _, _, _ := fixture(t)
+	w := do(mux, req("GET", "/ui/static/style.css", "", nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	css := w.Body.String()
+	for _, sel := range []string{".split", ".detail-pane", "main.wide", "min-width: 64em"} {
+		if !strings.Contains(css, sel) {
+			t.Fatalf("style.css missing %q — split layout will be broken", sel)
+		}
 	}
 }

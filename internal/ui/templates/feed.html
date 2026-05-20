@@ -10,16 +10,27 @@
 <div id="feed-tags-{{.ScopeID}}">{{template "tagchips" .}}</div>
 {{end}}
 {{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}&unread=0">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}
+<div class="split">
+<div class="entries-pane">
 <ul class="entries">
 {{range .Entries}}{{template "entryrow" .}}{{end}}
 </ul>
+</div>
+<aside class="detail-pane" id="detail-pane" aria-label="entry detail" aria-live="polite">
+<p class="detail-placeholder">select an entry to read</p>
+</aside>
+</div>
 </section>
 {{end}}
 
 {{define "entryrow"}}
-<li id="entry-{{.Hash}}" class="entry {{if .Read}}read{{else}}unread{{end}}{{if .Starred}} starred{{end}}">
+<li id="entry-{{.Hash}}"{{if .OOB}} hx-swap-oob="true"{{end}} class="entry {{if .Read}}read{{else}}unread{{end}}{{if .Starred}} starred{{end}}">
 <button class="readbtn icon" aria-label="{{if .Read}}mark unread{{else}}mark read{{end}}" title="{{if .Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Read}}○{{else}}●{{end}}</span></button>
-<a href="entry?id={{.Hash}}">{{.Title}}</a>
+<a href="entry?id={{.Hash}}"
+   hx-get="entry?id={{.Hash}}&panel=1"
+   hx-target="#detail-pane"
+   hx-swap="innerHTML"
+   hx-trigger="click[window.matchMedia('(min-width: 64em)').matches]">{{.Title}}</a>
 {{if .FeedTitle}}<small class="feed-tag">{{.FeedTitle}}</small>{{end}}
 {{if .PublishedFmt}}<time class="date" datetime="{{.Published.Format "2006-01-02T15:04:05Z07:00"}}" title="{{.Published.Format "2006-01-02 15:04 MST"}}">{{.PublishedFmt}}</time>{{end}}
 <button class="starbtn icon" aria-label="{{if .Starred}}unstar{{else}}star{{end}}" title="{{if .Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Starred}}★{{else}}☆{{end}}</span></button>

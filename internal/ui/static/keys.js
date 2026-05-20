@@ -15,18 +15,21 @@
 //   gg     → first row, G → last row
 //
 // Entry-list additions:
-//   m      → toggle row's read button
-//   s      → toggle row's star button
-//   r      → run "mark all read" (if present)
+//   r      → toggle row's read state
+//   s      → toggle row's star
+//   R      → mark all read (if a "mark all read" button is present)
 //
 // On the entry view (/ui/entry):
-//   m      → mark read/unread
+//   r      → mark read/unread
 //   s      → star/unstar
 //   u      → back to parent feed
 //
 // Behaviour:
-//   - The entry view auto-marks the entry as read after ~2.5 s of
-//     dwell. Navigating away earlier cancels.
+//   - The entry view auto-marks the entry as read after ~0.7 s of
+//     dwell — both on the standalone entry page and on entries loaded
+//     into the split-panel detail pane via htmx. In split mode the
+//     matching list row is patched in place too (no scroll loss).
+//     Navigating away or toggling read/star manually earlier cancels.
 //   - When a page is restored from the browser's back/forward cache
 //     (e.g. you hit Back from an entry view), it is force-reloaded
 //     so read/star toggles you made are reflected without F5.
@@ -133,7 +136,12 @@
   document.addEventListener("keydown", function (e) {
     if (inEditable(e) || helpOpen()) return;
     if (e.key !== "u") return;
-    if ($(".entry-full")) return;          // entry view handles its own `u`
+    // In split-panel mode the entry detail lives inside #detail-pane;
+    // that doesn't count as "on the entry view" — the universal u
+    // should still walk us up to /ui/. Only bail when the article is
+    // the page-level one (i.e. the standalone /ui/entry view).
+    const article = $(".entry-full");
+    if (article && !article.closest("#detail-pane")) return;
     const path = window.location.pathname;
     if (path === UI_ROOT || path + "/" === UI_ROOT) return;  // already at top
     const ref = sameOriginRef();
@@ -191,6 +199,40 @@
       return out;
     };
     let idx = -1;
+    // Track the focused row by its hash (the part of id="entry-<hash>"
+    // after the prefix) in addition to its index. Index alone is
+    // fragile across htmx swaps: outerHTML replacement of a list row
+    // wipes the .kb-focus class, and if anything ever reorders rows
+    // the index becomes wrong. Hash survives both.
+    let focusedHash = "";
+    const rowHash = (li) => {
+      const id = li && li.id;
+      return id && id.indexOf("entry-") === 0 ? id.slice("entry-".length) : "";
+    };
+    // Debounced "auto-preview the focused row into #detail-pane" so
+    // holding j/k doesn't fire one htmx request per repeat. Only active
+    // on entry-list pages (not the home feed-list) and only when the
+    // viewport is wide enough that the split-panel is visible.
+    const wideScreen = () => window.matchMedia("(min-width: 64em)").matches;
+    let previewTimer = null;
+    const schedulePreview = () => {
+      if (!isEntryList) return;
+      if (!wideScreen()) return;
+      if (previewTimer !== null) clearTimeout(previewTimer);
+      previewTimer = setTimeout(function () {
+        previewTimer = null;
+        if (idx < 0) return;
+        const cur = rows()[idx];
+        if (!cur) return;
+        const a = cur.querySelector("a[hx-get]");
+        if (!a || !window.htmx) return;
+        const url = a.getAttribute("hx-get");
+        // htmx.ajax resolves the URL relative to the document, which
+        // matches what hx-get on the anchor would do on a click. The
+        // promise rejection on aborted requests is harmless here.
+        try { htmx.ajax("GET", url, "#detail-pane"); } catch (_) { /* */ }
+      }, 140);
+    };
     const focusRow = (i) => {
       const all = rows();
       if (all.length === 0) return;
@@ -198,14 +240,56 @@
       if (i >= all.length) i = all.length - 1;
       all.forEach((r, j) => r.classList.toggle("kb-focus", j === i));
       idx = i;
+      focusedHash = rowHash(all[i]);
       all[i].scrollIntoView({ block: "nearest" });
+      schedulePreview();
     };
+    // Re-apply kb-focus by hash whenever the list mutates. Handles
+    // three cases that all wipe the class on the focused row:
+    //   1. row read/star toggle returns a fresh <li> via outerHTML
+    //   2. detail-pane read/star toggle issues an OOB row patch
+    //   3. any future list-mutating swap
+    // We also re-sync idx so j/k continue from the new position.
+    const reapplyFocus = function () {
+      if (!focusedHash) return;
+      const all = rows();
+      for (let i = 0; i < all.length; i++) {
+        if (rowHash(all[i]) === focusedHash) {
+          all[i].classList.add("kb-focus");
+          idx = i;
+          return;
+        }
+      }
+    };
+    // Mouse click on a row → treat it as the new keyboard focus, so
+    // subsequent j/k navigation continues from the clicked row. Event
+    // delegation on the list lets the row's <a> / icon-buttons keep
+    // their own click handlers; we just track which row was hit.
+    // Don't fire schedulePreview here — clicking the <a> already
+    // triggers the htmx swap into #detail-pane.
+    list.addEventListener("click", function (e) {
+      const li = e.target.closest("li");
+      if (!li || li.classList.contains("empty") || !list.contains(li)) return;
+      const all = rows();
+      const i = all.indexOf(li);
+      if (i < 0) return;
+      all.forEach((r, j) => r.classList.toggle("kb-focus", j === i));
+      idx = i;
+      focusedHash = rowHash(li);
+    });
     const clickInRow = (sel) => {
       if (idx < 0) return;
       const btn = rows()[idx].querySelector(sel);
       if (btn) btn.click();
     };
     let lastG = 0;
+    // After any htmx swap on this page (row toggle outerHTML, OOB
+    // patches from detail-pane toggles, etc.) re-apply kb-focus to
+    // the row whose hash matches the tracked focusedHash. Listen on
+    // both afterSwap (synchronous, immediate) and afterSettle (covers
+    // any settling-phase reflow) so the marker survives reliably.
+    document.addEventListener("htmx:afterSwap", reapplyFocus);
+    document.addEventListener("htmx:afterSettle", reapplyFocus);
     document.addEventListener("keydown", function (e) {
       if (inEditable(e) || helpOpen()) return;
       switch (e.key) {
@@ -214,7 +298,12 @@
         case "Enter":
           if (idx >= 0) {
             const a = rows()[idx].querySelector("a");
-            if (a) { window.location.href = a.href; e.preventDefault(); }
+            // a.click() respects the hx-trigger media-query filter on
+            // entry rows: wide screens swap into #detail-pane via
+            // htmx, narrow screens follow the native href. Setting
+            // window.location.href directly would bypass htmx and
+            // always full-nav, defeating the split-panel.
+            if (a) { a.click(); e.preventDefault(); }
           }
           break;
         case "g":
@@ -222,12 +311,15 @@
           else { lastG = Date.now(); }
           break;
         case "G": focusRow(rows().length - 1); break;
-        case "m": if (isEntryList) clickInRow(".readbtn"); break;
+        case "r": if (isEntryList) clickInRow(".readbtn"); break;
         case "s": if (isEntryList) clickInRow(".starbtn"); break;
-        case "r":
+        case "R":
           if (isEntryList) {
+            // Click the button (not form.submit()) so our click
+            // interceptor below fires and history.back()s us to the
+            // origin page, preserving its filter/tag state.
             const b = $(".markall");
-            if (b) b.closest("form").submit();
+            if (b) b.click();
           }
           break;
       }
@@ -235,44 +327,78 @@
   }
 
   // ---- entry view --------------------------------------------------
+  //
+  // patchReadBtn updates a read-toggle button in place: the glyph
+  // (●/○), the tooltip + aria-label, and the hx-post URL's state=
+  // parameter so the next click toggles the correct direction. htmx
+  // re-reads hx-post lazily on each event, so mutating the attribute
+  // is enough.
+  const patchReadBtn = function (btn, isRead) {
+    if (!btn) return;
+    btn.textContent = isRead ? "○" : "●";
+    btn.title = isRead ? "mark unread" : "mark read";
+    btn.setAttribute("aria-label", isRead ? "mark unread" : "mark read");
+    const hxp = btn.getAttribute("hx-post");
+    if (hxp) {
+      btn.setAttribute("hx-post", hxp.replace(/state=\d/, "state=" + (isRead ? "0" : "1")));
+    }
+  };
+  //
+  // wireArticle attaches the dwell-based auto-mark-read timer and a
+  // cancel hook to whatever .entry-full element is passed in. It is
+  // called once at document load for the standalone /ui/entry page,
+  // and again on every htmx:afterSwap into #detail-pane so entries
+  // loaded into the split-panel pane get the same behaviour.
+  let activeTimer = null;
+  const wireArticle = function (article) {
+    if (!article) return;
+    if (activeTimer !== null) { clearTimeout(activeTimer); activeTimer = null; }
+    if (article.classList.contains("read")) return;
+    const m = article.id.match(/^entry-detail-(.+)$/);
+    if (!m) return;
+    const hash = m[1];
+    const dwellMs = 700;
+    activeTimer = setTimeout(function () {
+      activeTimer = null;
+      // Resolve via uiURL so this fetch works correctly under any
+      // external URL prefix (e.g. /rss-test/ui/ on a tailscale
+      // funnel). An absolute /ui/entry/read would silently 404 on a
+      // prefixed deployment.
+      fetch(uiURL("entry/read?id=" + encodeURIComponent(hash) + "&state=1"), {
+        method: "POST",
+        credentials: "same-origin",
+      }).then(function (r) {
+        if (!r.ok) return;
+        // Patch the pane's article in place — re-fetching via htmx
+        // would re-swap the entire pane and reset scroll position
+        // (jarring at 0.7 s dwell), so we DOM-patch directly.
+        article.classList.add("read");
+        patchReadBtn(article.querySelector(".actions .readbtn"), true);
+        // Also patch the matching list row so the left pane reflects
+        // the new read state without a server round trip.
+        const row = document.getElementById("entry-" + hash);
+        if (row) {
+          row.classList.add("read");
+          patchReadBtn(row.querySelector(".readbtn"), true);
+        }
+      }).catch(function () { /* network hiccup — user can still click */ });
+    }, dwellMs);
+    const cancel = function () {
+      if (activeTimer !== null) { clearTimeout(activeTimer); activeTimer = null; }
+    };
+    window.addEventListener("pagehide", cancel, { once: true });
+    const actions = article.querySelector(".actions");
+    if (actions) actions.addEventListener("click", cancel, true);
+  };
+
   const article = $(".entry-full");
   if (article) {
-    // Auto-mark-read after a short dwell time. Skip if already read,
-    // skip if user navigates away first, skip if user toggles the
-    // read state manually before the timer fires (otherwise we'd
-    // race against an explicit "mark unread" click).
-    if (!article.classList.contains("read")) {
-      const m = article.id.match(/^entry-detail-(.+)$/);
-      if (m) {
-        const hash = m[1];
-        const dwellMs = 2500;
-        let timer = setTimeout(function () {
-          timer = null;
-          fetch(uiURL("entry/read") + "?id=" + encodeURIComponent(hash) + "&state=1", {
-            method: "POST",
-            credentials: "same-origin",
-          }).then(function (r) {
-            if (!r.ok) return;
-            article.classList.add("read");
-            const btn = $(".actions button:nth-of-type(1)");
-            if (btn) btn.textContent = "mark unread";
-          }).catch(function () { /* network hiccup — user can still click */ });
-        }, dwellMs);
-        const cancel = function () {
-          if (timer !== null) { clearTimeout(timer); timer = null; }
-        };
-        // If the user navigates away or interacts with read/star
-        // before the timer fires, don't mark.
-        window.addEventListener("pagehide", cancel);
-        const actions = $(".actions");
-        if (actions) actions.addEventListener("click", cancel, true);
-      }
-    }
+    wireArticle(article);
 
     document.addEventListener("keydown", function (e) {
       if (inEditable(e) || helpOpen()) return;
       switch (e.key) {
-        case "m": {
+        case "r": {
           const b = $(".actions button:nth-of-type(1)");
           if (b) b.click();
           break;
@@ -303,8 +429,7 @@
           } else {
             // The .meta link to the parent feed is rendered as a
             // page-relative href like "feed?id=..." — match by a
-            // substring so we work regardless of any path prefix
-            // or whether the template later switches to absolute.
+            // substring so we work regardless of any path prefix.
             const a = $(".meta a[href*='feed?id=']");
             if (a) window.location.href = a.href;
           }
@@ -313,6 +438,66 @@
       }
     });
   }
+
+  // ---- mark-all-read click interceptor -----------------------------
+  //
+  // The server's mark-all-read handler 303-redirects to a hardcoded
+  // target ("./?unread=1" for feed scope; "all" for cross-feed). That
+  // can't preserve whichever filter / tag / unread state the user had
+  // on whichever page they came from before drilling in. Intercept the
+  // click here, POST manually, then history.back() so the bfcache
+  // reload (see "pageshow" handler above) shows the prior page with
+  // fresh state. Falls back to the brand href when there is no useful
+  // history (e.g. opened via bookmark, only entry in tab history).
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest(".markall");
+    if (!btn) return;
+    const form = btn.closest("form");
+    if (!form) return;
+    e.preventDefault();
+    const action = form.getAttribute("action") || "";
+    // Resolve action against the current document so a relative URL
+    // works under any external prefix (e.g. /rss-test/ui/).
+    const url = new URL(action, window.location.href).toString();
+    btn.disabled = true;
+    fetch(url, { method: "POST", credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) {
+          btn.disabled = false;
+          window.location.reload();
+          return;
+        }
+        const ref = sameOriginRef();
+        if (ref && window.history.length > 1) {
+          window.history.back();
+        } else {
+          window.location.href = BASE;
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        window.location.reload();
+      });
+  });
+
+  // ---- htmx swap hooks --------------------------------------------
+  //
+  // When the split-panel swaps a new entry into #detail-pane, reset
+  // the pane's scroll position and re-wire the dwell auto-mark-read
+  // behaviour on the newly-inserted article. (kb-focus restoration on
+  // list-row swaps is wired separately in the list-view block above,
+  // listening directly to htmx:afterSwap + htmx:afterSettle.)
+  document.addEventListener("htmx:afterSwap", function (e) {
+    const target = e && e.target;
+    if (!target) return;
+    if (target.id === "detail-pane") {
+      // New entry just swapped in — start at the top of the article.
+      // Without this the pane keeps its previous scroll position so
+      // long entries make the next entry look like it starts mid-body.
+      target.scrollTop = 0;
+      wireArticle(target.querySelector(".entry-full"));
+    }
+  });
 })();
 
 // ---- collapsible tag groups on the home page ---------------------

@@ -233,6 +233,11 @@ type baseData struct {
 	// every internal href/action/hx-* with {{.Base}} so the rendered
 	// markup contains no leading-slash URLs.
 	Base string
+
+	// MainClass is an optional class attached to <main>. Used to widen
+	// the main column on the entry-list pages (home, feed, all, starred)
+	// so the split-panel detail view has room on wide screens.
+	MainClass string
 }
 
 func (s *Server) base(r *http.Request) baseData {
@@ -245,6 +250,15 @@ func (s *Server) base(r *http.Request) baseData {
 			d.ExtraCSS = d.Base + "static/theme.css"
 		}
 	}
+	return d
+}
+
+// wideBase is base() with MainClass set so the entry-list pages render
+// inside the wider <main> column, giving the split-panel detail view
+// room on big screens.
+func (s *Server) wideBase(r *http.Request) baseData {
+	d := s.base(r)
+	d.MainClass = "wide"
 	return d
 }
 
@@ -552,6 +566,23 @@ type feedEntry struct {
 	FeedTitle    string // only set on cross-feed views
 	Published    time.Time
 	PublishedFmt string // pre-formatted for display
+	// OOB marks this row to be rendered with hx-swap-oob="true" so a
+	// detail-view toggle response can patch the matching list row in
+	// the same swap. Zero value on normal list renders.
+	OOB bool
+}
+
+// rowFor builds a feedEntry for the current state of e. Used by both
+// the standalone row-toggle handler and the detail-view OOB row patch.
+func rowFor(e store.Entry, st store.EntryState) feedEntry {
+	return feedEntry{
+		Hash:         e.Hash,
+		Title:        e.Title,
+		Read:         st.Read,
+		Starred:      st.Starred,
+		Published:    e.Published,
+		PublishedFmt: formatPublished(e.Published, time.Now()),
+	}
 }
 
 type entryListData struct {
@@ -610,7 +641,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.render(w, "feed", entryListData{
-		baseData:    s.base(r),
+		baseData:    s.wideBase(r),
 		Heading:     feed.Title,
 		Entries:     entries,
 		ShowMarkAll: true,
@@ -675,7 +706,7 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 		})
 	}
 	s.render(w, "feed", entryListData{
-		baseData:    s.base(r),
+		baseData:    s.wideBase(r),
 		Heading:     heading,
 		Entries:     entries,
 		ShowMarkAll: scope == "all",
@@ -894,6 +925,21 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	if body == "" {
 		body = e.Summary
 	}
+	// panel=1 — render just the entry-detail fragment, no chrome.
+	// Used by the split-panel layout's hx-get on entry rows so the
+	// right pane swaps in the entry view without a full page load.
+	if r.URL.Query().Get("panel") == "1" {
+		data := struct {
+			Entry     store.Entry
+			Body      template.HTML
+			State     store.EntryState
+			FeedURL   string
+			FeedTitle string
+		}{e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
+		return
+	}
 	data := struct {
 		baseData
 		Entry     store.Entry
@@ -961,17 +1007,17 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 			FeedTitle string
 		}{e, template.HTML(body), st, f.XMLURL, f.Title}
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
+		// Out-of-band patch for the matching list row, so the
+		// split-panel keeps the list and the open entry in sync when
+		// the user toggles read/star from inside the right pane. On
+		// the standalone /ui/entry page the row simply isn't in the
+		// DOM and htmx silently drops the OOB fragment.
+		oob := rowFor(e, st)
+		oob.OOB = true
+		_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", oob)
 		return
 	}
-	row := feedEntry{
-		Hash:         hash,
-		Title:        e.Title,
-		Read:         st.Read,
-		Starred:      st.Starred,
-		Published:    e.Published,
-		PublishedFmt: formatPublished(e.Published, time.Now()),
-	}
-	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
+	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", rowFor(e, st))
 }
 
 // handleSettings renders the settings page (GET /ui/settings). Refuses

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -506,6 +507,35 @@ func TestE2E(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "First post") {
 		t.Fatalf("ui feed: %d %s", resp.StatusCode, body)
+	}
+	// Split-panel layout must be wired in: list pane, right pane, and
+	// hx-get on rows pointing at the panel fragment. Without these the
+	// "split-panel on wide screens" feature has silently regressed.
+	for _, marker := range []string{`class="split"`, `id="detail-pane"`, `panel=1`, `hx-target="#detail-pane"`} {
+		if !strings.Contains(string(body), marker) {
+			t.Fatalf("ui feed: missing split-panel marker %q", marker)
+		}
+	}
+	// And the entry panel fragment endpoint must actually return just
+	// the entry-detail markup (no <html>/<header> chrome).
+	entryHash := ""
+	if m := regexp.MustCompile(`entry\?id=([a-f0-9]+)&panel=1`).FindStringSubmatch(string(body)); len(m) == 2 {
+		entryHash = m[1]
+	}
+	if entryHash == "" {
+		t.Fatalf("ui feed: could not extract entry hash for panel fragment check")
+	}
+	resp = mustGet(t, uic, base+"/ui/entry?id="+entryHash+"&panel=1")
+	pbody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("ui entry panel: %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(pbody), "entry-detail-"+entryHash) {
+		t.Fatalf("ui entry panel: missing detail id: %s", pbody)
+	}
+	if strings.Contains(string(pbody), "<html") || strings.Contains(string(pbody), "<header") {
+		t.Fatalf("ui entry panel: leaked page chrome: %s", pbody)
 	}
 
 	// Bundled stylesheet must actually have rules — a previous stub
