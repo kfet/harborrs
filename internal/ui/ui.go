@@ -606,6 +606,7 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = s.pages["feed"].ExecuteTemplate(w, "tagchips", struct {
 		ScopeID  string
 		FeedTags []string
@@ -791,6 +792,7 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 	}
 	st := s.Store.EntryState(hash)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.Query().Get("view") == "detail" {
 		body := e.Content
 		if body == "" {
@@ -932,6 +934,15 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Authenticated UI pages must never be cached. Without this, hitting
+	// the browser's Back button (or pressing `u` in the entry view) often
+	// shows a stale snapshot of the list page — the entry you just toggled
+	// read/unread/starred still appears in its old state until you F5.
+	// Per the HTTP cache spec, no-store also disqualifies the response
+	// from bfcache, so all back-navigations re-fetch from the server.
+	// keys.js still has a bfcache pageshow.reload listener as belt-and-
+	// suspenders in case a downstream cache layer overrides this header.
+	w.Header().Set("Cache-Control", "no-store")
 	t, ok := s.pages[name]
 	if !ok {
 		http.Error(w, "unknown template: "+name, http.StatusInternalServerError)

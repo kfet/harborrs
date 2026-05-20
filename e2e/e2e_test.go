@@ -318,6 +318,178 @@ func TestE2E(t *testing.T) {
 			t.Fatalf("style.css missing rule for %q — UI will render unstyled", sel)
 		}
 	}
+
+	// 9. Keyboard shortcuts: assert the JS/template contracts the
+	//    handler in internal/ui/static/keys.js depends on. We can't
+	//    run keydown events from net/http, but the two known
+	//    regressions ("`u` from entry view doesn't go back" and
+	//    "entry doesn't auto-mark as read") are both URL/selector
+	//    contract failures, not logic bugs — so we verify the
+	//    contracts directly.
+	checkKbdContracts(t, uic, base, rssSrv.URL)
+}
+
+// checkKbdContracts verifies the assumptions internal/ui/static/keys.js
+// makes about the rendered HTML and about its own URL construction.
+// Anything failing here means a keyboard shortcut is silently broken
+// for users.
+func checkKbdContracts(t *testing.T, uic *http.Client, base, feedURL string) {
+	t.Helper()
+
+	// --- keys.js itself: no absolute /ui/... URLs ---------------------
+	// keys.js must use the data-ui-base attribute so it works under a
+	// path-prefix mount (Tailscale Funnel --set-path=/rss). Any
+	// absolute "/ui/..." literal would 404 once mounted under a prefix.
+	resp := mustGet(t, uic, base+"/ui/static/keys.js")
+	jsBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("keys.js fetch: %d", resp.StatusCode)
+	}
+	js := string(jsBody)
+	for _, bad := range []string{`"/ui/`, `'/ui/`, `"/ui"`, `'/ui'`} {
+		if strings.Contains(js, bad) {
+			t.Fatalf("keys.js contains absolute UI literal %q — breaks under path-prefix deploys", bad)
+		}
+	}
+	if !strings.Contains(js, "data-ui-base") && !strings.Contains(js, "dataset.uiBase") {
+		t.Fatalf("keys.js doesn't reference data-ui-base — it must read the server-emitted base for prefix-aware URLs")
+	}
+
+	// --- discover an entry hash from the feed page --------------------
+	// The hash is the only id the UI uses for entries. Pull it out of
+	// the rendered feed page by looking for the entry permalink.
+	resp = mustGet(t, uic, base+"/ui/feed?id="+url.QueryEscape(feedURL))
+	feedBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	hash := firstEntryHash(string(feedBody))
+	if hash == "" {
+		t.Fatalf("could not find entry hash on /ui/feed page: %s", feedBody)
+	}
+
+	// --- entry view: HTML structure keys.js depends on ----------------
+	resp = mustGet(t, uic, base+"/ui/entry?id="+url.QueryEscape(hash))
+	entryBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("entry view: %d %s", resp.StatusCode, entryBody)
+	}
+	entry := string(entryBody)
+
+	// (a) data-ui-base must be emitted so keys.js can read it.
+	if !strings.Contains(entry, `data-ui-base="`) {
+		t.Fatalf("entry HTML missing data-ui-base attribute (template regression): %s", entry)
+	}
+	// (b) The auto-mark-read code in keys.js extracts the hash from
+	//     the article's id="entry-detail-<hash>". If we ever rename
+	//     this, auto-mark stops working silently.
+	wantID := `id="entry-detail-` + hash + `"`
+	if !strings.Contains(entry, wantID) {
+		t.Fatalf("entry HTML missing %q (auto-mark-read won't find the hash): %s", wantID, entry)
+	}
+	if !strings.Contains(entry, `class="entry-full`) {
+		t.Fatalf(`entry HTML missing class="entry-full" (keys.js gates entry-view bindings on it)`)
+	}
+	// (c) The entry-view `u` handler looks for a .meta link whose href
+	//     contains "feed?id=". If the template stops rendering the
+	//     parent-feed link in the meta line, `u` breaks.
+	metaStart := strings.Index(entry, `class="meta"`)
+	if metaStart < 0 {
+		t.Fatalf(`entry HTML missing .meta block`)
+	}
+	metaEnd := strings.Index(entry[metaStart:], "</p>")
+	if metaEnd < 0 {
+		t.Fatalf("entry HTML .meta block not closed")
+	}
+	metaHTML := entry[metaStart : metaStart+metaEnd]
+	if !strings.Contains(metaHTML, `feed?id=`) {
+		t.Fatalf(".meta block has no feed?id= link — `u` from entry view will not navigate back: %s", metaHTML)
+	}
+
+	// --- auto-mark-read endpoint behaviour ----------------------------
+	// Simulate what the dwell-timer in keys.js does: POST to
+	// entry/read?id=<hash>&state=1, then re-fetch the entry and
+	// assert it now has the `read` class. This catches the case
+	// where the endpoint regresses or where keys.js's URL is
+	// pointed at a path that doesn't exist.
+	//
+	// The Reader-API edit-tag step above already marked everything
+	// read, so we first POST state=0 to flip the entry back to
+	// unread — otherwise the state=1 check would pass vacuously.
+	postState := func(state string) {
+		t.Helper()
+		req, _ := http.NewRequest("POST",
+			base+"/ui/entry/read?id="+url.QueryEscape(hash)+"&state="+state, nil)
+		resp, err := uic.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("entry/read POST state=%s: %d", state, resp.StatusCode)
+		}
+	}
+	fetchEntry := func() string {
+		t.Helper()
+		resp := mustGet(t, uic, base+"/ui/entry?id="+url.QueryEscape(hash))
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return string(b)
+	}
+	postState("0")
+	if body := fetchEntry(); strings.Contains(body, `class="entry-full read`) {
+		t.Fatalf("entry still marked read after POST state=0: %s", body)
+	}
+	postState("1")
+	if body := fetchEntry(); !strings.Contains(body, `class="entry-full read`) {
+		t.Fatalf("entry not marked read after POST state=1: %s", body)
+	}
+
+	// --- prefix-mount correctness -------------------------------------
+	// Verify every internal href/src/action in the rendered UI is
+	// relative (no leading slash). An absolute /ui/... reference
+	// would silently 404 under a path-prefix funnel deploy.
+	for _, page := range []string{
+		"/ui/",
+		"/ui/feed?id=" + url.QueryEscape(feedURL),
+		"/ui/entry?id=" + url.QueryEscape(hash),
+	} {
+		resp := mustGet(t, uic, base+page)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		// Authenticated UI pages must be uncacheable, otherwise back-
+		// navigation (browser Back / our `u` shortcut) shows a stale
+		// snapshot of the list with toggled entries still in their old
+		// state until the user hits F5. See internal/ui/ui.go render().
+		if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+			t.Fatalf("page %s missing Cache-Control: no-store (got %q) — back-nav will show stale state", page, cc)
+		}
+		for _, bad := range []string{`href="/ui/`, `src="/ui/`, `action="/ui/`,
+			`hx-get="/ui/`, `hx-post="/ui/`, `hx-put="/ui/`, `hx-delete="/ui/`} {
+			if strings.Contains(string(body), bad) {
+				t.Fatalf("page %s contains absolute UI ref %q — breaks under path-prefix deploys", page, bad)
+			}
+		}
+	}
+}
+
+// firstEntryHash extracts the first entry hash from a rendered
+// /ui/feed page. Looks for an href like `entry?id=<hash>` (or
+// `/ui/entry?id=<hash>` if templates ever go absolute again).
+func firstEntryHash(html string) string {
+	for _, prefix := range []string{`href="entry?id=`, `href="/ui/entry?id=`} {
+		i := strings.Index(html, prefix)
+		if i < 0 {
+			continue
+		}
+		rest := html[i+len(prefix):]
+		j := strings.IndexAny(rest, `"&`)
+		if j <= 0 {
+			continue
+		}
+		return rest[:j]
+	}
+	return ""
 }
 
 func repoRoot(t *testing.T) string {

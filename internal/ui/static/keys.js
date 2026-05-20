@@ -37,6 +37,20 @@
   const $  = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
+  // BASE is the relative prefix that, resolved against the current
+  // page, points at the /ui/ root. The server emits it via
+  // <html data-ui-base="..."> (see internal/ui/templates/base.html).
+  // We never hard-code an absolute /ui path — under a path-prefix
+  // deployment (e.g. Tailscale Funnel --set-path=/rss) the absolute
+  // UI root is /rss/ui/, and an absolute /ui/... reference 404s.
+  const BASE = document.documentElement.dataset.uiBase || "./";
+  // Absolute pathname of the /ui/ root for this deployment, used to
+  // tell whether a same-origin referrer is a list page.
+  const UI_ROOT = new URL(BASE, window.location.href).pathname;
+  // Build URLs relative to the /ui/ root. `seg` must be relative
+  // (no leading slash).
+  const uiURL = (seg) => BASE + seg;
+
   const inEditable = (e) => {
     const t = e.target;
     if (!t) return false;
@@ -121,12 +135,12 @@
     if (e.key !== "u") return;
     if ($(".entry-full")) return;          // entry view handles its own `u`
     const path = window.location.pathname;
-    if (path === "/ui/" || path === "/ui") return;  // already at top
+    if (path === UI_ROOT || path + "/" === UI_ROOT) return;  // already at top
     const ref = sameOriginRef();
-    if (ref && (ref.pathname === "/ui/" || ref.pathname === "/ui")) {
+    if (ref && (ref.pathname === UI_ROOT || ref.pathname + "/" === UI_ROOT)) {
       window.history.back();
     } else {
-      window.location.href = "/ui/";
+      window.location.href = BASE;
     }
     e.preventDefault();
   });
@@ -220,7 +234,7 @@
         const dwellMs = 2500;
         let timer = setTimeout(function () {
           timer = null;
-          fetch("/ui/entry/read?id=" + encodeURIComponent(hash) + "&state=1", {
+          fetch(uiURL("entry/read") + "?id=" + encodeURIComponent(hash) + "&state=1", {
             method: "POST",
             credentials: "same-origin",
           }).then(function (r) {
@@ -261,14 +275,23 @@
           // shows the fresh read/star state. Fall back to the
           // canonical parent feed link in the meta line.
           const ref = sameOriginRef();
+          // List-page pathnames are UI_ROOT (home) or its siblings
+          // feed/all/starred under the same /ui/ root. Match by
+          // stripping UI_ROOT off the referrer pathname.
           const isListPath = function (p) {
-            return p === "/ui/" || p === "/ui" ||
-                   p === "/ui/feed" || p === "/ui/all" || p === "/ui/starred";
+            if (p === UI_ROOT || p + "/" === UI_ROOT) return true;
+            if (!p.startsWith(UI_ROOT)) return false;
+            const tail = p.slice(UI_ROOT.length);
+            return tail === "feed" || tail === "all" || tail === "starred";
           };
           if (ref && isListPath(ref.pathname)) {
             window.history.back();
           } else {
-            const a = $(".meta a[href^='/ui/feed?']");
+            // The .meta link to the parent feed is rendered as a
+            // page-relative href like "feed?id=..." — match by a
+            // substring so we work regardless of any path prefix
+            // or whether the template later switches to absolute.
+            const a = $(".meta a[href*='feed?id=']");
             if (a) window.location.href = a.href;
           }
           break;

@@ -17,6 +17,30 @@ All notable changes to this project will be documented in this file.
     (Reeder, NetNewsWire, etc.) ignore unknown fields, so this is
     backwards-compatible.
 
+### Fixed
+
+- Web UI back-navigation no longer shows stale state. Pressing `u`
+  (or the browser Back button) from an entry view after toggling
+  read/unread/starred used to show the list with the entry in its
+  pre-toggle state until the user hit F5 — both bfcache restores
+  and HTTP-cached back-navigations could serve a stale snapshot.
+  Authenticated UI pages now ship `Cache-Control: no-store`, which
+  forces re-fetch on Back and (per spec) disqualifies them from
+  bfcache. E2E asserts the header is set on `/ui/`, `/ui/feed`,
+  and `/ui/entry`.
+- Web UI keyboard shortcuts are prefix-aware again. After the
+  relative-URL refactor in 0.3.1 the bundled `keys.js` still
+  hard-coded absolute `/ui/...` paths in two places: the entry-view
+  auto-mark-read `fetch()` and the `u` (back-to-feed) selector.
+  Under a path-prefix mount (Tailscale Funnel `--set-path=/rss`)
+  both silently 404 / mismatch, so entries never auto-marked as
+  read and pressing `u` from an entry view did nothing. The base
+  template now emits `<html data-ui-base="…">`, `keys.js` reads
+  it, and the back-link selector is the relative-friendly
+  `[href*='feed?id=']`. The e2e smoke now asserts these contracts
+  (no absolute `/ui/...` literals in `keys.js`; every UI page emits
+  relative hrefs only; the auto-mark-read endpoint flips `read`)
+  so a future regression fails CI instead of the user.
 
 ## [0.4.2] - 2026-05-19
 
