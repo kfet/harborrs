@@ -27,6 +27,7 @@
 {{end}}
 </header>
 <main>{{block "content" .}}{{end}}</main>
+{{if .Version}}<footer class="site-footer">harborrs <span class="version">{{.Version}}</span></footer>{{end}}
 {{if .User}}
 <div id="kbd-backdrop" hidden></div>
 <div id="kbd-help" hidden role="dialog" aria-label="keyboard shortcuts">

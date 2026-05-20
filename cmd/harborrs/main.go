@@ -175,6 +175,9 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	op := config.NewFileOPML(data)
 	mux := http.NewServeMux()
 	readSrv := reader.New(st, as, op)
+	readSrv.Version = harborrs.Version
+	readSrv.Commit = harborrs.Commit
+	readSrv.BuildDate = harborrs.BuildDate
 	readHandler := readSrv.Routes(mux)
 	uiSrv, err := uipkg.New(st, as, op, cfg.UI.Theme, data)
 	if err != nil {
@@ -183,6 +186,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	}
 	uiSrv.Secure = cfg.UI.Secure
 	uiSrv.StaticVer = harborrs.Commit
+	uiSrv.Version = harborrs.Version
 	uiSrv.ConfigPath = cfgPath
 	uiSrv.Previewer = feedpreview.New()
 	uiSrv.Routes(mux)

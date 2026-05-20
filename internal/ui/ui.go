@@ -51,6 +51,10 @@ type Server struct {
 	// browsers to re-fetch CSS / JS without users having to hard-reload.
 	StaticVer string
 
+	// Version is the harborrs build version. Rendered unobtrusively in
+	// the base layout footer; empty hides the footer line.
+	Version string
+
 	// ConfigPath is the on-disk path to config.json. When set, the
 	// UI exposes /ui/settings with a change-password form. When empty,
 	// settings is hidden and the route returns 404.
@@ -220,6 +224,7 @@ type baseData struct {
 	ExtraCSS      string
 	Error         string
 	StaticVer     string // "?v=<commit>" suffix used in base.html
+	Version       string // shown in the base.html footer; empty hides it
 	Settings      bool   // true when /ui/settings is available
 	PasswdChanged bool   // set on login page after a successful change
 
@@ -231,7 +236,7 @@ type baseData struct {
 }
 
 func (s *Server) base(r *http.Request) baseData {
-	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Settings: s.ConfigPath != "", Base: uiBase(r)}
+	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Version: s.Version, Settings: s.ConfigPath != "", Base: uiBase(r)}
 	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
 		d.User = s.Auth.Cfg.Username
 	}

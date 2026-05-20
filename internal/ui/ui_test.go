@@ -1848,3 +1848,37 @@ func TestFeedViewIncludesTagChips(t *testing.T) {
 		t.Fatalf("missing tag chips: %s", w.Body.String())
 	}
 }
+
+// ---- footer version --------------------------------------------------
+
+func TestFooterShowsVersion(t *testing.T) {
+	srv, mux, _, _, tok, _ := fixture(t)
+	srv.Version = "1.2.3"
+	// Login page (no auth required) — footer should still render.
+	w := do(mux, req("GET", "/ui/login", "", nil))
+	if w.Code != 200 {
+		t.Fatalf("login code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `<footer class="site-footer">harborrs <span class="version">1.2.3</span></footer>`) {
+		t.Fatalf("login footer missing version: %s", w.Body.String())
+	}
+	// Authed page — same footer.
+	w = do(mux, req("GET", "/ui/", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("home code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `>1.2.3<`) {
+		t.Fatalf("home footer missing version: %s", w.Body.String())
+	}
+}
+
+func TestFooterHiddenWhenVersionEmpty(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t) // fixture leaves Version == ""
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "site-footer") {
+		t.Fatalf("footer should be hidden when Version unset: %s", w.Body.String())
+	}
+}

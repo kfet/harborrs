@@ -132,10 +132,40 @@ func TestToken(t *testing.T) {
 }
 
 func TestUserInfo(t *testing.T) {
-	_, mux, tok, _, _ := fixture(t)
+	srv, mux, tok, _, _ := fixture(t)
+	srv.Version = "9.9.9"
 	w := do(t, mux, "GET", "/reader/api/0/user-info", tok, nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"userName":"u"`) {
 		t.Fatalf("body=%s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"harborrsVersion":"9.9.9"`) {
+		t.Fatalf("missing harborrsVersion: %s", w.Body.String())
+	}
+}
+
+func TestStatus(t *testing.T) {
+	srv, mux, _, _, _ := fixture(t)
+	srv.Version = "1.2.3"
+	srv.Commit = "abc1234"
+	srv.BuildDate = "2026-01-02T03:04:05Z"
+	// Unauthenticated.
+	w := do(t, mux, "GET", "/status", "", nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	for k, want := range map[string]string{
+		"product":   "harborrs",
+		"version":   "1.2.3",
+		"commit":    "abc1234",
+		"buildDate": "2026-01-02T03:04:05Z",
+	} {
+		if got[k] != want {
+			t.Errorf("status[%q]=%q want %q", k, got[k], want)
+		}
 	}
 }
 

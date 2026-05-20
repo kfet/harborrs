@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The harborrs build version is now exposed unobtrusively in the web UI
+  footer (e.g. "harborrs 0.4.2") and on the API side via two surfaces:
+  - `GET /status` — small **unauthenticated** JSON document
+    `{"product":"harborrs","version":"...","commit":"...","buildDate":"..."}`
+    suitable for monitoring, version-pinning, and identifying the
+    server before going through the `ClientLogin` dance.
+  - `/reader/api/0/user-info` now carries an extra
+    `"harborrsVersion": "x.y.z"` field. FreshRSS-compatible clients
+    (Reeder, NetNewsWire, etc.) ignore unknown fields, so this is
+    backwards-compatible.
+
+
 ## [0.4.2] - 2026-05-19
 
 ### Fixed

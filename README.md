@@ -87,7 +87,10 @@ Then point a FreshRSS-compatible client at `http://your-host:8088/` —
 log in with the username (default `admin`) and the password printed by
 `init`.
 
-The web UI lives at `/ui/`; visiting `/` redirects there.
+The web UI lives at `/ui/`; visiting `/` redirects there. The build
+version is shown in the UI footer and exposed on the API at
+`GET /status` (unauthenticated JSON: `{"product","version","commit","buildDate"}`)
+and as `harborrsVersion` on `/reader/api/0/user-info`.
 
 If you'd rather hand-roll the config, `harborrs hashpass <password>`
 prints a hash you can drop into `<data-dir>/config.json` by hand.

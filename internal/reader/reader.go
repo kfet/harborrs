@@ -39,6 +39,13 @@ type Server struct {
 	Now     func() time.Time
 	MaxPage int
 
+	// Version is the harborrs build version surfaced via /status and
+	// the `harborrsVersion` extension field on user-info responses.
+	// Empty when unset; main.go wires this to harborrs.Version.
+	Version   string
+	Commit    string
+	BuildDate string
+
 	mu sync.Mutex // guards subscription mutations
 }
 
@@ -54,6 +61,7 @@ func New(s *store.Store, a *auth.Store, opml OPMLProvider) *Server {
 // legitimately contain `//`).
 func (s *Server) Routes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/accounts/ClientLogin", s.handleClientLogin)
+	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/reader/api/0/token", s.requireAuth(s.handleToken))
 	mux.HandleFunc("/reader/api/0/user-info", s.requireAuth(s.handleUserInfo))
 	mux.HandleFunc("/reader/api/0/subscription/list", s.requireAuth(s.handleSubscriptionList))
@@ -123,10 +131,25 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"userId":        "1",
-		"userName":      s.Auth.Cfg.Username,
-		"userEmail":     s.Auth.Cfg.Username,
-		"userProfileId": "1",
+		"userId":          "1",
+		"userName":        s.Auth.Cfg.Username,
+		"userEmail":       s.Auth.Cfg.Username,
+		"userProfileId":   "1",
+		"harborrsVersion": s.Version,
+	})
+}
+
+// handleStatus returns a small unauthenticated JSON document identifying
+// the running binary. Useful for monitoring, version-pinning scripts,
+// and clients that want to know who they're talking to before going
+// through the ClientLogin dance. Vendor-prefixed field names keep the
+// payload out of any namespace collision with the Reader API.
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{
+		"product":   "harborrs",
+		"version":   s.Version,
+		"commit":    s.Commit,
+		"buildDate": s.BuildDate,
 	})
 }
 
