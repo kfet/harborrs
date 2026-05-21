@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-21
+
 ### Added
 
 - The harborrs build version is now exposed unobtrusively in the web UI
