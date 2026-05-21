@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-21
+
 ### Added
 
 - Optional access log for the HTTP server, off by default. Opt in
