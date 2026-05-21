@@ -422,6 +422,8 @@ func (s *Server) handleStreamContents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	items = s.applyRequestFilters(items, r)
+	s.sortForRequest(items, r)
 	s.writeStreamPage(w, streamID, items, r)
 }
 
@@ -431,15 +433,21 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	wantOrder := []string{}
 	want := map[string]bool{}
 	for _, id := range r.Form["i"] {
-		want[itemIDToHash(id)] = true
+		h := itemIDToHash(id)
+		if h == "" || want[h] {
+			continue
+		}
+		want[h] = true
+		wantOrder = append(wantOrder, h)
 	}
-	if len(want) == 0 {
+	if len(wantOrder) == 0 {
 		writeJSON(w, streamResponse{ID: "items", Items: []streamItem{}})
 		return
 	}
-	var entries []store.Entry
+	found := map[string]store.Entry{}
 	for _, f := range op.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		es, err := s.Store.ListEntries(fh)
@@ -449,8 +457,14 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, e := range es {
 			if want[e.Hash] {
-				entries = append(entries, e)
+				found[e.Hash] = e
 			}
+		}
+	}
+	entries := make([]store.Entry, 0, len(wantOrder))
+	for _, h := range wantOrder {
+		if e, ok := found[h]; ok {
+			entries = append(entries, e)
 		}
 	}
 	writeJSON(w, streamResponse{
@@ -531,6 +545,61 @@ func filterEntries(es []store.Entry, ok func(store.Entry) bool) []store.Entry {
 	return out
 }
 
+func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.Entry {
+	includes := r.Form["it"]
+	excludes := r.Form["xt"]
+	if len(includes) == 0 && len(excludes) == 0 {
+		return es
+	}
+	return filterEntries(es, func(e store.Entry) bool {
+		for _, inc := range includes {
+			if !s.entryHasState(e, inc) {
+				return false
+			}
+		}
+		for _, exc := range excludes {
+			if s.entryHasState(e, exc) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func (s *Server) entryHasState(e store.Entry, state string) bool {
+	switch state {
+	case streamReadingList:
+		return true
+	case stateReadID:
+		return s.Store.EntryState(e.Hash).Read
+	case stateStarredID:
+		return s.Store.EntryState(e.Hash).Starred
+	default:
+		return false
+	}
+}
+
+func (s *Server) sortForRequest(es []store.Entry, r *http.Request) {
+	if r.FormValue("r") != "o" {
+		return
+	}
+	sort.Slice(es, func(i, j int) bool {
+		return es[i].Published.Before(es[j].Published)
+	})
+}
+
+func directStreamsByFeed(op *store.OPML) map[string][]string {
+	out := map[string][]string{}
+	for _, f := range op.Feeds {
+		ids := []string{feedStreamID(f.XMLURL)}
+		for _, tag := range f.Tags {
+			ids = append(ids, labelStreamID(tag))
+		}
+		out[store.FeedHash(f.XMLURL)] = ids
+	}
+	return out
+}
+
 // writeStreamPage paginates entries and writes a streamResponse.
 func (s *Server) writeStreamPage(w http.ResponseWriter, streamID string, entries []store.Entry, r *http.Request) {
 	op, _ := s.OPML.Load()
@@ -550,6 +619,9 @@ func (s *Server) writeStreamPage(w http.ResponseWriter, streamID string, entries
 				offset = st.Offset
 			}
 		}
+	}
+	if offset > len(entries) {
+		offset = len(entries)
 	}
 	hi := offset + n
 	cont := ""
@@ -576,17 +648,22 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 	feedTitle := map[string]string{}
 	feedHTML := map[string]string{}
 	feedURL := map[string]string{}
+	feedTags := map[string][]string{}
 	if op != nil {
 		for _, f := range op.Feeds {
 			fh := store.FeedHash(f.XMLURL)
 			feedTitle[fh] = f.Title
 			feedHTML[fh] = f.HTMLURL
 			feedURL[fh] = f.XMLURL
+			feedTags[fh] = append([]string{}, f.Tags...)
 		}
 	}
 	for _, e := range es {
 		st := s.Store.EntryState(e.Hash)
-		cats := []string{}
+		cats := []string{streamReadingList}
+		for _, tag := range feedTags[e.FeedHash] {
+			cats = append(cats, labelStreamID(tag))
+		}
 		if st.Read {
 			cats = append(cats, stateReadID)
 		}
@@ -633,6 +710,12 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	entries = s.applyRequestFilters(entries, r)
+	s.sortForRequest(entries, r)
+	directStreams := map[string][]string{}
+	if op, err := s.OPML.Load(); err == nil {
+		directStreams = directStreamsByFeed(op)
+	}
 	n := s.MaxPage
 	if v := r.FormValue("n"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
@@ -678,6 +761,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries[offset:hi] {
 		out.ItemRefs = append(out.ItemRefs, ref{
 			ID:            itemID(e.Hash),
+			DirectStreams: directStreams[e.FeedHash],
 			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
 		})
 	}

@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Optional access log for the HTTP server, off by default. Opt in
+  with `HARBORRS_ACCESS_LOG=1` in the unit-file environment; output
+  goes to stderr (so systemd journal picks it up). One key=value
+  line per request: `method`, `path`, `status`, `bytes`, `dur_ms`,
+  `ua`, `remote`, plus a sanitised `query` summary. Redaction is by
+  construction: the middleware never reads Authorization or Cookie
+  headers, never reads request or response bodies, and summarises
+  the URL query through an allow-list. Safe Reader-API parameters
+  (`s`, `n`, `r`, `xt`, `it`, `output`, `ac`, `ts`) are logged after
+  stripping embedded feed-URL query strings (private feeds often carry
+  `?token=...`); multi-value keys (`i`, `a`, `t`) emit just a count; the
+  continuation token (`c`) emits only `<present>`; every other key
+  — including `T`, `Auth`, `SID`, `Email`, `Passwd`, `password`,
+  `token`, `lsid` — emits `<redacted>` so a value can't leak even
+  if a future endpoint adds a new query parameter. The `path`,
+  `ua`, and `remote` fields are emitted through `strconv.Quote` so
+  a client-controlled byte (e.g. a percent-encoded newline in the
+  request path like `GET /foo%0AFAKE`) cannot forge a second
+  "access" log line. Unit tests pin every redaction case plus the
+  log-injection defence; the e2e smoke runs the binary with the
+  flag on and asserts no plaintext credential, password, or
+  session cookie reaches the stderr log.
+
+### Fixed
+
+- `stream/contents` now treats a continuation offset beyond the end of
+  the stream as an empty page instead of panicking.
+- Reader/FreshRSS item sync responses are more Reeder-compatible: item
+  contents now carry the reading-list and label categories,
+  `stream/items/ids` includes `directStreamIds` and honours `xt` / `it`
+  state filters and `r=o` ordering, and `stream/items/contents`
+  preserves the requested item order. After adding the harborrs
+  instance as a Reader/FreshRSS account in Reeder, items now appear in
+  the unread view; previously the empty `categories[]` on stream items
+  and missing `directStreamIds` on item refs caused Reeder to silently
+  drop them from the feed/unread view. E2E asserts the new contract on
+  the typical Reeder unread-sync flow (`stream/contents` →
+  `stream/items/ids?s=reading-list&xt=read` → `stream/items/contents`)
+  so a future regression fails CI instead of the user.
+
 ## [0.4.3] - 2026-05-21
 
 ### Added

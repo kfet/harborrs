@@ -10,6 +10,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -116,7 +117,7 @@ func TestE2E(t *testing.T) {
 	}
 	opmlPath := filepath.Join(tmp, "subs.opml")
 	opml := fmt.Sprintf(`<opml version="2.0"><body>
-<outline type="rss" text="E2E" title="E2E" xmlUrl="%s"/>
+<outline type="rss" text="E2E" title="E2E" xmlUrl="%s" category="News"/>
 </body></opml>`, rssSrv.URL)
 	if err := os.WriteFile(opmlPath, []byte(opml), 0o644); err != nil {
 		t.Fatal(err)
@@ -150,11 +151,17 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("poll-once: %v", err)
 	}
 
-	// 6. Start server.
+	// 6. Start server. Run with HARBORRS_ACCESS_LOG=1 so the
+	// access-log middleware (off by default) is exercised end-to-end
+	// against the real binary; stderr is tee'd into a buffer so we
+	// can assert at the end that secrets did not leak into the log.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	srv := exec.CommandContext(ctx, bin, "serve", "-data", dataDir)
-	srv.Stdout, srv.Stderr = os.Stdout, os.Stderr
+	srv.Env = append(os.Environ(), "HARBORRS_ACCESS_LOG=1")
+	srv.Stdout = os.Stdout
+	var stderrLog bytes.Buffer
+	srv.Stderr = io.MultiWriter(os.Stderr, &stderrLog)
 	if err := srv.Start(); err != nil {
 		t.Fatalf("serve start: %v", err)
 	}
@@ -212,11 +219,100 @@ func TestE2E(t *testing.T) {
 	}
 	var sresp struct {
 		Items []struct {
-			ID string `json:"id"`
+			ID         string   `json:"id"`
+			Categories []string `json:"categories"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &sresp); err != nil || len(sresp.Items) != 2 {
 		t.Fatalf("stream items: %v %s", err, body)
+	}
+	// Reeder/FreshRSS clients use item categories to associate stream
+	// items with the reading-list and feed labels. Without these tags
+	// unread items can be silently filtered out of the unread view.
+	for _, it := range sresp.Items {
+		cats := strings.Join(it.Categories, ",")
+		for _, want := range []string{
+			"user/-/state/com.google/reading-list",
+			"user/-/label/News",
+		} {
+			if !strings.Contains(cats, want) {
+				t.Fatalf("item %q categories %v missing %q", it.ID, it.Categories, want)
+			}
+		}
+		for _, cat := range it.Categories {
+			if cat == "user/-/state/com.google/read" {
+				t.Fatalf("unread item %q should not carry read state: %v", it.ID, it.Categories)
+			}
+		}
+	}
+
+	// stream/items/ids with xt=read on the reading-list: the typical
+	// Reeder sync call. Refs must carry directStreamIds so the client
+	// can map ids back to feeds, and the xt filter must actually
+	// exclude read items (none are read yet, so we expect both back).
+	idsURL := base + "/reader/api/0/stream/items/ids" +
+		"?s=" + url.QueryEscape("user/-/state/com.google/reading-list") +
+		"&xt=" + url.QueryEscape("user/-/state/com.google/read") +
+		"&n=50"
+	req, _ = http.NewRequest("GET", idsURL, nil)
+	authHdr(req)
+	resp, _ = client.Do(req)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("items/ids: %d %s", resp.StatusCode, body)
+	}
+	var idsResp struct {
+		ItemRefs []struct {
+			ID              string   `json:"id"`
+			DirectStreamIDs []string `json:"directStreamIds"`
+		} `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(body, &idsResp); err != nil {
+		t.Fatalf("items/ids unmarshal: %v %s", err, body)
+	}
+	if len(idsResp.ItemRefs) != 2 {
+		t.Fatalf("items/ids: want 2 refs, got %d (body=%s)", len(idsResp.ItemRefs), body)
+	}
+	wantFeedStream := "feed/" + rssSrv.URL
+	for _, ref := range idsResp.ItemRefs {
+		streams := strings.Join(ref.DirectStreamIDs, ",")
+		for _, want := range []string{wantFeedStream, "user/-/label/News"} {
+			if !strings.Contains(streams, want) {
+				t.Fatalf("ref %q directStreamIds %v missing %q", ref.ID, ref.DirectStreamIDs, want)
+			}
+		}
+	}
+
+	// stream/items/contents must preserve the order of requested `i=`
+	// values — Reeder uses the response order directly.
+	wantOrder := []string{sresp.Items[1].ID, sresp.Items[0].ID}
+	contentsForm := url.Values{"i": wantOrder}
+	req, _ = http.NewRequest("POST", base+"/reader/api/0/stream/items/contents",
+		strings.NewReader(contentsForm.Encode()))
+	authHdr(req)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, _ = client.Do(req)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("items/contents: %d %s", resp.StatusCode, body)
+	}
+	var contentsResp struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &contentsResp); err != nil {
+		t.Fatalf("items/contents unmarshal: %v %s", err, body)
+	}
+	if len(contentsResp.Items) != len(wantOrder) {
+		t.Fatalf("items/contents: want %d items, got %d (body=%s)", len(wantOrder), len(contentsResp.Items), body)
+	}
+	for i, it := range contentsResp.Items {
+		if it.ID != wantOrder[i] {
+			t.Fatalf("items/contents[%d]=%q, want %q", i, it.ID, wantOrder[i])
+		}
 	}
 
 	// edit-tag: mark both as read
@@ -266,6 +362,26 @@ func TestE2E(t *testing.T) {
 		if row.NewestItemTimestampUsec == "" {
 			t.Fatalf("row %q has empty newestItemTimestampUsec: %s", row.ID, body)
 		}
+	}
+
+	// stream/items/ids with xt=read after mark-all-read must return zero
+	// refs — the Reeder "what's new since last sync" path.
+	req, _ = http.NewRequest("GET", idsURL, nil)
+	authHdr(req)
+	resp, _ = client.Do(req)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("items/ids post-read: %d %s", resp.StatusCode, body)
+	}
+	var postRead struct {
+		ItemRefs []struct{ ID string } `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(body, &postRead); err != nil {
+		t.Fatalf("items/ids post-read unmarshal: %v %s", err, body)
+	}
+	if len(postRead.ItemRefs) != 0 {
+		t.Fatalf("items/ids post-read: want 0, got %d (body=%s)", len(postRead.ItemRefs), body)
 	}
 
 	// 8. Web UI: login + home.
@@ -327,6 +443,48 @@ func TestE2E(t *testing.T) {
 	//    contract failures, not logic bugs — so we verify the
 	//    contracts directly.
 	checkKbdContracts(t, uic, base, rssSrv.URL)
+
+	// 10. Access-log redaction end-to-end. The server was started with
+	//     HARBORRS_ACCESS_LOG=1, so stderr should now carry one access
+	//     line per request. Shut down the server explicitly so the
+	//     stderr pipe is fully drained before we assert.
+	srv.Process.Signal(os.Interrupt)
+	srv.Wait()
+	logged := stderrLog.String()
+	if !strings.Contains(logged, "harborrs access log enabled") {
+		t.Fatalf("expected access-log enabled banner in stderr, got: %s", logged)
+	}
+	if !strings.Contains(logged, "access method=") {
+		t.Fatalf("expected at least one access-log line in stderr, got: %s", logged)
+	}
+	// One of the Reader-API hits we made — pick a unique query
+	// string we know was sent — must appear as a sanitised access
+	// line. This is the contract Reeder debugging actually relies on.
+	if !strings.Contains(logged, "xt=user/-/state/com.google/read") {
+		t.Fatalf("expected sanitised xt= in access log, got: %s", logged)
+	}
+	// Redaction: every secret the test sent (the issued API token,
+	// the password literal, the session cookie) must never appear
+	// in the captured stderr. If any do, the redaction contract
+	// failed in the running binary, not just the unit tests.
+	mustMiss := []string{tok, "secret"}
+	// Pull the session cookie value out of the jar — it's an opaque
+	// per-run string, so we can only check by literal substring.
+	if u, _ := url.Parse(base); u != nil {
+		for _, c := range jar.Cookies(u) {
+			if c.Name == "harborrs_session" && c.Value != "" {
+				mustMiss = append(mustMiss, c.Value)
+			}
+		}
+	}
+	for _, bad := range mustMiss {
+		if bad == "" {
+			continue
+		}
+		if strings.Contains(logged, bad) {
+			t.Fatalf("REDACTION FAILURE: stderr contains secret literal %q\n--- full stderr ---\n%s", bad, logged)
+		}
+	}
 }
 
 // checkKbdContracts verifies the assumptions internal/ui/static/keys.js

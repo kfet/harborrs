@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/kfet/harborrs"
+	"github.com/kfet/harborrs/internal/accesslog"
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/feedpreview"
@@ -194,9 +195,17 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	// exercise the exact handler wiring used at runtime.
 	installRootRedirects(mux)
 
+	// Optional access log. Off by default; opt-in via
+	// HARBORRS_ACCESS_LOG=1 in the unit-file environment. Output goes
+	// to stderr so systemd journal picks it up. Redaction contract
+	// lives in internal/accesslog: Authorization/Cookie headers never
+	// read, bodies never inspected, query allow-listed.
+	accessLogOn := accesslog.EnabledFromEnv()
+	handler := accesslog.New(readHandler, accessLogOn, stderr)
+
 	srv := &http.Server{
 		Addr:         cfg.Listen,
-		Handler:      readHandler,
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 	}
@@ -220,6 +229,12 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 
 	errCh := make(chan error, 1)
 	go func() {
+		if accessLogOn {
+			// Print the access-log enabled banner to the same stream
+			// the access log itself uses (stderr), so a human tailing
+			// the journal sees both together.
+			fmt.Fprintln(stderr, "harborrs access log enabled (HARBORRS_ACCESS_LOG=1)")
+		}
 		fmt.Fprintf(stdout, "harborrs listening on %s\n", listenURL(cfg.Listen))
 		errCh <- srv.ListenAndServe()
 	}()

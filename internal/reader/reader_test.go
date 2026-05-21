@@ -416,6 +416,14 @@ func TestStreamContentsBadContinuation(t *testing.T) {
 	if w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u+"?n=10000", tok, nil); w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
 	}
+	// continuation beyond the end → empty page, not a panic
+	huge, _ := json.Marshal(struct {
+		Offset int `json:"o"`
+	}{Offset: 999})
+	hugeC := base64.RawURLEncoding.EncodeToString(huge)
+	if w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u+"?c="+hugeC, tok, nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"items":[]`) {
+		t.Fatalf("huge continuation code=%d body=%s", w.Code, w.Body.String())
+	}
 	// n garbage
 	if w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u+"?n=oops", tok, nil); w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
@@ -1034,6 +1042,160 @@ func TestUnreadCountEmptyFeedEmitsZeroTimestamp(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `"newestItemTimestampUsec":"0"`) {
 		t.Fatalf("expected zero-valued newestItemTimestampUsec; body=%s", body)
+	}
+}
+
+// Reeder/FreshRSS clients use item categories to associate content with
+// the reading list and labels; unread items should omit only the read state.
+func TestStreamItemsCarryReaderCategories(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 1, "F")
+	w := do(t, mux, "GET", "/reader/api/0/stream/contents/user/-/state/com.google/reading-list", tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp streamResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("items=%d", len(resp.Items))
+	}
+	cats := strings.Join(resp.Items[0].Categories, "\n")
+	for _, want := range []string{streamReadingList, labelStreamID("F")} {
+		if !strings.Contains(cats, want) {
+			t.Fatalf("categories %v missing %q", resp.Items[0].Categories, want)
+		}
+	}
+	for _, cat := range resp.Items[0].Categories {
+		if cat == stateReadID {
+			t.Fatalf("unread item should not carry read state: %v", resp.Items[0].Categories)
+		}
+	}
+	_ = u
+}
+
+func TestItemsIDsFiltersAndDirectStreams(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 3, "F")
+	es, err := st.ListEntries(store.FeedHash(u))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetRead(es[0].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	path := "/reader/api/0/stream/items/ids?s=" + url.QueryEscape("feed/"+u) + "&xt=" + url.QueryEscape(stateReadID) + "&n=10"
+	w := do(t, mux, "GET", path, tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ItemRefs []struct {
+			ID              string   `json:"id"`
+			DirectStreamIDs []string `json:"directStreamIds"`
+		} `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.ItemRefs) != 2 {
+		t.Fatalf("itemRefs=%d body=%s", len(resp.ItemRefs), w.Body.String())
+	}
+	for _, ref := range resp.ItemRefs {
+		if ref.ID == itemID(es[0].Hash) {
+			t.Fatalf("read item leaked through xt=read filter: %s", ref.ID)
+		}
+		streams := strings.Join(ref.DirectStreamIDs, "\n")
+		for _, want := range []string{feedStreamID(u), labelStreamID("F")} {
+			if !strings.Contains(streams, want) {
+				t.Fatalf("directStreamIds %v missing %q", ref.DirectStreamIDs, want)
+			}
+		}
+	}
+}
+
+func TestItemsIDsIncludeFiltersAndOldestFirst(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 3, "F")
+	es, err := st.ListEntries(store.FeedHash(u))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStarred(es[2].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	base := "/reader/api/0/stream/items/ids?s=" + url.QueryEscape("feed/"+u)
+
+	starred := do(t, mux, "GET", base+"&it="+url.QueryEscape(stateStarredID), tok, nil)
+	var one struct {
+		ItemRefs []struct{ ID string } `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(starred.Body.Bytes(), &one); err != nil {
+		t.Fatalf("unmarshal starred: %v", err)
+	}
+	if len(one.ItemRefs) != 1 || one.ItemRefs[0].ID != itemID(es[2].Hash) {
+		t.Fatalf("starred refs=%+v want only %s", one.ItemRefs, itemID(es[2].Hash))
+	}
+
+	oldest := do(t, mux, "GET", base+"&it="+url.QueryEscape(streamReadingList)+"&r=o&n=10", tok, nil)
+	var page struct {
+		ItemRefs []struct{ ID string } `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(oldest.Body.Bytes(), &page); err != nil {
+		t.Fatalf("unmarshal oldest: %v", err)
+	}
+	wantOrder := []string{itemID(es[2].Hash), itemID(es[1].Hash), itemID(es[0].Hash)}
+	if len(page.ItemRefs) != len(wantOrder) {
+		t.Fatalf("oldest refs=%d", len(page.ItemRefs))
+	}
+	for i, ref := range page.ItemRefs {
+		if ref.ID != wantOrder[i] {
+			t.Fatalf("oldest ref[%d]=%q want %q", i, ref.ID, wantOrder[i])
+		}
+	}
+
+	unknown := do(t, mux, "GET", base+"&it="+url.QueryEscape("user/-/state/com.google/unknown"), tok, nil)
+	var empty struct {
+		ItemRefs []struct{ ID string } `json:"itemRefs"`
+	}
+	if err := json.Unmarshal(unknown.Body.Bytes(), &empty); err != nil {
+		t.Fatalf("unmarshal unknown: %v", err)
+	}
+	if len(empty.ItemRefs) != 0 {
+		t.Fatalf("unknown state should match nothing: %+v", empty.ItemRefs)
+	}
+}
+
+func TestItemsContentsPreservesRequestOrder(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 3, "F")
+	es, err := st.ListEntries(store.FeedHash(u))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{itemID(es[2].Hash), itemID(es[0].Hash), itemID(es[1].Hash)}
+	body := url.Values{}
+	body.Add("i", "")
+	for _, id := range want {
+		body.Add("i", id)
+	}
+	body.Add("i", want[1])
+	w := do(t, mux, "POST", "/reader/api/0/stream/items/contents", tok, body)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp streamResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != len(want) {
+		t.Fatalf("items=%d want %d", len(resp.Items), len(want))
+	}
+	for i, item := range resp.Items {
+		if item.ID != want[i] {
+			t.Fatalf("item[%d]=%q want %q", i, item.ID, want[i])
+		}
 	}
 }
 
