@@ -11,8 +11,10 @@ package reader
 //
 // The contracts asserted here are deliberately narrow:
 //
-//   item-id-16-hex:        stream/items/ids + stream/contents emit
+//   item-id-16-hex:        stream/contents emits
 //                          tag:google.com,2005:reader/item/<16-hex>
+//   item-ref-decimal:      stream/items/ids emits decimal signed-int64
+//                          itemRefs[].id, matching Google Reader/Reeder
 //   longid-int64:          longId parses as a signed int64 (high-bit
 //                          ids surface as negative decimals)
 //   longid-roundtrip:      longId decodes back to the 16-hex hash
@@ -45,8 +47,9 @@ import (
 	"github.com/kfet/harborrs/internal/store"
 )
 
-// itemIDHex16 matches a well-formed GReader item id with exactly the
-// 16-hex-character item suffix that Reeder/FreshRSS clients expect.
+// itemIDHex16 matches a well-formed GReader stream/content item id with
+// exactly the 16-hex-character item suffix that Reeder/FreshRSS clients
+// expect.
 var itemIDHex16 = regexp.MustCompile(`^tag:google\.com,2005:reader/item/[0-9a-f]{16}$`)
 
 // assertItemHex16 reports a compat violation if id is not a well-formed
@@ -93,7 +96,7 @@ func TestGReaderCompat(t *testing.T) {
 		}
 	})
 
-	t.Run("item-id-16-hex+longid-int64/items-ids", func(t *testing.T) {
+	t.Run("item-ref-decimal+longid-int64/items-ids", func(t *testing.T) {
 		_, mux, tok, op, st := fixture(t)
 		seedFeed(t, op, st, 3, "F")
 		w := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList, tok, nil)
@@ -114,7 +117,10 @@ func TestGReaderCompat(t *testing.T) {
 			t.Fatalf("itemRefs=%d, want 3", len(resp.ItemRefs))
 		}
 		for _, r := range resp.ItemRefs {
-			assertItemHex16(t, "item-id-16-hex/items-ids", r.ID)
+			assertSignedInt64(t, "item-ref-decimal/items-ids", r.ID)
+			if r.ID != r.LongID {
+				t.Errorf("compat item-ref-decimal/items-ids: id=%q, longId=%q; Reeder expects itemRefs[].id to be the decimal long id", r.ID, r.LongID)
+			}
 			assertSignedInt64(t, "longid-int64", r.LongID)
 			assertSignedInt64(t, "timestampUsec-int64", r.TimestampUsec)
 		}
@@ -250,15 +256,58 @@ func TestGReaderCompat(t *testing.T) {
 		}
 	})
 
-	t.Run("xt-filter/excludes-read", func(t *testing.T) {
+	t.Run("reading-list-all-vs-xt-unread/items-ids", func(t *testing.T) {
 		_, mux, tok, op, st := fixture(t)
 		u := seedFeed(t, op, st, 3, "F")
 		es, _ := st.ListEntries(store.FeedHash(u))
 		if err := st.SetRead(es[0].Hash, true); err != nil {
 			t.Fatal(err)
 		}
+
+		all := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList+"&n=10", tok, nil)
+		unread := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList+"&xt="+url.QueryEscape(stateReadID)+"&n=10", tok, nil)
+		var allResp, unreadResp struct {
+			ItemRefs []struct {
+				ID string `json:"id"`
+			} `json:"itemRefs"`
+		}
+		if err := json.Unmarshal(all.Body.Bytes(), &allResp); err != nil {
+			t.Fatalf("unmarshal all: %v", err)
+		}
+		if err := json.Unmarshal(unread.Body.Bytes(), &unreadResp); err != nil {
+			t.Fatalf("unmarshal unread: %v", err)
+		}
+		if len(allResp.ItemRefs) != 3 {
+			t.Errorf("compat reading-list-all: bare reading-list returned %d refs, want all 3", len(allResp.ItemRefs))
+		}
+		if len(unreadResp.ItemRefs) != 2 {
+			t.Errorf("compat reading-list-xt-unread: itemRefs=%d, want 2 (read entry must be excluded only by xt=read)", len(unreadResp.ItemRefs))
+		}
+		readID := itemLongID(es[0].Hash)
+		for _, r := range unreadResp.ItemRefs {
+			if r.ID == readID {
+				t.Errorf("compat reading-list-xt-unread: read id %q leaked through xt=read", r.ID)
+			}
+		}
+	})
+
+	t.Run("ot-nt-filters/items-ids", func(t *testing.T) {
+		_, mux, tok, op, st := fixture(t)
+		u := "https://filters.example/feed"
+		op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: "Filters", Tags: []string{"F"}})
+		fh := store.FeedHash(u)
+		base := time.Unix(1_700_000_000, 0).UTC()
+		entries := []store.Entry{
+			{GUID: "g0", Link: "https://filters.example/0", Title: "0", Published: base, FetchedAt: base},
+			{GUID: "g1", Link: "https://filters.example/1", Title: "1", Published: base.Add(time.Hour), FetchedAt: base.Add(time.Hour)},
+			{GUID: "g2", Link: "https://filters.example/2", Title: "2", Published: base.Add(2 * time.Hour), FetchedAt: base.Add(2 * time.Hour)},
+		}
+		if _, err := st.AppendEntries(fh, entries); err != nil {
+			t.Fatal(err)
+		}
 		path := "/reader/api/0/stream/items/ids?s=" + url.QueryEscape("feed/"+u) +
-			"&xt=" + url.QueryEscape(stateReadID) + "&n=10"
+			"&ot=" + strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10) +
+			"&nt=" + strconv.FormatInt(base.Add(90*time.Minute).Unix(), 10) + "&n=10"
 		w := do(t, mux, "GET", path, tok, nil)
 		var resp struct {
 			ItemRefs []struct {
@@ -266,16 +315,11 @@ func TestGReaderCompat(t *testing.T) {
 			} `json:"itemRefs"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("unmarshal: %v", err)
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
 		}
-		if len(resp.ItemRefs) != 2 {
-			t.Errorf("compat xt-filter: itemRefs=%d, want 2 (read entry must be excluded)", len(resp.ItemRefs))
-		}
-		readID := itemID(es[0].Hash)
-		for _, r := range resp.ItemRefs {
-			if r.ID == readID {
-				t.Errorf("compat xt-filter: read id %q leaked through xt=read", r.ID)
-			}
+		got, want := len(resp.ItemRefs), 1
+		if got != want {
+			t.Errorf("compat ot-nt-filters: got %d refs, want %d item between ot and nt; body=%s", got, want, w.Body.String())
 		}
 	})
 
@@ -297,8 +341,9 @@ func TestGReaderCompat(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if len(resp.ItemRefs) != 1 || resp.ItemRefs[0].ID != itemID(es[2].Hash) {
-			t.Errorf("compat it-filter: refs=%+v, want only %q", resp.ItemRefs, itemID(es[2].Hash))
+		wantID := itemLongID(es[2].Hash)
+		if len(resp.ItemRefs) != 1 || resp.ItemRefs[0].ID != wantID {
+			t.Errorf("compat it-filter: refs=%+v, want only %q", resp.ItemRefs, wantID)
 		}
 	})
 

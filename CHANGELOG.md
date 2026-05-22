@@ -9,16 +9,32 @@ All notable changes to this project will be documented in this file.
 - Lightweight Google Reader / Reeder compatibility contract tests in
   `internal/reader/compat_test.go`, consolidated under one
   `TestGReaderCompat` umbrella with named sub-tests
-  (`item-id-16-hex/contents`, `item-id-16-hex+longid-int64/items-ids`,
+  (`item-id-16-hex/contents`,
+  `item-ref-decimal+longid-int64/items-ids`,
   `longid-roundtrip/highbit-negative`,
   `accept-legacy-20hex+decimal-longid/edit-tag`,
   `item-categories/reading-list+label`, `direct-stream-ids/items-ids`,
-  `preserve-i-order/items-contents`, `xt-filter/excludes-read`,
-  `it-filter/selects-starred`, `continuation-paging/items-ids`,
+  `preserve-i-order/items-contents`,
+  `reading-list-all-vs-xt-unread/items-ids`,
+  `ot-nt-filters/items-ids`, `it-filter/selects-starred`,
+  `continuation-paging/items-ids`,
   `unread-count-newest/per-row+global+output-json`). Failures read as
   contract violations, not generic test diffs. Pure Go + `httptest`
   through the real `Routes` handler; no containers, no FreshRSS
   runtime, no external network. Runs under the normal `make all`.
+
+### Fixed
+
+- `stream/items/ids` now emits decimal signed-int64 `itemRefs[].id`
+  values (with matching `longId`) instead of tag-form hex ids, matching
+  the Google Reader shape that Reeder uses to join unread item refs to
+  later `stream/items/contents` payloads. This prevents freshly synced
+  entries from being imported but shown as already read.
+- The `reading-list` stream now represents all items; unread-only views
+  are produced by adding `xt=user/-/state/com.google/read`, as in
+  FreshRSS/Miniflux. The Reader API also honours `ot` / `nt` timestamp
+  filters on item-id and stream-content queries so Reeder's read-state
+  delta sync does not receive over-broad pages.
 
 ## [0.4.5] - 2026-05-21
 

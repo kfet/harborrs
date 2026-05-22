@@ -534,13 +534,13 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 			return s.Store.EntryState(e.Hash).Read
 		})
 	default:
-		// reading-list and everything else: all unread entries.
+		// reading-list and everything else: all entries. Unread-only
+		// views are expressed as reading-list/feed streams plus
+		// xt=user/-/state/com.google/read. Reeder relies on this Google
+		// Reader convention when seeding a fresh account.
 		if err := gather(func(store.Feed) bool { return true }); err != nil {
 			return nil, err
 		}
-		entries = filterEntries(entries, func(e store.Entry) bool {
-			return !s.Store.EntryState(e.Hash).Read
-		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Published.After(entries[j].Published)
@@ -561,7 +561,14 @@ func filterEntries(es []store.Entry, ok func(store.Entry) bool) []store.Entry {
 func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.Entry {
 	includes := r.Form["it"]
 	excludes := r.Form["xt"]
-	if len(includes) == 0 && len(excludes) == 0 {
+	var after, before time.Time
+	if v := r.FormValue("ot"); v != "" {
+		after = parseReaderUnixTime(v)
+	}
+	if v := r.FormValue("nt"); v != "" {
+		before = parseReaderUnixTime(v)
+	}
+	if len(includes) == 0 && len(excludes) == 0 && after.IsZero() && before.IsZero() {
 		return es
 	}
 	return filterEntries(es, func(e store.Entry) bool {
@@ -575,8 +582,40 @@ func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.
 				return false
 			}
 		}
+		if !after.IsZero() && !entrySyncTime(e).After(after) {
+			return false
+		}
+		if !before.IsZero() && !entrySyncTime(e).Before(before) {
+			return false
+		}
 		return true
 	})
+}
+
+func entrySyncTime(e store.Entry) time.Time {
+	if e.FetchedAt.After(e.Published) {
+		return e.FetchedAt
+	}
+	return e.Published
+}
+
+func parseReaderUnixTime(v string) time.Time {
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || i <= 0 {
+		return time.Time{}
+	}
+	// Google Reader docs specify seconds for ot/nt, but some clients use
+	// millisecond or microsecond epoch values on adjacent endpoints. Accept
+	// all three so a timestamp unit mismatch cannot make Reeder's read-state
+	// delta query return an empty or wildly over-broad page.
+	switch {
+	case i >= 1_000_000_000_000_000:
+		return time.UnixMicro(i).UTC()
+	case i >= 1_000_000_000_000:
+		return time.UnixMilli(i).UTC()
+	default:
+		return time.Unix(i, 0).UTC()
+	}
 }
 
 func (s *Server) entryHasState(e store.Entry, state string) bool {
@@ -774,9 +813,15 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 		Continuation string `json:"continuation,omitempty"`
 	}{Continuation: cont}
 	for _, e := range entries[offset:hi] {
+		longID := itemLongID(e.Hash)
 		out.ItemRefs = append(out.ItemRefs, ref{
-			ID:            itemID(e.Hash),
-			LongID:        itemLongID(e.Hash),
+			// The Google Reader stream/items/ids contract uses the signed
+			// decimal item id here. Reeder matches these refs against the
+			// later stream/items/contents payload via longId / parsed item
+			// id; returning tag-form ids here makes the client lose unread
+			// membership and show freshly fetched entries as already read.
+			ID:            longID,
+			LongID:        longID,
 			DirectStreams: directStreams[e.FeedHash],
 			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
 		})

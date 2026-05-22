@@ -289,15 +289,17 @@ func TestE2E(t *testing.T) {
 	}
 	wantFeedStream := "feed/" + rssSrv.URL
 	for _, ref := range idsResp.ItemRefs {
-		hexID := strings.TrimPrefix(ref.ID, "tag:google.com,2005:reader/item/")
-		if len(hexID) != 16 {
-			t.Fatalf("ref id %q has hex length %d, want 16", ref.ID, len(hexID))
+		if _, err := strconv.ParseInt(ref.ID, 10, 64); err != nil {
+			t.Fatalf("ref id %q is not int64 decimal: %v", ref.ID, err)
 		}
 		if ref.LongID == "" {
 			t.Fatalf("ref %q missing longId", ref.ID)
 		}
 		if _, err := strconv.ParseInt(ref.LongID, 10, 64); err != nil {
 			t.Fatalf("ref %q longId %q is not int64 decimal: %v", ref.ID, ref.LongID, err)
+		}
+		if ref.ID != ref.LongID {
+			t.Fatalf("ref id %q does not match longId %q", ref.ID, ref.LongID)
 		}
 		streams := strings.Join(ref.DirectStreamIDs, ",")
 		for _, want := range []string{wantFeedStream, "user/-/label/News"} {

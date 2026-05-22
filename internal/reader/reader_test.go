@@ -379,8 +379,13 @@ func TestStreamLabelStarredReadAndDefault(t *testing.T) {
 	if len(resp.Items) != 1 {
 		t.Fatalf("read items=%d", len(resp.Items))
 	}
-	// reading-list (default) → 4 unread
+	// reading-list (default) → all items; unread-only is reading-list + xt=read.
 	w = do(t, mux, "GET", "/reader/api/0/stream/contents/user/-/state/com.google/reading-list", tok, nil)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.Items) != 5 {
+		t.Fatalf("reading-list items=%d", len(resp.Items))
+	}
+	w = do(t, mux, "GET", "/reader/api/0/stream/contents/user/-/state/com.google/reading-list?xt="+url.QueryEscape(stateReadID), tok, nil)
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if len(resp.Items) != 4 {
 		t.Fatalf("unread=%d", len(resp.Items))
@@ -596,6 +601,35 @@ func TestItemIDRoundtrip(t *testing.T) {
 	// otherwise: raw passthrough
 	if got := itemIDToHash("plainhash"); got != "plainhash" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestReaderTimeHelpers(t *testing.T) {
+	pub := time.Unix(100, 0).UTC()
+	fetched := time.Unix(200, 0).UTC()
+	if got := entrySyncTime(store.Entry{Published: pub, FetchedAt: fetched}); !got.Equal(fetched) {
+		t.Fatalf("fetched-wins got %v want %v", got, fetched)
+	}
+	if got := entrySyncTime(store.Entry{Published: fetched, FetchedAt: pub}); !got.Equal(fetched) {
+		t.Fatalf("published-wins got %v want %v", got, fetched)
+	}
+	if got := parseReaderUnixTime("bad"); !got.IsZero() {
+		t.Fatalf("bad parse got %v", got)
+	}
+	if got := parseReaderUnixTime("0"); !got.IsZero() {
+		t.Fatalf("zero parse got %v", got)
+	}
+	sec := time.Unix(1_700_000_000, 0).UTC()
+	if got := parseReaderUnixTime("1700000000"); !got.Equal(sec) {
+		t.Fatalf("seconds got %v want %v", got, sec)
+	}
+	ms := time.UnixMilli(1_700_000_000_123).UTC()
+	if got := parseReaderUnixTime("1700000000123"); !got.Equal(ms) {
+		t.Fatalf("millis got %v want %v", got, ms)
+	}
+	us := time.UnixMicro(1_700_000_000_123_456).UTC()
+	if got := parseReaderUnixTime("1700000000123456"); !got.Equal(us) {
+		t.Fatalf("micros got %v want %v", got, us)
 	}
 }
 
@@ -1103,7 +1137,7 @@ func TestItemsIDsFiltersAndDirectStreams(t *testing.T) {
 		t.Fatalf("itemRefs=%d body=%s", len(resp.ItemRefs), w.Body.String())
 	}
 	for _, ref := range resp.ItemRefs {
-		if ref.ID == itemID(es[0].Hash) {
+		if ref.ID == itemLongID(es[0].Hash) {
 			t.Fatalf("read item leaked through xt=read filter: %s", ref.ID)
 		}
 		streams := strings.Join(ref.DirectStreamIDs, "\n")
@@ -1134,8 +1168,9 @@ func TestItemsIDsIncludeFiltersAndOldestFirst(t *testing.T) {
 	if err := json.Unmarshal(starred.Body.Bytes(), &one); err != nil {
 		t.Fatalf("unmarshal starred: %v", err)
 	}
-	if len(one.ItemRefs) != 1 || one.ItemRefs[0].ID != itemID(es[2].Hash) {
-		t.Fatalf("starred refs=%+v want only %s", one.ItemRefs, itemID(es[2].Hash))
+	wantStarredID := itemLongID(es[2].Hash)
+	if len(one.ItemRefs) != 1 || one.ItemRefs[0].ID != wantStarredID {
+		t.Fatalf("starred refs=%+v want only %s", one.ItemRefs, wantStarredID)
 	}
 
 	oldest := do(t, mux, "GET", base+"&it="+url.QueryEscape(streamReadingList)+"&r=o&n=10", tok, nil)
@@ -1145,7 +1180,7 @@ func TestItemsIDsIncludeFiltersAndOldestFirst(t *testing.T) {
 	if err := json.Unmarshal(oldest.Body.Bytes(), &page); err != nil {
 		t.Fatalf("unmarshal oldest: %v", err)
 	}
-	wantOrder := []string{itemID(es[2].Hash), itemID(es[1].Hash), itemID(es[0].Hash)}
+	wantOrder := []string{itemLongID(es[2].Hash), itemLongID(es[1].Hash), itemLongID(es[0].Hash)}
 	if len(page.ItemRefs) != len(wantOrder) {
 		t.Fatalf("oldest refs=%d", len(page.ItemRefs))
 	}
