@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Entry hashes are now stored on disk as 16-hex-character Google
+  Reader/FreshRSS item ids instead of the old 20-hex SHA-1 prefixes.
+  `Store.Open` migrates existing `entries/**/*.ndjson`, `read.log`,
+  and `starred.log` in place before folding state, preserving read /
+  starred flags and rejecting the astronomically unlikely case where
+  two legacy 20-hex hashes collide after truncation. The Reader API now
+  emits 16-hex `tag:google.com,2005:reader/item/...` ids plus `longId`,
+  and still accepts legacy 20-hex ids and signed decimal long ids on
+  write endpoints. This fixes Reeder collapsing every synced item onto
+  a single local primary key, which appeared in the app as only one
+  visible item in All/Unread despite successful sync traffic.
+
 ## [0.4.4] - 2026-05-21
 
 ### Added

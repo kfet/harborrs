@@ -369,6 +369,7 @@ func (s *Server) handleDisableTag(w http.ResponseWriter, r *http.Request) {
 // streamItem is one item in a stream/contents response.
 type streamItem struct {
 	ID            string        `json:"id"`
+	LongID        string        `json:"longId"`
 	Categories    []string      `json:"categories"`
 	Title         string        `json:"title"`
 	Published     int64         `json:"published"`
@@ -401,18 +402,30 @@ type streamResponse struct {
 	Continuation string       `json:"continuation,omitempty"`
 }
 
-func itemID(hash string) string { return "tag:google.com,2005:reader/item/" + hash }
+func itemID(hash string) string { return "tag:google.com,2005:reader/item/" + readerItemHex(hash) }
+
+func itemLongID(hash string) string {
+	h := readerItemHex(hash)
+	n, err := strconv.ParseUint(h, 16, 64)
+	if err != nil {
+		return "0"
+	}
+	return strconv.FormatInt(int64(n), 10)
+}
+
+func readerItemHex(hash string) string { return store.CanonicalEntryHash(hash) }
+
 func itemIDToHash(id string) string {
 	if strings.HasPrefix(id, "tag:google.com,2005:reader/item/") {
-		return strings.TrimPrefix(id, "tag:google.com,2005:reader/item/")
+		id = strings.TrimPrefix(id, "tag:google.com,2005:reader/item/")
 	}
-	// long-form decimal int64? Best-effort: pad hex to 20 chars and take the
-	// trailing 20 (matches FreshRSS's truncation convention).
+	// Long-form decimal int64, as emitted by longId / used by some
+	// Google Reader clients. Negative numbers are the signed decimal form
+	// of a 64-bit item id whose high bit is set.
 	if n, err := strconv.ParseInt(id, 10, 64); err == nil {
-		h := fmt.Sprintf("%020x", uint64(n))
-		return h[len(h)-20:]
+		return fmt.Sprintf("%016x", uint64(n))
 	}
-	return id
+	return store.CanonicalEntryHash(id)
 }
 
 func (s *Server) handleStreamContents(w http.ResponseWriter, r *http.Request) {
@@ -677,6 +690,7 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 		}
 		out = append(out, streamItem{
 			ID:            itemID(e.Hash),
+			LongID:        itemLongID(e.Hash),
 			Categories:    cats,
 			Title:         e.Title,
 			Published:     ts,
@@ -751,6 +765,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	}
 	type ref struct {
 		ID            string   `json:"id"`
+		LongID        string   `json:"longId"`
 		DirectStreams []string `json:"directStreamIds,omitempty"`
 		TimestampUsec string   `json:"timestampUsec"`
 	}
@@ -761,6 +776,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries[offset:hi] {
 		out.ItemRefs = append(out.ItemRefs, ref{
 			ID:            itemID(e.Hash),
+			LongID:        itemLongID(e.Hash),
 			DirectStreams: directStreams[e.FeedHash],
 			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
 		})

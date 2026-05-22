@@ -17,3 +17,10 @@ github.com/kfet/harborrs/scripts/lintfrontend/main.go
 # bad gzip, managed paths) are covered; contriving the remaining
 # kernel-level errors adds noise without informing the behaviour.
 github.com/kfet/harborrs/internal/selfupdate/selfupdate.go
+
+# Store Open folds logs immediately after migrateStateLog has opened/scanned
+# the same files; these error returns are only reachable by a filesystem race
+# between migration and folding. The direct foldLog error path is exercised.
+github.com/kfet/harborrs/internal/store/store.go:75\.71,77\.3
+github.com/kfet/harborrs/internal/store/store.go:78\.74,80\.3
+github.com/kfet/harborrs/internal/store/store.go:105\.3,105\.13

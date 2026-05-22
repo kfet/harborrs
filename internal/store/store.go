@@ -68,6 +68,9 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+	if err := migrateEntryHashes(dir); err != nil {
+		return nil, err
+	}
 	s := &Store{Dir: dir, state: map[string]EntryState{}, now: time.Now}
 	if err := s.foldLog(filepath.Join(dir, "read.log"), 'r'); err != nil {
 		return nil, err
@@ -145,7 +148,7 @@ func (s *Store) foldLog(path string, kind byte) error {
 func (s *Store) EntryState(hash string) EntryState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.state[hash]
+	return s.state[CanonicalEntryHash(hash)]
 }
 
 // SetRead records a read/unread mutation. Idempotent.
@@ -159,6 +162,7 @@ func (s *Store) SetStarred(hash string, starred bool) error {
 }
 
 func (s *Store) setFlag(hash string, want, isRead bool) error {
+	hash = CanonicalEntryHash(hash)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.state[hash]
@@ -277,6 +281,8 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 	for _, e := range entries {
 		if e.Hash == "" {
 			e.Hash = EntryHash(e.GUID, e.Link)
+		} else {
+			e.Hash = CanonicalEntryHash(e.Hash)
 		}
 		if e.FeedHash == "" {
 			e.FeedHash = feedHash
@@ -315,7 +321,7 @@ func (s *Store) knownHashes(feedHash string) (map[string]bool, error) {
 			continue
 		}
 		if err := scanEntries(filepath.Join(dir, ent.Name()), func(e Entry) error {
-			set[e.Hash] = true
+			set[CanonicalEntryHash(e.Hash)] = true
 			return nil
 		}); err != nil {
 			return nil, err

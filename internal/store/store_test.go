@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -663,5 +664,197 @@ func TestFeedTagHelpers(t *testing.T) {
 	o.Add(Feed{XMLURL: "u", Tags: []string{"  b  ", "a", "a"}})
 	if len(o.Feeds[0].Tags) != 2 || o.Feeds[0].Tags[0] != "a" || o.Feeds[0].Tags[1] != "b" {
 		t.Fatalf("normalise on add: %v", o.Feeds[0].Tags)
+	}
+}
+
+func TestEntryHashLengthAndCanonical(t *testing.T) {
+	h := EntryHash("guid", "https://example.com/item")
+	if len(h) != EntryHashLen {
+		t.Fatalf("EntryHash len=%d want %d (%q)", len(h), EntryHashLen, h)
+	}
+	if got := CanonicalEntryHash("ABCDEF0123456789BEEF"); got != "abcdef0123456789" {
+		t.Fatalf("CanonicalEntryHash legacy=%q", got)
+	}
+	if got := CanonicalEntryHash("abcdef0123456789"); got != "abcdef0123456789" {
+		t.Fatalf("CanonicalEntryHash current=%q", got)
+	}
+	if got := CanonicalEntryHash("not-hex-but-longer"); got != "not-hex-but-longer" {
+		t.Fatalf("CanonicalEntryHash nonhex=%q", got)
+	}
+}
+
+func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/feed")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "abcdef0123456789beef"
+	canon := "abcdef0123456789"
+	entries := []Entry{{Hash: legacy, FeedHash: fh, GUID: "g", Link: "https://example.com/1", Title: "one", Published: time.Unix(1, 0), FetchedAt: time.Unix(2, 0)}}
+	var b strings.Builder
+	for _, e := range entries {
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "read.log"), []byte("2024-01-01T00:00:00Z r "+legacy+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "starred.log"), []byte("2024-01-01T00:00:00Z s "+legacy+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Hash != canon {
+		t.Fatalf("listed=%+v want hash %s", listed, canon)
+	}
+	if !s.EntryState(canon).Read || !s.EntryState(canon).Starred {
+		t.Fatalf("canonical state not preserved: %+v", s.EntryState(canon))
+	}
+	if !s.EntryState(legacy).Read || !s.EntryState(legacy).Starred {
+		t.Fatalf("legacy lookup should canonicalize: %+v", s.EntryState(legacy))
+	}
+	for _, p := range []string{filepath.Join(entDir, "current.ndjson"), filepath.Join(dir, "read.log"), filepath.Join(dir, "starred.log")} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), legacy) {
+			t.Fatalf("%s still contains legacy hash: %s", p, data)
+		}
+		if !strings.Contains(string(data), canon) {
+			t.Fatalf("%s missing canonical hash: %s", p, data)
+		}
+	}
+}
+
+func TestOpenRejectsEntryHashMigrationCollision(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/feed")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries := []Entry{
+		{Hash: "0123456789abcdefaaaa", FeedHash: fh, GUID: "a", Link: "https://example.com/a"},
+		{Hash: "0123456789abcdefbbbb", FeedHash: fh, GUID: "b", Link: "https://example.com/b"},
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		line, _ := json.Marshal(e)
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "entry hash collision") {
+		t.Fatalf("Open err=%v, want collision", err)
+	}
+}
+
+func TestOpenMigrationNoopForCurrentHashes(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/current")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := Entry{Hash: "abcdef0123456789", FeedHash: fh, GUID: "g", Link: "https://example.com/current/1"}
+	line, _ := json.Marshal(e)
+	path := filepath.Join(entDir, "current.ndjson")
+	if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	if _, err := Open(dir); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatalf("current-hash migration should be noop\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestOpenMigrationMarshalFail(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/marshal")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := Entry{Hash: "abcdef0123456789beef", FeedHash: fh, GUID: "g", Link: "https://example.com/marshal/1"}
+	line, _ := json.Marshal(e)
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), append(line, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := jsonMarshal
+	jsonMarshal = func(any) ([]byte, error) { return nil, errors.New("marshal-boom") }
+	t.Cleanup(func() { jsonMarshal = orig })
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "marshal-boom") {
+		t.Fatalf("Open err=%v, want marshal-boom", err)
+	}
+}
+
+func TestCanonicalEntryHashEmpty(t *testing.T) {
+	if got := CanonicalEntryHash(""); got != "" {
+		t.Fatalf("empty canonical=%q", got)
+	}
+}
+
+func TestFoldLogDirectOtherOpenError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "read.log")
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Dir: dir, state: map[string]EntryState{}, now: time.Now}
+	if err := s.foldLog(p, 'r'); err == nil {
+		t.Fatal("expected foldLog open error for directory")
+	}
+}
+
+func TestAppendEntriesCanonicalizesProvidedHash(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := FeedHash("https://example.com/canon")
+	legacy := "abcdef0123456789beef"
+	added, err := s.AppendEntries(fh, []Entry{{Hash: legacy, GUID: "g", Link: "https://example.com/canon/1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 1 || added[0].Hash != "abcdef0123456789" {
+		t.Fatalf("added=%+v", added)
+	}
+	listed, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Hash != "abcdef0123456789" {
+		t.Fatalf("listed=%+v", listed)
+	}
+}
+
+func TestIsHexEmpty(t *testing.T) {
+	if isHex("") {
+		t.Fatal("empty string is not hex")
 	}
 }

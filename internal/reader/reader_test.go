@@ -585,12 +585,12 @@ func TestListEntriesErrorPropagates(t *testing.T) {
 
 func TestItemIDRoundtrip(t *testing.T) {
 	h := "abcdef0123456789abcd"
-	if got := itemIDToHash(itemID(h)); got != h {
+	if got := itemIDToHash(itemID(h)); got != "abcdef0123456789" {
 		t.Fatalf("got %q", got)
 	}
-	// long-form decimal — accepts but returns hex prefix
+	// long-form decimal — accepts and returns the 16-hex two's-complement form.
 	dec := strconv.FormatInt(1234567890123, 10)
-	if got := itemIDToHash(dec); len(got) != 20 {
+	if got := itemIDToHash(dec); got != "0000011f71fb04cb" {
 		t.Fatalf("dec got %q", got)
 	}
 	// otherwise: raw passthrough
@@ -1339,5 +1339,73 @@ func TestItemsIDsClampsLargeN(t *testing.T) {
 	}
 	if p.Continuation == "" {
 		t.Fatal("expected continuation for clamped page")
+	}
+}
+
+func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
+	if got := itemID("ba7fcb8d8885006e1250"); got != "tag:google.com,2005:reader/item/ba7fcb8d8885006e" {
+		t.Fatalf("itemID legacy=%q", got)
+	}
+	if got := itemIDToHash("tag:google.com,2005:reader/item/ba7fcb8d8885006e1250"); got != "ba7fcb8d8885006e" {
+		t.Fatalf("legacy tag id -> hash %q", got)
+	}
+	if got := itemIDToHash("tag:google.com,2005:reader/item/ba7fcb8d8885006e"); got != "ba7fcb8d8885006e" {
+		t.Fatalf("current tag id -> hash %q", got)
+	}
+	long := itemLongID("ba7fcb8d8885006e")
+	if long != "-5008060451871457170" { // signed int64 decimal of 0xba7fcb8d8885006e
+		t.Fatalf("longId=%q", long)
+	}
+	if got := itemIDToHash(long); got != "ba7fcb8d8885006e" {
+		t.Fatalf("longId -> hash %q", got)
+	}
+
+	_, mux, tok, op, st := fixture(t)
+	u := "https://feed.example/highbit"
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: "F", Tags: []string{"F"}, HTMLURL: "https://feed.example"})
+	entry := store.Entry{
+		Hash:      "ba7fcb8d8885006e", // high bit set, so longId is negative
+		FeedHash:  store.FeedHash(u),
+		GUID:      "g",
+		Link:      "https://feed.example/highbit/1",
+		Title:     "high bit",
+		Content:   "content",
+		Published: time.Unix(100, 0),
+		FetchedAt: time.Unix(101, 0),
+	}
+	if _, err := st.AppendEntries(store.FeedHash(u), []store.Entry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u, tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			ID     string `json:"id"`
+			LongID string `json:"longId"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("items=%d", len(resp.Items))
+	}
+	hexID := strings.TrimPrefix(resp.Items[0].ID, "tag:google.com,2005:reader/item/")
+	if len(hexID) != store.EntryHashLen {
+		t.Fatalf("id=%q hexlen=%d", resp.Items[0].ID, len(hexID))
+	}
+	if resp.Items[0].LongID != long {
+		t.Fatalf("longId=%q want %q", resp.Items[0].LongID, long)
+	}
+
+	body := url.Values{"i": {long}, "a": {stateReadID}}
+	w = do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body)
+	if w.Code != 200 {
+		t.Fatalf("edit long id code=%d body=%s", w.Code, w.Body.String())
+	}
+	if !st.EntryState("ba7fcb8d8885006e").Read {
+		t.Fatal("longId edit-tag did not update canonical hash")
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -220,6 +221,7 @@ func TestE2E(t *testing.T) {
 	var sresp struct {
 		Items []struct {
 			ID         string   `json:"id"`
+			LongID     string   `json:"longId"`
 			Categories []string `json:"categories"`
 		} `json:"items"`
 	}
@@ -230,6 +232,16 @@ func TestE2E(t *testing.T) {
 	// items with the reading-list and feed labels. Without these tags
 	// unread items can be silently filtered out of the unread view.
 	for _, it := range sresp.Items {
+		hexID := strings.TrimPrefix(it.ID, "tag:google.com,2005:reader/item/")
+		if len(hexID) != 16 {
+			t.Fatalf("item id %q has hex length %d, want 16", it.ID, len(hexID))
+		}
+		if it.LongID == "" {
+			t.Fatalf("item %q missing longId", it.ID)
+		}
+		if _, err := strconv.ParseInt(it.LongID, 10, 64); err != nil {
+			t.Fatalf("item %q longId %q is not int64 decimal: %v", it.ID, it.LongID, err)
+		}
 		cats := strings.Join(it.Categories, ",")
 		for _, want := range []string{
 			"user/-/state/com.google/reading-list",
@@ -265,6 +277,7 @@ func TestE2E(t *testing.T) {
 	var idsResp struct {
 		ItemRefs []struct {
 			ID              string   `json:"id"`
+			LongID          string   `json:"longId"`
 			DirectStreamIDs []string `json:"directStreamIds"`
 		} `json:"itemRefs"`
 	}
@@ -276,6 +289,16 @@ func TestE2E(t *testing.T) {
 	}
 	wantFeedStream := "feed/" + rssSrv.URL
 	for _, ref := range idsResp.ItemRefs {
+		hexID := strings.TrimPrefix(ref.ID, "tag:google.com,2005:reader/item/")
+		if len(hexID) != 16 {
+			t.Fatalf("ref id %q has hex length %d, want 16", ref.ID, len(hexID))
+		}
+		if ref.LongID == "" {
+			t.Fatalf("ref %q missing longId", ref.ID)
+		}
+		if _, err := strconv.ParseInt(ref.LongID, 10, 64); err != nil {
+			t.Fatalf("ref %q longId %q is not int64 decimal: %v", ref.ID, ref.LongID, err)
+		}
 		streams := strings.Join(ref.DirectStreamIDs, ",")
 		for _, want := range []string{wantFeedStream, "user/-/label/News"} {
 			if !strings.Contains(streams, want) {
