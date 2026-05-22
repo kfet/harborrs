@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-21
+
 ### Fixed
 
 - Entry hashes are now stored on disk as 16-hex-character Google
