@@ -6,7 +6,7 @@
 
 <div class="home-actions">
 <a href="feed/new" class="addlink">+ add feed</a>
-{{if .UnreadOnly}}<a href="./{{if .TagFilter}}?tag={{.TagFilter}}{{end}}" class="filter active">unread only ({{.WithUnread}}) ×</a>{{else}}<a href="./?unread=1{{if .TagFilter}}&tag={{.TagFilter}}{{end}}" class="filter">show unread only ({{.WithUnread}})</a>{{end}}
+{{if .UnreadOnly}}<a href="./?unread=0{{if .TagFilter}}&tag={{.TagFilter}}{{end}}" class="filter active">unread only ({{.WithUnread}}) ×</a>{{else}}<a href="./?unread=1{{if .TagFilter}}&tag={{.TagFilter}}{{end}}" class="filter">show unread only ({{.WithUnread}})</a>{{end}}
 </div>
 
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
@@ -27,17 +27,27 @@
 </ul>
 </aside>
 
-<ul class="feeds">
+<div class="feed-groups">
+{{if .Groups}}
+{{range .Groups}}
+<section class="feed-group" data-tag="{{.Name}}">
+<h2 class="feed-group-head"><button type="button" class="feed-group-toggle" aria-expanded="true" aria-controls="grp-{{.Slug}}"><span class="caret" aria-hidden="true">▾</span> {{.Label}}</button> <span class="count">{{.Unread}}</span></h2>
+<ul class="feeds" id="grp-{{.Slug}}">
 {{range .Feeds}}
 <li>
 <a href="feed?id={{.URL}}">{{.Title}}</a>
-{{range .Tags}}<small class="tagchip">{{.}}</small>{{end}}
 <span class="count">{{.Unread}}</span>
 </li>
-{{else}}
-<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./{{if $.TagFilter}}?tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
 {{end}}
 </ul>
+</section>
+{{end}}
+{{else}}
+<ul class="feeds">
+<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./?unread=0{{if $.TagFilter}}&tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
+</ul>
+{{end}}
+</div>
 </div>
 </section>
 {{end}}

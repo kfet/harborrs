@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Web UI: icon-style read/star buttons on entry rows and entry detail
+  (●/○, ★/☆) with `aria-label`s for screen readers and CSS tints
+  (accent for unread, gold for starred).
+- Web UI: home feed list is grouped by tag, with a collapsible
+  section per tag (state persisted per-tag in `localStorage`). Feeds
+  with multiple tags appear under each of them; an "Untagged"
+  section trails. Keyboard list-nav walks every visible group and
+  skips collapsed ones.
+- Web UI: the add-tag input on the per-feed page is backed by a
+  `<datalist>` populated with every tag in the OPML, giving native
+  autocomplete for existing tags while still allowing free-form new
+  ones.
+
+### Changed
+
+- Web UI: home and per-feed views default to "show unread only".
+  The user's last choice is persisted in an `h_unread` cookie so it
+  carries across the feed list, entering a feed, and back-navigation.
+  Toggle pills emit explicit `?unread=0`/`?unread=1` links so the off
+  state is also recorded.
+- Web UI: the `×` on a tag chip is hidden until the chip is hovered
+  or focused, so a feed's tags read as a row of tags rather than a
+  row of delete buttons.
+- Web UI: `mark-all-read` on a feed now redirects back to the home
+  list without re-pinning `?unread=1`, deferring to the user's
+  persisted choice.
+
 ## [0.4.9] - 2026-05-23
 
 ### Fixed

@@ -567,3 +567,95 @@ ul.entries {
   .entry > a { white-space: normal; }
   .entry .feed-tag { display: none; }
 }
+
+/* ---- icons for read / star toggles -------------------------------- */
+/* Buttons used in entry rows and the entry detail. The glyph itself
+   sits inside a <span aria-hidden> so screen readers read the
+   aria-label, not the symbol. */
+.entry .readbtn.icon,
+.entry .starbtn.icon,
+.entry-full .readbtn.icon,
+.entry-full .starbtn.icon {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.1em 0.4em;
+  font-size: 1em;
+  line-height: 1;
+  color: var(--muted);
+}
+.entry .readbtn.icon span,
+.entry .starbtn.icon span {
+  font-size: 1.1em;
+}
+.entry .readbtn.icon:hover,
+.entry .starbtn.icon:hover { color: var(--fg); border-color: var(--border); }
+.entry.unread .readbtn.icon { color: var(--accent); }
+.entry.read .readbtn.icon { color: var(--muted); }
+.entry.starred .starbtn.icon { color: #d6a82c; }
+.entry-full.starred .starbtn.icon { color: #d6a82c; }
+
+/* ---- tag groups on the home page --------------------------------- */
+.feed-groups { display: flex; flex-direction: column; gap: 1.1em; min-width: 0; }
+.feed-group { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); overflow: hidden; }
+.feed-group-head {
+  display: flex; align-items: center; gap: 0.5em;
+  margin: 0; padding: 0.5em 0.8em;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.95rem; font-weight: 600;
+}
+.feed-group-head .count { margin-left: auto; }
+.feed-group-toggle {
+  flex: 1;
+  display: inline-flex; align-items: center; gap: 0.45em;
+  background: transparent; border: none; padding: 0;
+  font: inherit; color: var(--fg);
+  text-align: left; cursor: pointer;
+}
+.feed-group-toggle:hover { color: var(--accent); }
+.feed-group-toggle .caret { display: inline-block; width: 0.9em; color: var(--muted); transition: transform 120ms ease; }
+.feed-group-toggle[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+.feed-group .feeds { border-top: none; }
+.feed-group .feeds[hidden] { display: none; }
+.feed-group .feeds li { padding-left: 0.8em; padding-right: 0.8em; }
+
+/* ---- tag chips on a feed ----------------------------------------- */
+.tagchips {
+  display: flex; flex-wrap: wrap; gap: 0.4em; align-items: center;
+  margin: 0.6em 0 1em;
+}
+.tagchip {
+  display: inline-flex; align-items: center; gap: 0.25em;
+  padding: 0.1em 0.55em;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.82em;
+  color: var(--fg-soft);
+}
+.tagchip-rm { display: inline; margin: 0; }
+.tagchip-x {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.95em;
+  line-height: 1;
+  padding: 0 0.15em;
+  opacity: 0;            /* hidden until the chip is hovered/focused */
+  transition: opacity 100ms ease, color 100ms ease;
+  cursor: pointer;
+}
+.tagchip:hover .tagchip-x,
+.tagchip:focus-within .tagchip-x { opacity: 0.6; }
+.tagchip .tagchip-x:hover,
+.tagchip .tagchip-x:focus { opacity: 1; color: var(--danger); border-color: transparent; background: transparent; }
+.tagadd { display: inline; margin: 0; }
+.tagadd input[type="text"] {
+  padding: 0.15em 0.55em;
+  font-size: 0.82em;
+  border-radius: 999px;
+  background: transparent;
+}
+
+/* Used in the entry-list rendering to dim already-read rows. */
+.entry.read > a { color: var(--muted); }

@@ -422,7 +422,10 @@ func TestE2E(t *testing.T) {
 	if resp.StatusCode != 303 {
 		t.Fatalf("ui login: %d", resp.StatusCode)
 	}
-	resp = mustGet(t, uic, base+"/ui/")
+	// The home view defaults to "show unread only"; before the poll
+	// loop has fetched any entries, that would hide our seeded feed.
+	// Use ?unread=0 to assert against the unfiltered list.
+	resp = mustGet(t, uic, base+"/ui/?unread=0")
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "E2E") {

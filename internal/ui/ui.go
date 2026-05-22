@@ -281,11 +281,93 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	RelRedirect(w, r, "login", http.StatusSeeOther)
 }
 
+// unreadCookieName persists the "show unread only" choice across feed
+// pages, the home list and navigation. The value is "1" (default) or
+// "0" (show all). The cookie is set by writeUnreadCookie when the
+// user clicks an explicit ?unread=0/1 link; subsequent pages without
+// the query param read the cookie via effectiveUnreadOnly.
+const unreadCookieName = "h_unread"
+
+// effectiveUnreadOnly returns the user's current "unread only" choice
+// for list pages. Precedence: explicit ?unread=… query param first,
+// then the persisted cookie, then the default (true — start filtered).
+func effectiveUnreadOnly(r *http.Request) bool {
+	switch r.URL.Query().Get("unread") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	if c, err := r.Cookie(unreadCookieName); err == nil && c.Value == "0" {
+		return false
+	}
+	return true
+}
+
+// writeUnreadCookie persists the user's choice. Called from handlers
+// when the request URL carries an explicit ?unread=0/1, so that the
+// next plain navigation (e.g. clicking a feed in the sidebar, hitting
+// `u` from an entry) keeps the same filter without a query param.
+func writeUnreadCookie(w http.ResponseWriter, r *http.Request, secure bool) {
+	q := r.URL.Query().Get("unread")
+	if q != "0" && q != "1" {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     unreadCookieName,
+		Value:    q,
+		Path:     "/",
+		MaxAge:   365 * 24 * 3600,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+	})
+}
+
+// tagSlug derives a stable, DOM-id-friendly slug from a tag name. Used
+// for the collapse-target id (#grp-<slug>). Non-alnum runs collapse to
+// '-'; the empty tag (untagged sentinel) maps to "untagged".
+func tagSlug(name string) string {
+	if name == "" {
+		return "all"
+	}
+	var b strings.Builder
+	prevDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if s == "" {
+		return "tag"
+	}
+	return s
+}
+
 type homeFeed struct {
 	Title  string
 	URL    string
 	Unread int
 	Tags   []string
+}
+
+// feedGroup is one tag-bucket rendered on the home page. A single feed
+// appears in every group whose tag it carries; feeds with no tags land
+// in the "Untagged" group. When a tag filter is active we still emit
+// the same shape — there's just one group.
+type feedGroup struct {
+	Name   string // tag name; "" for untagged sentinel display
+	Label  string
+	Slug   string // stable CSS-id slug for the collapsible target
+	Unread int
+	Feeds  []homeFeed
 }
 
 // tagCount is one row in the home sidebar.
@@ -342,7 +424,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	unreadOnly := r.URL.Query().Get("unread") == "1"
+	unreadOnly := effectiveUnreadOnly(r)
+	writeUnreadCookie(w, r, s.Secure)
 	tagFilter := r.URL.Query().Get("tag") // "" → all; store.ReservedTagUntagged → untagged
 	perFeed, buckets, err := s.unreadCounts(op)
 	if err != nil {
@@ -382,6 +465,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tags {
 		sidebar = append(sidebar, tagCount{Name: t, Label: t, Unread: buckets[t]})
 	}
+	groups := buildFeedGroups(feeds, tagFilter)
 	data := struct {
 		baseData
 		Feeds      []homeFeed
@@ -391,8 +475,73 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Sidebar    []tagCount // pinned rows
 		Tags       []tagCount // real tag rows (empty when no tags exist)
 		TagFilter  string
-	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, sidebar, tagFilter}
+		Groups     []feedGroup
+	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, sidebar, tagFilter, groups}
 	s.render(w, "home", data)
+}
+
+// buildFeedGroups buckets feeds by tag for the home page. Each feed
+// shows under every tag it carries; feeds with no tags land in the
+// trailing "Untagged" group. When tagFilter is set, every feed in the
+// input already matches that filter, so we emit a single group with
+// the filter's label.
+func buildFeedGroups(feeds []homeFeed, tagFilter string) []feedGroup {
+	if len(feeds) == 0 {
+		return nil
+	}
+	if tagFilter != "" {
+		label := tagFilter
+		if tagFilter == store.ReservedTagUntagged {
+			label = "Untagged"
+		}
+		g := feedGroup{Name: tagFilter, Label: label, Slug: tagSlug(label)}
+		for _, f := range feeds {
+			g.Feeds = append(g.Feeds, f)
+			g.Unread += f.Unread
+		}
+		return []feedGroup{g}
+	}
+	// No filter: bucket by tag, with an Untagged trailer.
+	byTag := map[string]*feedGroup{}
+	var order []string
+	for _, f := range feeds {
+		if len(f.Tags) == 0 {
+			g, ok := byTag[""]
+			if !ok {
+				g = &feedGroup{Name: store.ReservedTagUntagged, Label: "Untagged", Slug: "untagged"}
+				byTag[""] = g
+				order = append(order, "")
+			}
+			g.Feeds = append(g.Feeds, f)
+			g.Unread += f.Unread
+			continue
+		}
+		for _, t := range f.Tags {
+			g, ok := byTag[t]
+			if !ok {
+				g = &feedGroup{Name: t, Label: t, Slug: tagSlug(t)}
+				byTag[t] = g
+				order = append(order, t)
+			}
+			g.Feeds = append(g.Feeds, f)
+			g.Unread += f.Unread
+		}
+	}
+	// Sort: real tags alpha, Untagged always last.
+	sort.SliceStable(order, func(i, j int) bool {
+		if order[i] == "" {
+			return false
+		}
+		if order[j] == "" {
+			return true
+		}
+		return strings.ToLower(order[i]) < strings.ToLower(order[j])
+	})
+	out := make([]feedGroup, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byTag[k])
+	}
+	return out
 }
 
 type feedEntry struct {
@@ -415,6 +564,7 @@ type entryListData struct {
 	UnreadOnly  bool   // when true, Entries has been filtered to unread
 	UnreadCount int    // unread count for this scope (pre-filter)
 	FeedTags    []string
+	AllTags     []string // every tag across all feeds, for the add-tag datalist
 }
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -438,7 +588,8 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	unreadOnly := r.URL.Query().Get("unread") == "1"
+	unreadOnly := effectiveUnreadOnly(r)
+	writeUnreadCookie(w, r, s.Secure)
 	entries := make([]feedEntry, 0, len(es))
 	unreadCount := 0
 	for _, e := range es {
@@ -468,6 +619,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		UnreadOnly:  unreadOnly,
 		UnreadCount: unreadCount,
 		FeedTags:    feed.Tags,
+		AllTags:     op.AllTags(),
 	})
 }
 
@@ -610,7 +762,8 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 	_ = s.pages["feed"].ExecuteTemplate(w, "tagchips", struct {
 		ScopeID  string
 		FeedTags []string
-	}{u, f.Tags})
+		AllTags  []string
+	}{u, f.Tags, op.AllTags()})
 }
 
 // handleFeedRemove unsubscribes.
@@ -681,7 +834,9 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		RelRedirect(w, r, "./?unread=1", http.StatusSeeOther)
+		// Land back on the feed and let the user's persisted
+		// "unread only" choice (or the default) decide the view.
+		RelRedirect(w, r, "./", http.StatusSeeOther)
 	case "all":
 		for _, f := range op.Feeds {
 			if err := mark(f.XMLURL); err != nil {

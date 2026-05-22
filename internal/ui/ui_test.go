@@ -142,7 +142,10 @@ func TestRequireSessionRedirects(t *testing.T) {
 func TestHome(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
 	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
-	w := do(mux, req("GET", "/ui/", tok, nil))
+	// Home now defaults to "unread only", which would hide a feed
+	// with no entries. Pass ?unread=0 to exercise the show-all path
+	// where the seeded feed is visible.
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "X") {
 		t.Fatalf("home: %d %s", w.Code, w.Body.String())
 	}
@@ -492,11 +495,10 @@ func TestMarkAllReadFeed(t *testing.T) {
 		t.Fatalf("code=%d", w.Code)
 	}
 	// After marking a feed read, send the user back to the feeds list
-	// (unread-filtered) so they keep walking down the queue rather than
-	// staring at the feed they just cleared. The Location is a relative
-	// reference: from POST /ui/mark-all-read, "./?unread=1" resolves
-	// against the request URI back up to /ui/?unread=1.
-	if loc := w.Header().Get("Location"); loc != "./?unread=1" {
+	// and let their persisted "unread only" choice (or the default)
+	// decide the view — keep walking the queue rather than re-pinning
+	// the filter on every action.
+	if loc := w.Header().Get("Location"); loc != "./" {
 		t.Fatalf("redirect=%q", loc)
 	}
 	for _, e := range mustList(t, st, u) {
@@ -1200,20 +1202,33 @@ func TestHomeUnreadFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = srv
-	// Without filter: both feeds + (1 unread).
+	// Default view is "show unread only" → only Hot is visible. The
+	// toggle pill is in its active state and points at ?unread=0.
 	w := do(mux, req("GET", "/ui/", tok, nil))
 	body := w.Body.String()
+	if strings.Contains(body, "Empty") {
+		t.Fatalf("Empty should be filtered out by default unread-only view: %s", body)
+	}
+	if !strings.Contains(body, "Hot") {
+		t.Fatalf("Hot should be visible in default view: %s", body)
+	}
+	if !strings.Contains(body, "unread only (1) ×") {
+		t.Fatalf("expected active filter pill by default: %s", body)
+	}
+	// Explicit "show all" via ?unread=0 reveals Empty too.
+	w = do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	body = w.Body.String()
 	if !strings.Contains(body, "Empty") || !strings.Contains(body, "Hot") {
-		t.Fatalf("expected both feeds in default view: %s", body)
+		t.Fatalf("expected both feeds with unread=0: %s", body)
 	}
 	if !strings.Contains(body, "show unread only (1)") {
 		t.Fatalf("expected toggle to say (1): %s", body)
 	}
-	// With filter: only Hot.
+	// Explicit ?unread=1 also shows the active pill.
 	w = do(mux, req("GET", "/ui/?unread=1", tok, nil))
 	body = w.Body.String()
 	if strings.Contains(body, "Empty") {
-		t.Fatalf("Empty should be filtered out: %s", body)
+		t.Fatalf("Empty should be filtered out with unread=1: %s", body)
 	}
 	if !strings.Contains(body, "Hot") {
 		t.Fatalf("Hot should still be there: %s", body)
@@ -1526,10 +1541,19 @@ func TestRelRedirectAbsolutePathPanics(t *testing.T) {
 // prefix, the client lands somewhere other than where this test
 // expects and the assertion fires.
 func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
-	_, mux, _, op, _, _ := fixture(t)
-	// Seed a feed so the post-login home page renders something we
-	// can assert on (rather than the "no feeds yet" empty state).
+	_, mux, st, op, _, _ := fixture(t)
+	// Seed a feed with one unread entry — the default home view is
+	// "show unread only", which would hide a feed with no entries.
 	op.op.Feeds = []store.Feed{{XMLURL: "https://demo.example/feed", Title: "Demo"}}
+	{
+		fh := store.FeedHash("https://demo.example/feed")
+		now := time.Now()
+		if _, err := st.AppendEntries(fh, []store.Entry{
+			{GUID: "g1", Title: "T", Published: now, FetchedAt: now},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Mirror cmd/harborrs/main.go: GET / under the UI mux redirects
 	// to a relative "ui/" so the front-door redirect also rides any
@@ -1657,8 +1681,10 @@ func TestHomeSidebarAndTagFilter(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "all caught up") {
 		t.Fatalf("expected caught-up empty state: %s", w.Body.String())
 	}
-	// empty tag filter (no matches) when tag missing
-	w = do(mux, req("GET", "/ui/?tag=zzz", tok, nil))
+	// empty tag filter (no matches) when tag missing. With
+	// unread-only on, the "all caught up" branch wins, so test the
+	// real no-match case with ?unread=0.
+	w = do(mux, req("GET", "/ui/?unread=0&tag=zzz", tok, nil))
 	if !strings.Contains(w.Body.String(), "no feeds in this view") {
 		t.Fatalf("expected empty-tag-view: %s", w.Body.String())
 	}
@@ -1880,5 +1906,256 @@ func TestFooterHiddenWhenVersionEmpty(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "site-footer") {
 		t.Fatalf("footer should be hidden when Version unset: %s", w.Body.String())
+	}
+}
+
+// ---- new UI features (icons, persistent unread filter, tag groups,
+//      hover-only chip remove, datalist suggestions) ------------------
+
+// TestEntryRowUsesIconButtons confirms the read/star buttons render as
+// icon glyphs with accessible labels rather than text words.
+func TestEntryRowUsesIconButtons(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	w := do(mux, req("GET", "/ui/feed?id="+url.QueryEscape(u), tok, nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`class="readbtn icon"`,
+		`class="starbtn icon"`,
+		`aria-label="mark read"`,
+		`aria-label="star"`,
+		`>●<`, // unread glyph
+		`>☆<`, // not-starred glyph
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in feed page: %s", want, body)
+		}
+	}
+}
+
+// TestHomeDefaultsToUnreadOnly proves the default home view filters
+// to unread feeds when neither ?unread= nor the cookie is set.
+func TestHomeDefaultsToUnreadOnly(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "Alpha"},
+		{XMLURL: "https://b/feed", Title: "Bravo"},
+	}
+	// Only Alpha has an unread entry.
+	now := time.Now()
+	st.AppendEntries(store.FeedHash("https://a/feed"), []store.Entry{
+		{GUID: "g1", Title: "T", Published: now, FetchedAt: now},
+	})
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "Alpha") {
+		t.Fatalf("Alpha must be visible by default: %s", body)
+	}
+	if strings.Contains(body, "Bravo") {
+		t.Fatalf("Bravo (no unread) must be hidden by default: %s", body)
+	}
+	if !strings.Contains(body, `class="filter active"`) {
+		t.Fatalf("filter pill must render active by default: %s", body)
+	}
+}
+
+// TestUnreadCookiePersistsAcrossPages confirms a click on the toggle
+// pill (which carries ?unread=0/1) writes a cookie that subsequent
+// plain navigations honour without the query param.
+func TestUnreadCookiePersistsAcrossPages(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "Alpha"},
+		{XMLURL: "https://b/feed", Title: "Bravo"},
+	}
+	now := time.Now()
+	st.AppendEntries(store.FeedHash("https://a/feed"), []store.Entry{
+		{GUID: "g1", Title: "T", Published: now, FetchedAt: now},
+	})
+	// 1) Visit ?unread=0 to flip the choice off.
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	cookies := w.Result().Cookies()
+	var pref *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "h_unread" {
+			pref = c
+		}
+	}
+	if pref == nil || pref.Value != "0" {
+		t.Fatalf("expected h_unread=0 cookie, got %v", cookies)
+	}
+	// 2) A plain navigation with the cookie attached must show all
+	//    feeds (the persisted "0" wins over the default "1").
+	r := req("GET", "/ui/", tok, nil)
+	r.AddCookie(pref)
+	w = do(mux, r)
+	body := w.Body.String()
+	if !strings.Contains(body, "Bravo") {
+		t.Fatalf("cookie=0 should reveal Bravo: %s", body)
+	}
+	// 3) Per-feed page must also pick up the persisted choice (it
+	//    means: show all entries in the feed by default).
+	r = req("GET", "/ui/feed?id="+url.QueryEscape("https://a/feed"), tok, nil)
+	r.AddCookie(pref)
+	w = do(mux, r)
+	body = w.Body.String()
+	if !strings.Contains(body, "show unread only") {
+		t.Fatalf("per-feed pill should be off (offer to turn on): %s", body)
+	}
+}
+
+// TestHomeFeedGroupsByTag confirms feeds appear under each of their
+// tags, with an Untagged trailing group and a per-group collapse
+// toggle. Feeds with multiple tags duplicate across groups.
+func TestHomeFeedGroupsByTag(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "Alpha", Tags: []string{"tech"}},
+		{XMLURL: "https://b/feed", Title: "Bravo", Tags: []string{"tech", "daily"}},
+		{XMLURL: "https://c/feed", Title: "Charlie"}, // untagged
+	}
+	now := time.Now()
+	for _, f := range op.op.Feeds {
+		st.AppendEntries(store.FeedHash(f.XMLURL), []store.Entry{
+			{GUID: "g-" + f.XMLURL, Title: "T", Published: now, FetchedAt: now},
+		})
+	}
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	// Three group headers.
+	for _, want := range []string{
+		`data-tag="tech"`,
+		`data-tag="daily"`,
+		`data-tag="__untagged__"`,
+		`class="feed-group-toggle"`,
+		`aria-controls="grp-tech"`,
+		`aria-controls="grp-daily"`,
+		`aria-controls="grp-untagged"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in grouped home: %s", want, body)
+		}
+	}
+	// Bravo carries both tech and daily → must appear twice.
+	if n := strings.Count(body, `>Bravo</a>`); n != 2 {
+		t.Fatalf("Bravo should appear under both tags exactly twice, got %d: %s", n, body)
+	}
+	// Charlie only in Untagged.
+	if n := strings.Count(body, `>Charlie</a>`); n != 1 {
+		t.Fatalf("Charlie should appear exactly once (Untagged), got %d", n)
+	}
+}
+
+// TestTagChipsHaveDatalistOfAllTags confirms the add-tag <input> is
+// backed by a <datalist> populated from every tag the OPML knows
+// about — so the user can autocomplete an existing tag or type a new
+// one freely.
+func TestTagChipsHaveDatalistOfAllTags(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "Alpha", Tags: []string{"tech", "weekly"}},
+		{XMLURL: "https://b/feed", Title: "Bravo", Tags: []string{"news"}},
+	}
+	w := do(mux, req("GET", "/ui/feed?id="+url.QueryEscape("https://a/feed"), tok, nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<datalist id="all-tags-https://a/feed">`,
+		`<option value="tech">`,
+		`<option value="weekly">`,
+		`<option value="news">`,
+		`list="all-tags-https://a/feed"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("datalist missing %q: %s", want, body)
+		}
+	}
+	// Re-renders from POST /ui/feed/tag must also include the datalist
+	// (so the add-tag field stays useful after edits).
+	form := url.Values{"url": {"https://a/feed"}, "add": {"extra"}}
+	r := req("POST", "/ui/feed/tag", tok, form)
+	w = do(mux, r)
+	body = w.Body.String()
+	if !strings.Contains(body, `<datalist id="all-tags-https://a/feed">`) {
+		t.Fatalf("tagchips POST response missing datalist: %s", body)
+	}
+	if !strings.Contains(body, `<option value="extra">`) {
+		t.Fatalf("expected freshly-added tag in datalist: %s", body)
+	}
+}
+
+// TestTagChipRemoveIsLessProminent confirms the per-chip × button
+// carries the CSS hook (.tagchip-x) we rely on to hide-until-hover.
+// The "less prominent" framing is enforced by style.css, but the
+// markup contract is what tests can pin down.
+func TestTagChipRemoveIsLessProminent(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}}}
+	w := do(mux, req("GET", "/ui/feed?id="+url.QueryEscape("https://a/feed"), tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, `class="tagchip-x"`) {
+		t.Fatalf("missing tagchip-x class hook: %s", body)
+	}
+	if !strings.Contains(body, `aria-label="remove tag tech"`) {
+		t.Fatalf("missing accessible label on remove control: %s", body)
+	}
+}
+
+// TestTagSlug pins the DOM-id slug derivation. The empty-string and
+// fully-non-alnum cases are reachable from data sources outside the
+// hot path (custom OPML, hypothetical empty tag) and must yield
+// stable, addressable ids.
+func TestTagSlug(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "all"},
+		{"tech", "tech"},
+		{"News & Stuff", "News-Stuff"},
+		{"a/b/c", "a-b-c"},
+		{"--", "tag"},
+		{"   ", "tag"},
+	}
+	for _, c := range cases {
+		if got := tagSlug(c.in); got != c.want {
+			t.Errorf("tagSlug(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBuildFeedGroupsSortsUntaggedLast feeds the grouper a mix that
+// forces both branches of the sort comparator to fire (untagged on
+// either side of the comparison).
+func TestBuildFeedGroupsSortsUntaggedLast(t *testing.T) {
+	feeds := []homeFeed{
+		{Title: "Mike", URL: "m"}, // untagged → inserted first
+		{Title: "Zed", URL: "z", Tags: []string{"zeta"}},
+		{Title: "Anne", URL: "a", Tags: []string{"alpha"}},
+	}
+	gs := buildFeedGroups(feeds, "")
+	if len(gs) != 3 {
+		t.Fatalf("want 3 groups, got %d", len(gs))
+	}
+	if gs[0].Label != "alpha" || gs[1].Label != "zeta" || gs[2].Label != "Untagged" {
+		t.Fatalf("order wrong: %q %q %q", gs[0].Label, gs[1].Label, gs[2].Label)
+	}
+}
+
+// TestWriteUnreadCookieNoopWhenAbsent confirms writeUnreadCookie is a
+// no-op when the request URL carries no ?unread= param, so plain
+// navigations don't overwrite the user's persisted choice.
+func TestWriteUnreadCookieNoopWhenAbsent(t *testing.T) {
+	r := httptest.NewRequest("GET", "/ui/", nil)
+	w := httptest.NewRecorder()
+	writeUnreadCookie(w, r, false)
+	if cs := w.Result().Cookies(); len(cs) != 0 {
+		t.Fatalf("expected no cookies set, got %v", cs)
+	}
+	// Bad value also a no-op.
+	r = httptest.NewRequest("GET", "/ui/?unread=garbage", nil)
+	w = httptest.NewRecorder()
+	writeUnreadCookie(w, r, false)
+	if cs := w.Result().Cookies(); len(cs) != 0 {
+		t.Fatalf("garbage value should not set cookie, got %v", cs)
 	}
 }

@@ -5,11 +5,11 @@
 <h1>{{.Heading}}{{if .ShowMarkAll}} <form method="POST" action="mark-all-read?scope={{.Scope}}{{if .ScopeID}}&id={{.ScopeID}}{{end}}" class="markall-form"><button type="submit" class="markall">mark all read</button></form>{{end}}{{if and (eq .Scope "feed") .ScopeID}} <form method="POST" action="feed/remove" class="unsubscribe-form" onsubmit="return confirm('unsubscribe from this feed?');"><input type="hidden" name="url" value="{{.ScopeID}}"><button type="submit" class="unsubscribe">unsubscribe</button></form>{{end}}</h1>
 {{if eq .Scope "feed"}}
 <div class="home-actions">
-{{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}" class="filter active">unread only ({{.UnreadCount}}) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only ({{.UnreadCount}})</a>{{end}}
+{{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}&unread=0" class="filter active">unread only ({{.UnreadCount}}) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only ({{.UnreadCount}})</a>{{end}}
 </div>
 <div id="feed-tags-{{.ScopeID}}">{{template "tagchips" .}}</div>
 {{end}}
-{{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}
+{{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}&unread=0">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}
 <ul class="entries">
 {{range .Entries}}{{template "entryrow" .}}{{end}}
 </ul>
@@ -17,21 +17,24 @@
 {{end}}
 
 {{define "entryrow"}}
-<li id="entry-{{.Hash}}" class="entry {{if .Read}}read{{end}}{{if .Starred}} starred{{end}}">
+<li id="entry-{{.Hash}}" class="entry {{if .Read}}read{{else}}unread{{end}}{{if .Starred}} starred{{end}}">
+<button class="readbtn icon" aria-label="{{if .Read}}mark unread{{else}}mark read{{end}}" title="{{if .Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Read}}○{{else}}●{{end}}</span></button>
 <a href="entry?id={{.Hash}}">{{.Title}}</a>
 {{if .FeedTitle}}<small class="feed-tag">{{.FeedTitle}}</small>{{end}}
 {{if .PublishedFmt}}<time class="date" datetime="{{.Published.Format "2006-01-02T15:04:05Z07:00"}}" title="{{.Published.Format "2006-01-02 15:04 MST"}}">{{.PublishedFmt}}</time>{{end}}
-<button class="readbtn" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML">{{if .Read}}mark unread{{else}}mark read{{end}}</button>
-<button class="starbtn" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML">{{if .Starred}}unstar{{else}}star{{end}}</button>
+<button class="starbtn icon" aria-label="{{if .Starred}}unstar{{else}}star{{end}}" title="{{if .Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Starred}}★{{else}}☆{{end}}</span></button>
 </li>
 {{end}}
 
 {{define "tagchips"}}
 <div class="tagchips">
-{{range .FeedTags}}<span class="tagchip">{{.}} <form class="tagchip-rm" hx-post="feed/tag" hx-target="#feed-tags-{{$.ScopeID}}" hx-swap="innerHTML"><input type="hidden" name="url" value="{{$.ScopeID}}"><input type="hidden" name="remove" value="{{.}}"><button class="tagchip-x" type="submit">×</button></form></span>{{end}}
+{{range .FeedTags}}<span class="tagchip">{{.}}<form class="tagchip-rm" hx-post="feed/tag" hx-target="#feed-tags-{{$.ScopeID}}" hx-swap="innerHTML"><input type="hidden" name="url" value="{{$.ScopeID}}"><input type="hidden" name="remove" value="{{.}}"><button class="tagchip-x" type="submit" aria-label="remove tag {{.}}" title="remove tag">×</button></form></span>{{end}}
 <form class="tagadd" hx-post="feed/tag" hx-target="#feed-tags-{{.ScopeID}}" hx-swap="innerHTML">
 <input type="hidden" name="url" value="{{.ScopeID}}">
-<input type="text" name="add" placeholder="+ add tag" required>
+<input type="text" name="add" placeholder="+ add tag" list="all-tags-{{.ScopeID}}" autocomplete="off" required>
+<datalist id="all-tags-{{.ScopeID}}">
+{{range .AllTags}}<option value="{{.}}"></option>{{end}}
+</datalist>
 </form>
 </div>
 {{end}}

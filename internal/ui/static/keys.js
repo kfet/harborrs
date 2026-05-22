@@ -170,12 +170,26 @@
   // precedence; ul.feeds (home page) is the fallback. A "row" is just
   // an <li> with a primary <a> we can navigate to on Enter.
   const entryList = $("ul.entries");
-  const feedList  = $("ul.feeds");
-  const list = entryList || feedList;
+  const feedLists = $$("ul.feeds");
+  const list = entryList || (feedLists.length ? feedLists[0] : null);
   const isEntryList = !!entryList;
 
   if (list) {
-    const rows = () => $$("li", list).filter((li) => !li.classList.contains("empty"));
+    const rows = () => {
+      if (isEntryList) {
+        return $$("li", list).filter((li) => !li.classList.contains("empty"));
+      }
+      // Home page: collect rows across every visible ul.feeds (one per
+      // tag group). Skip rows inside a hidden (collapsed) ul.
+      const out = [];
+      feedLists.forEach((ul) => {
+        if (ul.hasAttribute("hidden")) return;
+        $$("li", ul).forEach((li) => {
+          if (!li.classList.contains("empty")) out.push(li);
+        });
+      });
+      return out;
+    };
     let idx = -1;
     const focusRow = (i) => {
       const all = rows();
@@ -299,4 +313,41 @@
       }
     });
   }
+})();
+
+// ---- collapsible tag groups on the home page ---------------------
+// Each .feed-group has a button.feed-group-toggle whose aria-controls
+// points at a ul.feeds id. We persist per-tag collapse state in
+// localStorage so the user's view sticks across navigations.
+(function () {
+  "use strict";
+  var groups = document.querySelectorAll(".feed-group");
+  if (!groups.length) return;
+  var KEY = "harborrs.collapsedTags";
+  var collapsed = {};
+  try {
+    var raw = localStorage.getItem(KEY);
+    if (raw) collapsed = JSON.parse(raw) || {};
+  } catch (e) { collapsed = {}; }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(collapsed)); } catch (e) {}
+  }
+  groups.forEach(function (g) {
+    var tag = g.dataset.tag || "";
+    var btn = g.querySelector(".feed-group-toggle");
+    var ul = g.querySelector("ul.feeds");
+    if (!btn || !ul) return;
+    function apply(isOpen) {
+      btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      if (isOpen) ul.removeAttribute("hidden");
+      else ul.setAttribute("hidden", "");
+    }
+    apply(!collapsed[tag]);
+    btn.addEventListener("click", function () {
+      var nowOpen = btn.getAttribute("aria-expanded") !== "true";
+      apply(nowOpen);
+      if (nowOpen) delete collapsed[tag]; else collapsed[tag] = true;
+      save();
+    });
+  });
 })();
