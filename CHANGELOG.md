@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-05-22
+
+### Fixed
+
+- `stream/items/ids` now encodes empty result sets as `"itemRefs":[]`
+  instead of `null`, preserving the array shape for Reeder and other
+  strict Google Reader clients when `ot` / `nt` filters match no items.
+
 ## [0.4.6] - 2026-05-22
 
 ### Added
