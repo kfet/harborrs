@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-05-22
+
 ### Added
 
 - Lightweight Google Reader / Reeder compatibility contract tests in
