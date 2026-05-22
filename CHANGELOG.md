@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Lightweight Google Reader / Reeder compatibility contract tests in
+  `internal/reader/compat_test.go`, consolidated under one
+  `TestGReaderCompat` umbrella with named sub-tests
+  (`item-id-16-hex/contents`, `item-id-16-hex+longid-int64/items-ids`,
+  `longid-roundtrip/highbit-negative`,
+  `accept-legacy-20hex+decimal-longid/edit-tag`,
+  `item-categories/reading-list+label`, `direct-stream-ids/items-ids`,
+  `preserve-i-order/items-contents`, `xt-filter/excludes-read`,
+  `it-filter/selects-starred`, `continuation-paging/items-ids`,
+  `unread-count-newest/per-row+global+output-json`). Failures read as
+  contract violations, not generic test diffs. Pure Go + `httptest`
+  through the real `Routes` handler; no containers, no FreshRSS
+  runtime, no external network. Runs under the normal `make all`.
+
 ## [0.4.5] - 2026-05-21
 
 ### Fixed
