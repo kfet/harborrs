@@ -321,6 +321,12 @@ func TestGReaderCompat(t *testing.T) {
 		if got != want {
 			t.Errorf("compat ot-nt-filters: got %d refs, want %d item between ot and nt; body=%s", got, want, w.Body.String())
 		}
+
+		future := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+url.QueryEscape("feed/"+u)+
+			"&ot="+strconv.FormatInt(base.Add(24*time.Hour).Unix(), 10), tok, nil)
+		if !strings.Contains(future.Body.String(), `"itemRefs":[]`) {
+			t.Errorf("compat ot-nt-filters: empty result must encode itemRefs as [], body=%s", future.Body.String())
+		}
 	})
 
 	t.Run("it-filter/selects-starred", func(t *testing.T) {

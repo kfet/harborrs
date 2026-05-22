@@ -811,7 +811,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	out := struct {
 		ItemRefs     []ref  `json:"itemRefs"`
 		Continuation string `json:"continuation,omitempty"`
-	}{Continuation: cont}
+	}{ItemRefs: []ref{}, Continuation: cont}
 	for _, e := range entries[offset:hi] {
 		longID := itemLongID(e.Hash)
 		out.ItemRefs = append(out.ItemRefs, ref{
