@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-05-22
+
+### Fixed
+
+- Reader API item timestamp fields now use the entry's published time
+  for `published`, `updated`, `crawlTimeMsec`, and `timestampUsec`
+  (falling back to fetch time only when published time is absent).
+  Reeder appears to display/group articles from `timestampUsec`; using
+  fetch time there made entries fetched in the same refresh appear with
+  identical or batch-grouped dates.
+
 ## [0.4.7] - 2026-05-22
 
 ### Fixed
