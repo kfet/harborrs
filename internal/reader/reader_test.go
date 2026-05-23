@@ -613,6 +613,12 @@ func TestReaderTimeHelpers(t *testing.T) {
 	if got := entrySyncTime(store.Entry{Published: fetched, FetchedAt: pub}); !got.Equal(fetched) {
 		t.Fatalf("published-wins got %v want %v", got, fetched)
 	}
+	if got := entryDisplayTime(store.Entry{Published: pub, FetchedAt: fetched}); !got.Equal(pub) {
+		t.Fatalf("display published got %v want %v", got, pub)
+	}
+	if got := entryDisplayTime(store.Entry{FetchedAt: fetched}); !got.Equal(fetched) {
+		t.Fatalf("display fallback got %v want %v", got, fetched)
+	}
 	if got := parseReaderUnixTime("bad"); !got.IsZero() {
 		t.Fatalf("bad parse got %v", got)
 	}

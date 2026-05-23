@@ -599,6 +599,13 @@ func entrySyncTime(e store.Entry) time.Time {
 	return e.Published
 }
 
+func entryDisplayTime(e store.Entry) time.Time {
+	if !e.Published.IsZero() {
+		return e.Published
+	}
+	return e.FetchedAt
+}
+
 func parseReaderUnixTime(v string) time.Time {
 	i, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || i <= 0 {
@@ -722,7 +729,8 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 		if st.Starred {
 			cats = append(cats, stateStarredID)
 		}
-		ts := e.Published.Unix()
+		displayTime := entryDisplayTime(e)
+		ts := displayTime.Unix()
 		body := e.Content
 		if body == "" {
 			body = e.Summary
@@ -734,8 +742,8 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 			Title:         e.Title,
 			Published:     ts,
 			Updated:       ts,
-			CrawlTimeMsec: strconv.FormatInt(e.FetchedAt.UnixMilli(), 10),
-			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
+			CrawlTimeMsec: strconv.FormatInt(displayTime.UnixMilli(), 10),
+			TimestampUsec: strconv.FormatInt(displayTime.UnixMicro(), 10),
 			Author:        e.Author,
 			Alternate:     []streamLink{{HREF: e.Link, Type: "text/html"}},
 			Summary:       streamContent{Content: body},
@@ -823,7 +831,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 			ID:            longID,
 			LongID:        longID,
 			DirectStreams: directStreams[e.FeedHash],
-			TimestampUsec: strconv.FormatInt(e.FetchedAt.UnixMicro(), 10),
+			TimestampUsec: strconv.FormatInt(entryDisplayTime(e).UnixMicro(), 10),
 		})
 	}
 	writeJSON(w, out)

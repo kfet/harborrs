@@ -77,9 +77,19 @@ func assertSignedInt64(t *testing.T, contract, s string) {
 // to exercise just the contracts (without the fault-injection /
 // coverage-driving tests in reader_test.go).
 func TestGReaderCompat(t *testing.T) {
-	t.Run("item-id-16-hex/contents", func(t *testing.T) {
+	t.Run("item-id-16-hex+published-timestamps/contents", func(t *testing.T) {
 		_, mux, tok, op, st := fixture(t)
 		u := seedFeed(t, op, st, 2, "F")
+		es, err := st.ListEntries(store.FeedHash(u))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantUsec := map[string]string{}
+		wantMsec := map[string]string{}
+		for _, e := range es {
+			wantUsec[itemID(e.Hash)] = strconv.FormatInt(e.Published.UnixMicro(), 10)
+			wantMsec[itemID(e.Hash)] = strconv.FormatInt(e.Published.UnixMilli(), 10)
+		}
 		w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u, tok, nil)
 		if w.Code != 200 {
 			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
@@ -93,12 +103,26 @@ func TestGReaderCompat(t *testing.T) {
 		}
 		for _, it := range resp.Items {
 			assertItemHex16(t, "item-id-16-hex/contents", it.ID)
+			if it.TimestampUsec != wantUsec[it.ID] {
+				t.Errorf("compat published-timestamps/contents: item %s timestampUsec=%q, want published %q", it.ID, it.TimestampUsec, wantUsec[it.ID])
+			}
+			if it.CrawlTimeMsec != wantMsec[it.ID] {
+				t.Errorf("compat published-timestamps/contents: item %s crawlTimeMsec=%q, want published %q", it.ID, it.CrawlTimeMsec, wantMsec[it.ID])
+			}
 		}
 	})
 
-	t.Run("item-ref-decimal+longid-int64/items-ids", func(t *testing.T) {
+	t.Run("item-ref-decimal+longid-int64+published-timestamps/items-ids", func(t *testing.T) {
 		_, mux, tok, op, st := fixture(t)
-		seedFeed(t, op, st, 3, "F")
+		u := seedFeed(t, op, st, 3, "F")
+		es, err := st.ListEntries(store.FeedHash(u))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantUsec := map[string]string{}
+		for _, e := range es {
+			wantUsec[itemLongID(e.Hash)] = strconv.FormatInt(e.Published.UnixMicro(), 10)
+		}
 		w := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+streamReadingList, tok, nil)
 		if w.Code != 200 {
 			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
@@ -123,6 +147,9 @@ func TestGReaderCompat(t *testing.T) {
 			}
 			assertSignedInt64(t, "longid-int64", r.LongID)
 			assertSignedInt64(t, "timestampUsec-int64", r.TimestampUsec)
+			if r.TimestampUsec != wantUsec[r.ID] {
+				t.Errorf("compat published-timestamps/items-ids: ref %s timestampUsec=%q, want published %q", r.ID, r.TimestampUsec, wantUsec[r.ID])
+			}
 		}
 	})
 
