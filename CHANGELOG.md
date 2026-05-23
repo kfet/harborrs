@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.10] - 2026-05-22
+
 ### Added
 
 - Web UI: icon-style read/star buttons on entry rows and entry detail
