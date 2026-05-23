@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-05-23
+
+### Fixed
+
+- Restored `crawlTimeMsec` to mean actual fetch/crawl time while keeping
+  `timestampUsec` aligned with article published time for Reeder display
+  ordering.
+
 ## [0.4.8] - 2026-05-22
 
 ### Fixed
