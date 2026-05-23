@@ -742,7 +742,7 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 			Title:         e.Title,
 			Published:     ts,
 			Updated:       ts,
-			CrawlTimeMsec: strconv.FormatInt(displayTime.UnixMilli(), 10),
+			CrawlTimeMsec: strconv.FormatInt(e.FetchedAt.UnixMilli(), 10),
 			TimestampUsec: strconv.FormatInt(displayTime.UnixMicro(), 10),
 			Author:        e.Author,
 			Alternate:     []streamLink{{HREF: e.Link, Type: "text/html"}},

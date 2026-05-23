@@ -85,10 +85,10 @@ func TestGReaderCompat(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantUsec := map[string]string{}
-		wantMsec := map[string]string{}
+		wantCrawlMsec := map[string]string{}
 		for _, e := range es {
 			wantUsec[itemID(e.Hash)] = strconv.FormatInt(e.Published.UnixMicro(), 10)
-			wantMsec[itemID(e.Hash)] = strconv.FormatInt(e.Published.UnixMilli(), 10)
+			wantCrawlMsec[itemID(e.Hash)] = strconv.FormatInt(e.FetchedAt.UnixMilli(), 10)
 		}
 		w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u, tok, nil)
 		if w.Code != 200 {
@@ -106,8 +106,8 @@ func TestGReaderCompat(t *testing.T) {
 			if it.TimestampUsec != wantUsec[it.ID] {
 				t.Errorf("compat published-timestamps/contents: item %s timestampUsec=%q, want published %q", it.ID, it.TimestampUsec, wantUsec[it.ID])
 			}
-			if it.CrawlTimeMsec != wantMsec[it.ID] {
-				t.Errorf("compat published-timestamps/contents: item %s crawlTimeMsec=%q, want published %q", it.ID, it.CrawlTimeMsec, wantMsec[it.ID])
+			if it.CrawlTimeMsec != wantCrawlMsec[it.ID] {
+				t.Errorf("compat published-timestamps/contents: item %s crawlTimeMsec=%q, want fetched/crawl %q", it.ID, it.CrawlTimeMsec, wantCrawlMsec[it.ID])
 			}
 		}
 	})
