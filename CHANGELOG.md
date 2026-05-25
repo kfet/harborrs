@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-05-24
+
 ### Fixed
 
 - Reader API: `stream/items/ids?s=user/-/state/com.google/{read,starred}`
