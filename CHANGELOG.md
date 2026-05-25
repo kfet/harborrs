@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-05-24
+
 ### Changed
 
 - Reader API (Google Reader / FreshRSS protocol surface): per-call
