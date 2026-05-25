@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Reader API perf-regression guard (`TestPerfBudget` in
+  `internal/reader/perf_guard_test.go`): rebuilds the ~60-feed ×
+  ~33-entry fixture from `perf_test.go` deterministically and asserts
+  the measured ns/op for the Reeder-like sync shape
+  (12× `stream/items/ids` + 6× `stream/items/contents` + 1×
+  `unread-count`) and an all-feeds `IndexedEntries` sweep stay under
+  budget (25 ms and 0.5 ms respectively — ~3× / ~7× the v0.4.11 M1
+  baseline). Trips if anyone reintroduces a per-request disk scan or
+  bypasses the in-memory entry index. Auto-skips under `-short`,
+  `-race`, or on architectures other than amd64/arm64.
+
 ## [0.4.12] - 2026-05-24
 
 ### Fixed
