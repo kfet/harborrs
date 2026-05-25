@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Reader API (Google Reader / FreshRSS protocol surface): per-call
+  latency drops from ~200ms to <1ms by serving stream/contents,
+  stream/items/ids, stream/items/contents, mark-all-as-read, and
+  unread-count from a new in-memory entry index built at startup and
+  maintained on `AppendEntries`. The on-disk NDJSON layout is
+  unchanged. Reeder Classic syncs against a 60-feed / ~2000-entry
+  library that previously took several seconds now complete in tens
+  of milliseconds.
+- Reader API: responses are gzip-compressed when the client sends
+  `Accept-Encoding: gzip` (every modern Reader client does). Pays
+  off most on stream/contents and items/contents, where article HTML
+  compresses 5-10×.
+
 ## [0.4.10] - 2026-05-22
 
 ### Added

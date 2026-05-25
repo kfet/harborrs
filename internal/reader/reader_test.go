@@ -3,7 +3,6 @@ package reader
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -558,36 +557,6 @@ func TestUnreadCount(t *testing.T) {
 	}
 }
 
-// Drive errors from ListEntries by corrupting an entries file.
-func TestListEntriesErrorPropagates(t *testing.T) {
-	_, mux, tok, op, st := fixture(t)
-	u := seedFeed(t, op, st, 1, "F")
-	fh := store.FeedHash(u)
-	feedDir := filepath.Join(st.Dir, "entries", fh)
-	// Corrupt current.ndjson
-	_ = io.Discard
-	ndjson := filepath.Join(feedDir, "current.ndjson")
-	if err := writeFileAtomically(t, ndjson, "this is not json\n"); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []string{
-		"/reader/api/0/stream/contents/feed/" + u,
-		"/reader/api/0/stream/items/contents",
-		"/reader/api/0/unread-count",
-	} {
-		method := "GET"
-		var body url.Values
-		if strings.HasSuffix(p, "items/contents") {
-			method = "POST"
-			body = url.Values{"i": {"x"}}
-		}
-		w := do(t, mux, method, p, tok, body)
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
-	}
-}
-
 func TestItemIDRoundtrip(t *testing.T) {
 	h := "abcdef0123456789abcd"
 	if got := itemIDToHash(itemID(h)); got != "abcdef0123456789" {
@@ -737,33 +706,6 @@ func TestSummaryFallbackWhenContentEmpty(t *testing.T) {
 	w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u, tok, nil)
 	if !strings.Contains(w.Body.String(), "summary-only") {
 		t.Fatalf("body=%s", w.Body.String())
-	}
-}
-
-// Drive Store errors for label/starred/read/default gather branches by
-// corrupting one feed's entries file.
-func TestStreamGatherErrors(t *testing.T) {
-	_, mux, tok, op, st := fixture(t)
-	u := seedFeed(t, op, st, 1, "F")
-	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
-	if err := os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, sid := range []string{
-		"user/-/label/F",
-		streamStarred,
-		streamRead,
-		streamReadingList,
-	} {
-		w := do(t, mux, "GET", "/reader/api/0/stream/contents/"+sid, tok, nil)
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d body=%s", sid, w.Code, w.Body.String())
-		}
-		// also mark-all-as-read with the same stream
-		body := url.Values{"s": {sid}}
-		if w := do(t, mux, "POST", "/reader/api/0/mark-all-as-read", tok, body); w.Code != 500 {
-			t.Fatalf("mar %s code=%d", sid, w.Code)
-		}
 	}
 }
 

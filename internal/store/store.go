@@ -61,6 +61,26 @@ type Store struct {
 	liveR int                   // live read entries (read=true)
 	liveS int                   // live starred entries (starred=true)
 	now   func() time.Time
+
+	// In-memory entry index. Built at Open and maintained on
+	// AppendEntries. Lets Reader handlers skip ReadDir + ndjson reparse
+	// per request (the ~200ms-per-call hot path that made Reeder sync
+	// slow).
+	//
+	// idx[feedHash]    → entries sorted by Published descending.
+	// byHash[entryHash] → the same Entry (by-value copy).
+	//
+	// Guarded by mu (shared with state). Index callers take RLock for
+	// reads and return defensive copies, so callers that mutate the
+	// returned slice (e.g. filtering in place) cannot corrupt the cache.
+	//
+	// Consistency: AppendEntries writes to disk before taking mu to
+	// update the index, so freshly-appended entries become visible on
+	// disk a few µs before the index reflects them. Reader handlers
+	// never read disk, so from their point of view the new batch
+	// arrives atomically when the index lock is released.
+	idx    map[string][]Entry
+	byHash map[string]Entry
 }
 
 // Open opens (and lazily creates) a data dir, folding state logs.
@@ -71,7 +91,7 @@ func Open(dir string) (*Store, error) {
 	if err := migrateEntryHashes(dir); err != nil {
 		return nil, err
 	}
-	s := &Store{Dir: dir, state: map[string]EntryState{}, now: time.Now}
+	s := &Store{Dir: dir, state: map[string]EntryState{}, idx: map[string][]Entry{}, byHash: map[string]Entry{}, now: time.Now}
 	if err := s.foldLog(filepath.Join(dir, "read.log"), 'r'); err != nil {
 		return nil, err
 	}
@@ -79,7 +99,77 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	s.recountLive()
+	if err := s.buildIndex(); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// buildIndex scans every entries/<feedHash>/*.ndjson on disk and
+// populates the in-memory index. Called once at Open after migration.
+func (s *Store) buildIndex() error {
+	root := filepath.Join(s.Dir, "entries")
+	feeds, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, fd := range feeds {
+		if !fd.IsDir() {
+			continue
+		}
+		fh := fd.Name()
+		dir := filepath.Join(root, fh)
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		var list []Entry
+		for _, e := range ents {
+			if !strings.HasSuffix(e.Name(), ".ndjson") {
+				continue
+			}
+			if err := scanEntries(filepath.Join(dir, e.Name()), func(en Entry) error {
+				en.Hash = CanonicalEntryHash(en.Hash)
+				if en.FeedHash == "" {
+					en.FeedHash = fh
+				}
+				list = append(list, en)
+				s.byHash[en.Hash] = en
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].Published.After(list[j].Published)
+		})
+		s.idx[fh] = list
+	}
+	return nil
+}
+
+// IndexedEntries returns a snapshot of the in-memory entries for a feed,
+// already sorted by Published descending. The returned slice is a copy;
+// callers may filter/mutate it freely without affecting the cache.
+func (s *Store) IndexedEntries(feedHash string) []Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	src := s.idx[feedHash]
+	out := make([]Entry, len(src))
+	copy(out, src)
+	return out
+}
+
+// EntryByHash looks up an indexed entry by hash. Second return is false
+// if the hash is unknown.
+func (s *Store) EntryByHash(hash string) (Entry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.byHash[CanonicalEntryHash(hash)]
+	return e, ok
 }
 
 func (s *Store) recountLive() {
@@ -300,6 +390,19 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 			return added, err
 		}
 		added = append(added, e)
+	}
+	if len(added) > 0 {
+		s.mu.Lock()
+		list := s.idx[feedHash]
+		for _, e := range added {
+			list = append(list, e)
+			s.byHash[e.Hash] = e
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].Published.After(list[j].Published)
+		})
+		s.idx[feedHash] = list
+		s.mu.Unlock()
 	}
 	return added, nil
 }

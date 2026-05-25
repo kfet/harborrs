@@ -77,7 +77,7 @@ func (s *Server) Routes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/reader/api/0/unread-count", s.requireAuth(s.handleUnreadCount))
 
 	streamContents := s.requireAuth(s.handleStreamContents)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Intercept stream/contents directly with the raw, un-normalised
 		// path so feed-URLs with `//` survive.
 		if strings.HasPrefix(r.URL.Path, "/reader/api/0/stream/contents/") {
@@ -86,6 +86,7 @@ func (s *Server) Routes(mux *http.ServeMux) http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+	return gzipMiddleware(h)
 }
 
 // requireAuth wraps a handler with ClientLogin token verification.
@@ -461,17 +462,9 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := map[string]store.Entry{}
-	for _, f := range op.Feeds {
-		fh := store.FeedHash(f.XMLURL)
-		es, err := s.Store.ListEntries(fh)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, e := range es {
-			if want[e.Hash] {
-				found[e.Hash] = e
-			}
+	for h := range want {
+		if e, ok := s.Store.EntryByHash(h); ok {
+			found[h] = e
 		}
 	}
 	entries := make([]store.Entry, 0, len(wantOrder))
@@ -494,42 +487,29 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 		return nil, err
 	}
 	var entries []store.Entry
-	gather := func(filter func(store.Feed) bool) error {
+	gather := func(filter func(store.Feed) bool) {
 		for _, f := range op.Feeds {
 			if !filter(f) {
 				continue
 			}
 			fh := store.FeedHash(f.XMLURL)
-			es, err := s.Store.ListEntries(fh)
-			if err != nil {
-				return err
-			}
-			entries = append(entries, es...)
+			entries = append(entries, s.Store.IndexedEntries(fh)...)
 		}
-		return nil
 	}
 	switch {
 	case strings.HasPrefix(streamID, "feed/"):
 		url := strings.TrimPrefix(streamID, "feed/")
-		if err := gather(func(f store.Feed) bool { return f.XMLURL == url }); err != nil {
-			return nil, err
-		}
+		gather(func(f store.Feed) bool { return f.XMLURL == url })
 	case strings.HasPrefix(streamID, "user/-/label/"):
 		tag := strings.TrimPrefix(streamID, "user/-/label/")
-		if err := gather(func(f store.Feed) bool { return f.HasTag(tag) }); err != nil {
-			return nil, err
-		}
+		gather(func(f store.Feed) bool { return f.HasTag(tag) })
 	case streamID == streamStarred:
-		if err := gather(func(store.Feed) bool { return true }); err != nil {
-			return nil, err
-		}
+		gather(func(store.Feed) bool { return true })
 		entries = filterEntries(entries, func(e store.Entry) bool {
 			return s.Store.EntryState(e.Hash).Starred
 		})
 	case streamID == streamRead:
-		if err := gather(func(store.Feed) bool { return true }); err != nil {
-			return nil, err
-		}
+		gather(func(store.Feed) bool { return true })
 		entries = filterEntries(entries, func(e store.Entry) bool {
 			return s.Store.EntryState(e.Hash).Read
 		})
@@ -538,9 +518,7 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 		// views are expressed as reading-list/feed streams plus
 		// xt=user/-/state/com.google/read. Reeder relies on this Google
 		// Reader convention when seeding a fresh account.
-		if err := gather(func(store.Feed) bool { return true }); err != nil {
-			return nil, err
-		}
+		gather(func(store.Feed) bool { return true })
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Published.After(entries[j].Published)
@@ -928,11 +906,7 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 	var globalNewest int64
 	for _, f := range op.Feeds {
 		fh := store.FeedHash(f.XMLURL)
-		es, err := s.Store.ListEntries(fh)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		es := s.Store.IndexedEntries(fh)
 		count := 0
 		var newest int64
 		for _, e := range es {
