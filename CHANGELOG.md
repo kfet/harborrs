@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reader API: `stream/items/ids?s=user/-/state/com.google/{read,starred}`
+  now filters `ot=` / `nt=` against `EntryState.UpdatedAt` (when the
+  read or starred flag changed) instead of the entry's fetch/publish
+  time. Reeder Classic uses this endpoint as its incremental read-
+  state sync; the previous behaviour re-streamed every recently-polled
+  item on each sync and clobbered the client's own unread display
+  (observed as 18 unread instead of 795 against a 2001-entry library).
+  Content streams (`reading-list`, `feed/`, `label/`) keep their
+  publish/fetch-time semantics — that contract is unchanged.
+
+### Added
+
+- New `internal/reedercompat` package: a behaviour-only Reeder /
+  Google Reader API conformance suite, driven through the public HTTP
+  surface plus a small `Harness` the embedder supplies. Hosts the
+  previous `TestGReaderCompat` contracts plus dedicated state-stream
+  `ot`/`nt` delta-sync tests, and is designed to be lifted out into a
+  standalone OSS conformance kit.
+- E2E: explicit assertions for the state-stream `ot=` contract, so the
+  read-state delta regression class cannot slip past unit-only
+  refactors.
+
 ## [0.4.11] - 2026-05-24
 
 ### Changed

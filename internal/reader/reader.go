@@ -436,7 +436,7 @@ func (s *Server) handleStreamContents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	items = s.applyRequestFilters(items, r)
+	items = s.applyRequestFilters(items, r, streamID)
 	s.sortForRequest(items, r)
 	s.writeStreamPage(w, streamID, items, r)
 }
@@ -536,7 +536,7 @@ func filterEntries(es []store.Entry, ok func(store.Entry) bool) []store.Entry {
 	return out
 }
 
-func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.Entry {
+func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request, streamID string) []store.Entry {
 	includes := r.Form["it"]
 	excludes := r.Form["xt"]
 	var after, before time.Time
@@ -549,6 +549,19 @@ func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.
 	if len(includes) == 0 && len(excludes) == 0 && after.IsZero() && before.IsZero() {
 		return es
 	}
+	// For state streams (read / starred) the GReader contract for ot/nt
+	// is "items whose READ STATE changed in the window", not "items
+	// fetched in the window". Reeder relies on this to incrementally
+	// sync read flags — comparing against entry fetch/publish time
+	// re-streams every recently-polled item on every sync and clobbers
+	// the client's own unread display. For content streams the
+	// publish/fetch time semantics are correct and unchanged.
+	timeOf := entrySyncTime
+	if streamID == streamRead || streamID == streamStarred {
+		timeOf = func(e store.Entry) time.Time {
+			return s.Store.EntryState(e.Hash).UpdatedAt
+		}
+	}
 	return filterEntries(es, func(e store.Entry) bool {
 		for _, inc := range includes {
 			if !s.entryHasState(e, inc) {
@@ -560,10 +573,11 @@ func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request) []store.
 				return false
 			}
 		}
-		if !after.IsZero() && !entrySyncTime(e).After(after) {
+		t := timeOf(e)
+		if !after.IsZero() && !t.After(after) {
 			return false
 		}
-		if !before.IsZero() && !entrySyncTime(e).Before(before) {
+		if !before.IsZero() && !t.Before(before) {
 			return false
 		}
 		return true
@@ -749,7 +763,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	entries = s.applyRequestFilters(entries, r)
+	entries = s.applyRequestFilters(entries, r, streamID)
 	s.sortForRequest(entries, r)
 	directStreams := map[string][]string{}
 	if op, err := s.OPML.Load(); err == nil {

@@ -341,6 +341,22 @@ func TestE2E(t *testing.T) {
 	}
 
 	// edit-tag: mark both as read
+	// Capture wall-clock right before the mark so we can assert the
+	// state-stream delta-sync contract below: `s=read&ot=<before>`
+	// must include both newly-read entries (their state UpdatedAt is
+	// after `before`), and `s=read&ot=<after>` must exclude them
+	// (no state has mutated since). This is the v0.4.10 regression
+	// where ot/nt on state streams compared against entry fetch time
+	// instead of EntryState.UpdatedAt — Reeder would re-stream every
+	// recently-polled item every sync and clobber its own unread UI.
+	//
+	// Sleep so there is a wall-clock gap between the original
+	// poll-once (FetchedAt) and tBeforeMark/UpdatedAt that the bug
+	// vs fix produce strictly different answers against. Without the
+	// gap, second-granularity ot/nt windows can overlap and let a
+	// broken filter silently pass.
+	time.Sleep(2 * time.Second)
+	tBeforeMark := time.Now().Unix()
 	form = url.Values{
 		"i": []string{sresp.Items[0].ID, sresp.Items[1].ID},
 		"a": []string{"user/-/state/com.google/read"},
@@ -407,6 +423,58 @@ func TestE2E(t *testing.T) {
 	}
 	if len(postRead.ItemRefs) != 0 {
 		t.Fatalf("items/ids post-read: want 0, got %d (body=%s)", len(postRead.ItemRefs), body)
+	}
+
+	// Read-state delta-sync contract (the v0.4.10 regression):
+	//
+	//   s=read&ot=<before-mark> -> include the entries whose state
+	//                              mutated after `before` (i.e. both
+	//                              entries we just marked).
+	//   s=read&ot=<after-mark>  -> exclude all (no state mutated since).
+	//
+	// Pre-fix the implementation compared `ot` against entry
+	// fetch/publish time, so the second query incorrectly returned
+	// every recently-polled item and Reeder re-marked them all as
+	// read on every sync. This e2e pin is the regression's last
+	// line of defence: it must catch the bug even if the contract
+	// suite in internal/reedercompat is bypassed.
+	deltaURL := func(ot int64) string {
+		return base + "/reader/api/0/stream/items/ids" +
+			"?s=" + url.QueryEscape("user/-/state/com.google/read") +
+			"&ot=" + strconv.FormatInt(ot, 10) + "&n=50"
+	}
+	doDelta := func(ot int64) []string {
+		req, _ := http.NewRequest("GET", deltaURL(ot), nil)
+		authHdr(req)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("delta ot=%d: %v", ot, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("delta ot=%d: %d %s", ot, resp.StatusCode, body)
+		}
+		var dr struct {
+			ItemRefs []struct {
+				ID string `json:"id"`
+			} `json:"itemRefs"`
+		}
+		if err := json.Unmarshal(body, &dr); err != nil {
+			t.Fatalf("delta unmarshal: %v %s", err, body)
+		}
+		ids := make([]string, len(dr.ItemRefs))
+		for i, r := range dr.ItemRefs {
+			ids[i] = r.ID
+		}
+		return ids
+	}
+	if got := doDelta(tBeforeMark - 1); len(got) != 2 {
+		t.Fatalf("delta s=read&ot=<before mark>: want 2 refs, got %d (%v)", len(got), got)
+	}
+	farFuture := time.Now().Add(24 * time.Hour).Unix()
+	if got := doDelta(farFuture); len(got) != 0 {
+		t.Fatalf("delta s=read&ot=<far future>: want 0 refs, got %d (%v) — read-state delta is comparing against entry fetch time, not state UpdatedAt", len(got), got)
 	}
 
 	// 8. Web UI: login + home.

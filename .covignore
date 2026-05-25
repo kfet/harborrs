@@ -11,6 +11,12 @@ github.com/kfet/harborrs/scripts/lintfrontend/main.go
 # End-to-end test package; exercised by `make e2e`, not unit tests.
 ^github.com/kfet/harborrs/e2e/
 
+# Reeder / GReader conformance suite — embedder-driven contract tests
+# whose code is mostly assertion plumbing (t.Fatal branches on JSON
+# unmarshal etc). The behaviour each contract pins is exercised in the
+# packages it drives; the suite itself is test-support code.
+^github.com/kfet/harborrs/internal/reedercompat/
+
 # Self-update: deep filesystem I/O error branches (chmod after create,
 # rename atop running exe, io.Copy mid-stream, tar.Next post-header).
 # Happy path + all classified errors (network, checksum, missing entry,

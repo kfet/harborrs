@@ -1392,3 +1392,81 @@ func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
 		t.Fatal("longId edit-tag did not update canonical hash")
 	}
 }
+
+// TestApplyRequestFiltersStateStreamOT pins the bug-fix behaviour: on
+// state streams (s=read / s=starred) the ot/nt filter compares against
+// EntryState.UpdatedAt, not entry fetch/publish time. The full client-
+// shape contract lives in internal/reedercompat; this is the in-package
+// unit-coverage anchor for the closure that swaps the time source.
+//
+// To DIFFERENTIATE the buggy "use FetchedAt" filter from the correct
+// "use UpdatedAt" filter, this test deliberately constructs entries
+// whose FetchedAt is FAR IN THE FUTURE relative to wall-clock now. The
+// entries are then marked read (UpdatedAt ≈ now). A query with
+// ot=now+30min must EXCLUDE them (UpdatedAt < ot) — but with the old
+// FetchedAt-based filter would INCLUDE them (FetchedAt = now+1h > ot).
+// Symmetrically a query with ot=now-30min must INCLUDE them under both
+// filters; the differentiating case is the "after the mark" check.
+func TestApplyRequestFiltersStateStreamOT(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := "https://feed.example/RS"
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{
+		XMLURL: u, Title: "RS", Tags: []string{"RS"}, HTMLURL: "https://feed.example",
+	})
+	fh := store.FeedHash(u)
+	now := time.Now().UTC()
+	farFutureFetch := now.Add(time.Hour)
+	es := []store.Entry{{
+		GUID: "rs-1", Link: u + "/1", Title: "rs1",
+		Published: now, FetchedAt: farFutureFetch,
+	}, {
+		GUID: "rs-2", Link: u + "/2", Title: "rs2",
+		Published: now, FetchedAt: farFutureFetch,
+	}}
+	if _, err := st.AppendEntries(fh, es); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := st.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range listed {
+		if err := st.SetRead(e.Hash, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pick any entry's UpdatedAt as the reference mark time.
+	tMark := st.EntryState(listed[0].Hash).UpdatedAt
+	// ot=after the mark but well before FetchedAt: under the fix the
+	// entries are excluded (UpdatedAt < ot). Under the old fetch-time
+	// filter they leak through (FetchedAt = now+1h > ot). This is the
+	// regression assertion.
+	after := strconv.FormatInt(tMark.Add(30*time.Minute).Unix(), 10)
+	w := do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+url.QueryEscape(streamRead)+"&ot="+after, tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"itemRefs":[]`) {
+		t.Fatalf("ot=after mark on s=read must exclude entries whose state did not mutate after ot (even when FetchedAt is well after ot); body=%s", w.Body.String())
+	}
+	// ot=before the mark: included (state mutated after ot). Sanity.
+	before := strconv.FormatInt(tMark.Add(-30*time.Minute).Unix(), 10)
+	w = do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+url.QueryEscape(streamRead)+"&ot="+before, tok, nil)
+	if !strings.Contains(w.Body.String(), `"itemRefs":[{`) {
+		t.Fatalf("ot=before mark must include the entries; body=%s", w.Body.String())
+	}
+	// nt assertions (covers the nt parse + before-check branches with
+	// the state-stream time source). nt is exclusive upper bound on
+	// the time-source: nt=after-mark INCLUDES (UpdatedAt < nt);
+	// nt=before-mark EXCLUDES.
+	ntAfter := strconv.FormatInt(tMark.Add(30*time.Minute).Unix(), 10)
+	w = do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+url.QueryEscape(streamRead)+"&nt="+ntAfter, tok, nil)
+	if !strings.Contains(w.Body.String(), `"itemRefs":[{`) {
+		t.Fatalf("nt=after mark must include on state stream; body=%s", w.Body.String())
+	}
+	ntBefore := strconv.FormatInt(tMark.Add(-30*time.Minute).Unix(), 10)
+	w = do(t, mux, "GET", "/reader/api/0/stream/items/ids?s="+url.QueryEscape(streamRead)+"&nt="+ntBefore, tok, nil)
+	if !strings.Contains(w.Body.String(), `"itemRefs":[]`) {
+		t.Fatalf("nt=before mark must exclude on state stream; body=%s", w.Body.String())
+	}
+}
