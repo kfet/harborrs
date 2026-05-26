@@ -110,10 +110,11 @@ func Do(t *testing.T, h Harness, method, path string, vals url.Values) *httptest
 	return doRaw(t, h, newRequest(t, method, path, vals))
 }
 
-// newRequest builds a request with the Harness token already applied,
-// for callers that want to add extra headers before executing it via
-// doRaw. The token is always set when h.Token != ""; callers may
-// override with r.Header.Set if needed.
+// newRequest builds an HTTP request with form-encoded body if vals is
+// non-nil. The Harness token is NOT applied here — pass the request
+// through doRaw (or Do), which will add the auth header unless one is
+// already set. This split lets callers add extra headers between
+// construction and execution (e.g. If-None-Match for ETag tests).
 func newRequest(t *testing.T, method, path string, vals url.Values) *http.Request {
 	t.Helper()
 	var r *http.Request

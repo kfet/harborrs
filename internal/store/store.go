@@ -257,11 +257,19 @@ func (s *Store) EntryState(hash string) EntryState {
 	return s.state[CanonicalEntryHash(hash)]
 }
 
-// StateVersion returns the most-recent UpdatedAt across all entry
-// states — the ETag-validator for state-dependent reader endpoints.
-// Zero time iff no state mutation has ever been recorded (fresh data
-// dir). Persists across restarts because it is rebuilt from the
-// on-disk state logs in Open.
+// StateVersion returns the most-recent content-mutation timestamp —
+// the ETag-validator for state-dependent reader endpoints. Bumped on
+// SetRead, SetStarred, and AppendEntries (any change that affects an
+// unread-count response). Zero iff none of those have ever run on
+// this data dir.
+//
+// Restart semantics: rebuilt in Open from the state-log UpdatedAt
+// timestamps, so SetRead/SetStarred bumps survive restarts. New-
+// entries-only bumps from AppendEntries are in-process only — after
+// a restart the validator reflects the latest state-log timestamp,
+// which is older than (or equal to) the pre-restart value. Clients
+// notice this as one forced 200 right after a restart, then resume
+// 304s.
 func (s *Store) StateVersion() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

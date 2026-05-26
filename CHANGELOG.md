@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Internal refactor (no behaviour change): extract `applyETag(w, r, etag) bool`
+  helper to deduplicate the ETag/INM plumbing between
+  `serveConditionalJSON` (used by `subscription/list` and `tag/list`)
+  and the early-304 short-circuit in `handleUnreadCount`. Same headers,
+  same 304 contract — just one source of truth. Doc-only fixes on
+  `reedercompat.newRequest` (the doc claimed the Harness token was
+  applied here; it's actually applied in `doRaw`) and on
+  `store.StateVersion` (now documents the `AppendEntries` bump path
+  and the new-entries-only-not-preserved-across-restart restart
+  semantics introduced in v0.4.16).
+
 ## [0.4.16] - 2026-05-26
 
 ### Added

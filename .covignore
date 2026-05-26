@@ -47,7 +47,9 @@ github.com/kfet/harborrs/internal/config/config.go:103\.18,105\.3
 # that doesn't happen in practice (Marshal only manipulates strings and
 # already-validated structs). etagOPML / etagOPMLState then return ""
 # so the handler skips ETag handling and serves a normal 200 — i.e. the
-# fallback is a correctness no-op, not a behaviour to assert.
-github.com/kfet/harborrs/internal/reader/reader.go:987\.16,991\.3
-github.com/kfet/harborrs/internal/reader/reader.go:1000\.14,1002\.3
-github.com/kfet/harborrs/internal/reader/reader.go:1012\.14,1014\.3
+# fallback is a correctness no-op, not a behaviour to assert. applyETag
+# has the same degrade-to-no-op branch on empty etag.
+github.com/kfet/harborrs/internal/reader/reader.go:981\.16,985\.3
+github.com/kfet/harborrs/internal/reader/reader.go:994\.14,996\.3
+github.com/kfet/harborrs/internal/reader/reader.go:1006\.14,1008\.3
+github.com/kfet/harborrs/internal/reader/reader.go:1018\.16,1020\.3

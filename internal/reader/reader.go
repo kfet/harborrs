@@ -922,15 +922,9 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Early INM check — skip the full per-feed unread scan on 304.
-	etag := etagOPMLState(op, s.Store.StateVersion())
-	if etag != "" {
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "private, no-cache")
-		w.Header().Set("Vary", "Authorization")
-		if matchesINM(r.Header.Get("If-None-Match"), etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
+	if s.applyETag(w, r, etagOPMLState(op, s.Store.StateVersion())) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	type uc struct {
 		ID                      string `json:"id"`
@@ -1015,25 +1009,29 @@ func etagOPMLState(o *store.OPML, sv time.Time) string {
 	return `"` + fp + "." + strconv.FormatInt(sv.UnixMicro(), 10) + `"`
 }
 
-// serveConditionalJSON writes v as JSON with caching headers, or
-// returns 304 Not Modified if the request's If-None-Match matches
-// the supplied etag. The etag must already be quoted ("..."); pass
-// an empty string to skip ETag handling entirely.
-//
-// Headers set on 200 and 304:
-//   - ETag: <etag>
-//   - Cache-Control: private, no-cache  (must revalidate every time;
-//     client may keep the cached body but must come back with INM)
-//   - Vary: Authorization
+// applyETag sets the ETag/Cache-Control/Vary headers and returns true
+// if the request's If-None-Match matches — in which case the caller
+// should `w.WriteHeader(http.StatusNotModified)` and return. Empty
+// etag is a no-op (sets no headers, returns false) so the caller
+// falls through to a normal 200.
+func (s *Server) applyETag(w http.ResponseWriter, r *http.Request, etag string) bool {
+	if etag == "" {
+		return false
+	}
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("Vary", "Authorization")
+	return matchesINM(r.Header.Get("If-None-Match"), etag)
+}
+
+// serveConditionalJSON writes v as JSON, or returns 304 Not Modified
+// if the request's If-None-Match matches the supplied etag. The etag
+// must already be quoted ("..."); pass an empty string to skip ETag
+// handling entirely. See applyETag for the header contract.
 func (s *Server) serveConditionalJSON(w http.ResponseWriter, r *http.Request, etag string, v any) {
-	if etag != "" {
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "private, no-cache")
-		w.Header().Set("Vary", "Authorization")
-		if matchesINM(r.Header.Get("If-None-Match"), etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
+	if s.applyETag(w, r, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	writeJSON(w, v)
 }
