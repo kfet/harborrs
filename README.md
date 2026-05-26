@@ -1,5 +1,10 @@
 # harborrs
 
+[![CI](https://github.com/kfet/harborrs/actions/workflows/test.yml/badge.svg)](https://github.com/kfet/harborrs/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/kfet/harborrs.svg)](https://pkg.go.dev/github.com/kfet/harborrs)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kfet/harborrs)](https://goreportcard.com/report/github.com/kfet/harborrs)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A small, single-binary self-hosted RSS server with a Google-Reader-
 compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
