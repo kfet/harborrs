@@ -201,14 +201,6 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	// lives in internal/accesslog: Authorization/Cookie headers never
 	// read, bodies never inspected, query allow-listed.
 	accessLogOn := accesslog.EnabledFromEnv()
-	handler := accesslog.New(readHandler, accessLogOn, stderr)
-
-	srv := &http.Server{
-		Addr:         cfg.Listen,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -225,7 +217,23 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		}
 		return urls
 	}
-	go func() { _ = poller.Run(ctx, feeds, 30*time.Second) }()
+	refresher := poll.NewRefresher(poller, feeds)
+	// API/UI requests trigger a refresh fire-and-forget; the response
+	// itself serves whatever is in the store right now. Refreshed
+	// entries land in time for the next sync. Pair with the background
+	// ticker so an idle process still polls.
+	triggered := poll.TriggerMiddleware(refresher, readHandler,
+		"/reader/api/0/", "/ui/")
+	handler := accesslog.New(triggered, accessLogOn, stderr)
+	refresher.Start(ctx, 0)
+	defer refresher.Stop()
+
+	srv := &http.Server{
+		Addr:         cfg.Listen,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -313,11 +321,9 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 	p := poll.New(st)
 	total := 0
 	for _, f := range o.Feeds {
-		// Reset NextFetch so this command always polls.
-		fh := store.FeedHash(f.XMLURL)
-		fs, _ := st.LoadFeedState(fh)
-		fs.NextFetch = time.Time{}
-		_ = st.SaveFeedState(fh, fs)
+		// poll-once must force a poll even if the feed is in a
+		// 429/503 cooldown — clear RetryAfter before each attempt.
+		_ = p.ResetCooldown(f.XMLURL)
 		n, err := p.Poll(context.Background(), f.XMLURL)
 		if err != nil {
 			fmt.Fprintf(stderr, "poll %s: %v\n", f.XMLURL, err)

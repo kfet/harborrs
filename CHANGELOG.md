@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-05-26
+
+### Changed
+
+- Replace per-feed adaptive poll scheduler with a pull-driven
+  `Refresher`. The v0.4.17 scheduler bumped intervals up to 24h on a
+  string of 304s and applied multiplicative backoff on errors; the
+  result was that well-behaved feeds got pinned to once-per-24h and
+  new entries took a day (or longer) to surface. The new model has no
+  per-feed cadence at all:
+  - A background ticker fires `Refresher.Trigger()` every minute
+    (configurable via `HARBORRS_REFRESH_INTERVAL`, default `1m`).
+  - A request middleware on `/reader/api/0/*` and `/ui/*` also fires
+    `Trigger()` on every request. Fire-and-forget; the response itself
+    serves whatever is in the store right now, and refreshed entries
+    show up on the client's next sync. No added request latency.
+  - `Trigger()` is single-flight: concurrent calls collapse to one
+    in-flight cycle. One cycle iterates every feed sequentially and
+    calls `Poll` for each.
+  - The only per-feed throttle that survives is `RetryAfter`, set
+    inside `Poll` when a feed responds 429 / 503. While the cooldown
+    window is open, subsequent `Poll` calls return `ErrCooldown`
+    immediately without a network round-trip. Default cooldown when
+    the response omits `Retry-After` is 15 minutes.
+
+- `store.FeedState` schema: dropped `NextFetch` and `Interval`, added
+  `RetryAfter`. Legacy on-disk state files written by v0.4.17 and
+  earlier still load — the dropped JSON tags are silently ignored by
+  `encoding/json`, and the next `SaveFeedState` rewrites the file
+  without them.
+
+- `harborrs poll-once` now calls `Poller.ResetCooldown` per feed
+  before polling, so the command still forces a fetch of every
+  subscribed feed regardless of any stored 429/503 cooldown.
+
+### Removed
+
+- `Poller.Run`, `Poller.tickOnce`, `DefaultInterval`, `MinInterval`,
+  `MaxInterval`, `backoffSeconds`, `clampSeconds*`. The 304
+  multiplicative-bump branch and the error-backoff branch are gone.
+  Anything that used to depend on adaptive scheduling now uses the
+  Refresher or invokes `Poll` directly.
+
 ## [0.4.17] - 2026-05-26
 
 ### Changed

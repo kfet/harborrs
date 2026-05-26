@@ -1,5 +1,13 @@
-// Package poll fetches RSS/Atom feeds with conditional GETs and adaptive
-// scheduling, persisting state via the store package.
+// Package poll fetches RSS/Atom feeds with conditional GETs.
+//
+// Cadence is driven by the pull-side Refresher (see refresher.go), not by
+// per-feed timers — v0.4.18 removed the adaptive scheduler that pinned
+// well-behaved feeds to once-per-24h after a string of 304s. Poll itself
+// is a single-shot operation: one HTTP request, one persist of the
+// updated FeedState. The only per-feed throttle that survives in Poll
+// is RetryAfter, set when a feed returned 429 / 503 with a Retry-After
+// header; subsequent Poll calls within the window return early without
+// touching the network.
 package poll
 
 import (
@@ -16,13 +24,8 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-// Defaults for the scheduler.
-const (
-	DefaultInterval = 1 * time.Hour
-	MinInterval     = 15 * time.Minute
-	MaxInterval     = 24 * time.Hour
-	UserAgent       = "harborrs/0.1 (+https://github.com/kfet/harborrs)"
-)
+// UserAgent is the HTTP User-Agent harborrs sends on every feed fetch.
+const UserAgent = "harborrs/0.1 (+https://github.com/kfet/harborrs)"
 
 // Poller fetches feeds and writes results to a Store.
 type Poller struct {
@@ -45,9 +48,15 @@ func New(s *store.Store) *Poller {
 	}
 }
 
+// ErrCooldown is returned when Poll is called for a feed whose
+// RetryAfter window has not yet elapsed. No HTTP request is made and
+// no state is mutated.
+var ErrCooldown = errors.New("poll: feed in 429/503 cooldown window")
+
 // Poll fetches one feed and returns the number of new entries appended.
-// State (etag, last-modified, interval, error-count, next-fetch) is
-// persisted regardless of outcome.
+// State (ETag, Last-Modified, LastFetched, ErrorCount, RetryAfter) is
+// persisted regardless of outcome — unless the feed is in a 429/503
+// cooldown, in which case Poll returns (0, ErrCooldown) immediately.
 func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	fh := store.FeedHash(feedURL)
 	st, err := p.Store.LoadFeedState(fh)
@@ -57,7 +66,11 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	if st.URL == "" {
 		st.URL = feedURL
 	}
-	st.LastFetched = p.Now().UTC()
+	now := p.Now().UTC()
+	if !st.RetryAfter.IsZero() && now.Before(st.RetryAfter) {
+		return 0, ErrCooldown
+	}
+	st.LastFetched = now
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
@@ -80,31 +93,25 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 
 	switch {
 	case resp.StatusCode == http.StatusNotModified:
-		// 304 — bump interval, persist, done.
+		// 304 — clear error state; no scheduling side-effect.
 		st.ErrorCount = 0
 		st.LastError = ""
-		// Multiplicative bump; clamp also handles the initial-zero case.
-		bumped := time.Duration(st.Interval) * time.Second * 3 / 2
-		if bumped == 0 {
-			bumped = DefaultInterval
-		}
-		st.Interval = clampSeconds(bumped, MinInterval, MaxInterval)
-		st.NextFetch = p.Now().UTC().Add(time.Duration(st.Interval) * time.Second)
+		st.RetryAfter = time.Time{}
 		return 0, p.Store.SaveFeedState(fh, st)
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		// fall through
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable:
-		// Honour Retry-After when present.
-		retry := parseRetryAfter(resp.Header.Get("Retry-After"), p.Now())
-		err := fmt.Errorf("http %d", resp.StatusCode)
-		st.ErrorCount++
-		st.LastError = err.Error()
-		if retry > 0 {
-			st.Interval = clampSecondsInt64(int64(retry/time.Second), MinInterval, MaxInterval)
-		} else {
-			st.Interval = backoffSeconds(st.Interval)
+		// Honour Retry-After when present; otherwise apply a short
+		// default cooldown so a misbehaving server isn't hammered
+		// every Refresher cycle.
+		d := parseRetryAfter(resp.Header.Get("Retry-After"), now)
+		if d <= 0 {
+			d = defaultCooldown
 		}
-		st.NextFetch = p.Now().UTC().Add(time.Duration(st.Interval) * time.Second)
+		st.ErrorCount++
+		err := fmt.Errorf("http %d", resp.StatusCode)
+		st.LastError = err.Error()
+		st.RetryAfter = now.Add(d)
 		if saveErr := p.Store.SaveFeedState(fh, st); saveErr != nil {
 			return 0, saveErr
 		}
@@ -126,7 +133,6 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		return 0, p.recordErr(fh, &st, err)
 	}
 
-	now := p.Now().UTC()
 	entries := make([]store.Entry, 0, len(parsed.Items))
 	for _, it := range parsed.Items {
 		e := store.Entry{
@@ -155,62 +161,47 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		return 0, p.recordErr(fh, &st, err)
 	}
 
-	// Success — refresh conditional headers, reset error state, set
-	// next-fetch.
+	// Success — refresh conditional headers, reset error state.
 	st.ETag = resp.Header.Get("ETag")
 	st.LastModified = resp.Header.Get("Last-Modified")
 	st.ErrorCount = 0
 	st.LastError = ""
-	if st.Interval == 0 {
-		st.Interval = int64(DefaultInterval / time.Second)
-	}
-	st.NextFetch = p.Now().UTC().Add(time.Duration(st.Interval) * time.Second)
+	st.RetryAfter = time.Time{}
 	if err := p.Store.SaveFeedState(fh, st); err != nil {
 		return len(added), err
 	}
 	return len(added), nil
 }
 
+// ResetCooldown clears any RetryAfter cooldown on a feed and persists.
+// Used by `harborrs poll-once` which must force a poll of every feed
+// regardless of cooldown state.
+func (p *Poller) ResetCooldown(feedURL string) error {
+	fh := store.FeedHash(feedURL)
+	st, err := p.Store.LoadFeedState(fh)
+	if err != nil {
+		return err
+	}
+	if st.RetryAfter.IsZero() {
+		return nil
+	}
+	st.RetryAfter = time.Time{}
+	return p.Store.SaveFeedState(fh, st)
+}
+
 func (p *Poller) recordErr(fh string, st *store.FeedState, e error) error {
 	st.ErrorCount++
 	st.LastError = e.Error()
-	st.Interval = backoffSeconds(st.Interval)
-	st.NextFetch = p.Now().UTC().Add(time.Duration(st.Interval) * time.Second)
 	if saveErr := p.Store.SaveFeedState(fh, *st); saveErr != nil {
 		return saveErr
 	}
 	return e
 }
 
-func backoffSeconds(curr int64) int64 {
-	d := time.Duration(curr) * time.Second
-	if d <= 0 {
-		d = DefaultInterval
-	}
-	d *= 2
-	if d < MinInterval {
-		d = MinInterval
-	}
-	if d > MaxInterval {
-		d = MaxInterval
-	}
-	return int64(d / time.Second)
-}
-
-func clampSeconds(d, lo, hi time.Duration) int64 {
-	if d < lo {
-		d = lo
-	}
-	if d > hi {
-		d = hi
-	}
-	return int64(d / time.Second)
-}
-
-func clampSecondsInt64(s int64, lo, hi time.Duration) int64 {
-	d := time.Duration(s) * time.Second
-	return clampSeconds(d, lo, hi)
-}
+// defaultCooldown is applied on 429/503 responses that omit Retry-After.
+// Short enough that a transient blip doesn't pin a feed for hours, long
+// enough that we don't retry on the very next 1-minute Refresher tick.
+const defaultCooldown = 15 * time.Minute
 
 // parseRetryAfter parses a Retry-After header (seconds or HTTP-date) and
 // returns a duration from "now". Returns 0 if unparseable.
@@ -220,6 +211,9 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 		return 0
 	}
 	if n, err := strconv.Atoi(v); err == nil {
+		if n < 0 {
+			return 0
+		}
 		return time.Duration(n) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
@@ -228,41 +222,4 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 		}
 	}
 	return 0
-}
-
-// Run drives the scheduler: every tick, poll any feed whose NextFetch has
-// passed. Returns when ctx is done. Feeds is taken once from opml.
-// New feeds added later require a restart (v0.1).
-func (p *Poller) Run(ctx context.Context, feeds func() []string, tick time.Duration) error {
-	if tick <= 0 {
-		tick = 30 * time.Second
-	}
-	t := time.NewTicker(tick)
-	defer t.Stop()
-	for {
-		p.tickOnce(ctx, feeds())
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-t.C:
-		}
-	}
-}
-
-func (p *Poller) tickOnce(ctx context.Context, urls []string) {
-	now := p.Now().UTC()
-	for _, u := range urls {
-		fh := store.FeedHash(u)
-		st, err := p.Store.LoadFeedState(fh)
-		if err != nil {
-			continue
-		}
-		if !st.NextFetch.IsZero() && st.NextFetch.After(now) {
-			continue
-		}
-		_, _ = p.Poll(ctx, u)
-		if ctx.Err() != nil {
-			return
-		}
-	}
 }

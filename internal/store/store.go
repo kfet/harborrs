@@ -28,14 +28,25 @@ type Entry struct {
 	FetchedAt time.Time `json:"fetched_at"`
 }
 
-// FeedState is the per-feed conditional-GET + scheduling state.
+// FeedState is the per-feed conditional-GET state. v0.4.18 dropped the
+// adaptive scheduler: there are no NextFetch / Interval fields any more.
+// Refresh cadence is driven by the pull-side Refresher (one cycle =
+// every feed, sequentially), not by per-feed timers.
+//
+// RetryAfter is set when a feed responds with 429 / 503 + Retry-After;
+// the Refresher / Poll skip the feed until time.Now() >= RetryAfter.
+// Zero RetryAfter means no cooldown.
+//
+// Legacy on-disk state files may still carry next_fetch / interval_s
+// fields written by v0.4.17 and earlier. Those tags are not declared
+// here, so encoding/json silently ignores them on Load; the next
+// SaveFeedState rewrites the file without them.
 type FeedState struct {
 	URL          string    `json:"url"`
 	ETag         string    `json:"etag,omitempty"`
 	LastModified string    `json:"last_modified,omitempty"`
 	LastFetched  time.Time `json:"last_fetched,omitempty"`
-	NextFetch    time.Time `json:"next_fetch,omitempty"`
-	Interval     int64     `json:"interval_s,omitempty"`
+	RetryAfter   time.Time `json:"retry_after,omitempty"`
 	ErrorCount   int       `json:"error_count,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
 }

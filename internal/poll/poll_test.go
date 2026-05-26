@@ -3,12 +3,10 @@ package poll
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,8 +70,11 @@ func TestPollSuccess(t *testing.T) {
 	if st.ErrorCount != 0 {
 		t.Fatalf("err count=%d", st.ErrorCount)
 	}
-	if st.NextFetch.IsZero() {
-		t.Fatal("next fetch zero")
+	if !st.RetryAfter.IsZero() {
+		t.Fatalf("retry-after should be zero on success: %v", st.RetryAfter)
+	}
+	if st.LastFetched.IsZero() {
+		t.Fatal("last-fetched not recorded")
 	}
 }
 
@@ -118,19 +119,28 @@ func TestPollServerError(t *testing.T) {
 	if st.ErrorCount != 1 {
 		t.Fatalf("count=%d", st.ErrorCount)
 	}
-	// Second failure → backoff increases.
+	// Non-429/503 errors do NOT set RetryAfter — the next cycle
+	// re-tries immediately.
+	if !st.RetryAfter.IsZero() {
+		t.Fatalf("retry-after should be zero on 500: %v", st.RetryAfter)
+	}
+	// Second failure → error count grows (no scheduling change).
 	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error 2")
 	}
 	st2, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
-	if st2.Interval <= st.Interval {
-		t.Fatalf("backoff did not grow: %d -> %d", st.Interval, st2.Interval)
+	if st2.ErrorCount != 2 {
+		t.Fatalf("count2=%d", st2.ErrorCount)
 	}
 }
 
-func TestPollRateLimited(t *testing.T) {
+func TestPollRateLimitedSetsRetryAfter(t *testing.T) {
 	p, _, _ := newPoller(t)
+	fixed := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	p.Now = func() time.Time { return fixed }
+	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
 		w.Header().Set("Retry-After", "300")
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
@@ -139,16 +149,39 @@ func TestPollRateLimited(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
-	// 300s < MinInterval (15min=900s) → clamped to MinInterval.
-	if time.Duration(st.Interval)*time.Second != MinInterval {
-		t.Fatalf("interval=%ds want %v", st.Interval, MinInterval)
+	want := fixed.Add(300 * time.Second)
+	if !st.RetryAfter.Equal(want) {
+		t.Fatalf("retry-after=%v want %v", st.RetryAfter, want)
+	}
+	if hits != 1 {
+		t.Fatalf("hits=%d", hits)
+	}
+	// Subsequent Poll within the window returns ErrCooldown without
+	// a network round-trip.
+	p.Now = func() time.Time { return fixed.Add(60 * time.Second) }
+	_, err := p.Poll(context.Background(), srv.URL)
+	if !errors.Is(err, ErrCooldown) {
+		t.Fatalf("err=%v want ErrCooldown", err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits=%d (server hit during cooldown)", hits)
+	}
+	// After RetryAfter elapses, Poll proceeds (server hit again).
+	p.Now = func() time.Time { return fixed.Add(301 * time.Second) }
+	_, _ = p.Poll(context.Background(), srv.URL)
+	if hits != 2 {
+		t.Fatalf("hits=%d (server not re-hit after window)", hits)
 	}
 }
 
-func TestPollRetryAfterHTTPDate(t *testing.T) {
+func TestPoll503HTTPDateRetryAfter(t *testing.T) {
 	p, _, _ := newPoller(t)
-	when := time.Now().UTC().Add(2 * time.Hour).Format(http.TimeFormat)
+	fixed := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	p.Now = func() time.Time { return fixed }
+	when := fixed.Add(2 * time.Hour).Format(http.TimeFormat)
+	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
 		w.Header().Set("Retry-After", when)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -158,8 +191,16 @@ func TestPollRetryAfterHTTPDate(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
-	if d := time.Duration(st.Interval) * time.Second; d < time.Hour {
-		t.Fatalf("interval too short: %v", d)
+	if st.RetryAfter.Before(fixed.Add(time.Hour)) {
+		t.Fatalf("retry-after too short: %v", st.RetryAfter)
+	}
+	// Inside the window → ErrCooldown, no hit.
+	p.Now = func() time.Time { return fixed.Add(30 * time.Minute) }
+	if _, err := p.Poll(context.Background(), srv.URL); !errors.Is(err, ErrCooldown) {
+		t.Fatalf("err=%v want ErrCooldown", err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits=%d", hits)
 	}
 }
 
@@ -172,6 +213,30 @@ func TestPollRetryAfterMissing(t *testing.T) {
 	}
 	if d := parseRetryAfter(time.Now().Add(-time.Hour).Format(http.TimeFormat), time.Now()); d != 0 {
 		t.Fatal("expected 0 for past date")
+	}
+	if d := parseRetryAfter("-3", time.Now()); d != 0 {
+		t.Fatal("expected 0 for negative seconds")
+	}
+	if d := parseRetryAfter("42", time.Now()); d != 42*time.Second {
+		t.Fatalf("want 42s got %v", d)
+	}
+}
+
+func TestPoll429NoRetryAfterAppliesDefaultCooldown(t *testing.T) {
+	p, _, _ := newPoller(t)
+	fixed := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	p.Now = func() time.Time { return fixed }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected error")
+	}
+	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
+	want := fixed.Add(defaultCooldown)
+	if !st.RetryAfter.Equal(want) {
+		t.Fatalf("retry-after=%v want %v", st.RetryAfter, want)
 	}
 }
 
@@ -225,11 +290,7 @@ func TestPollBodyTooLarge(t *testing.T) {
 
 func TestPollLoadStateError(t *testing.T) {
 	p, _, dir := newPoller(t)
-	// Drive LoadFeedState into an error: write a directory where the
-	// state file would be (so ReadFile fails with EISDIR).
 	fh := store.FeedHash("http://x/")
-	if err := http.ListenAndServe; err == nil { // keep linter happy
-	}
 	if err := makeStateDir(dir, fh); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +329,6 @@ func TestPollAppendError(t *testing.T) {
 		io.WriteString(w, sampleRSS)
 	}))
 	defer srv.Close()
-	// Break the entries dir for the target feed.
 	fh := store.FeedHash(srv.URL)
 	if err := makeEntriesNonDir(dir, fh); err != nil {
 		t.Fatal(err)
@@ -276,55 +336,6 @@ func TestPollAppendError(t *testing.T) {
 	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected append error")
 	}
-}
-
-func TestRunTickOnce(t *testing.T) {
-	p, _, _ := newPoller(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, sampleRSS)
-	}))
-	defer srv.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	feeds := []string{srv.URL}
-	// First tick polls (NextFetch zero).
-	p.tickOnce(ctx, feeds)
-	// Second tick is a no-op because NextFetch is in the future.
-	p.tickOnce(ctx, feeds)
-	cancel()
-	// tickOnce with cancelled ctx returns early.
-	p.tickOnce(ctx, feeds)
-}
-
-func TestRunRespectsContext(t *testing.T) {
-	p, _, _ := newPoller(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, sampleRSS)
-	}))
-	defer srv.Close()
-	// Long enough timeout to guarantee the ticker fires at least once
-	// between tickOnce calls.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	feeds := func() []string { return []string{srv.URL} }
-	err := p.Run(ctx, feeds, 5*time.Millisecond)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err=%v", err)
-	}
-	// Also default tick.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel2()
-	_ = p.Run(ctx2, feeds, 0)
-}
-
-func TestRunLoadStateError(t *testing.T) {
-	p, _, dir := newPoller(t)
-	feeds := []string{"http://x/"}
-	fh := store.FeedHash("http://x/")
-	if err := makeStateDir(dir, fh); err != nil {
-		t.Fatal(err)
-	}
-	// tickOnce silently skips this feed (load err) — covers the continue.
-	p.tickOnce(context.Background(), feeds)
 }
 
 func TestPollSaveStateErrorAfterAppend(t *testing.T) {
@@ -336,11 +347,9 @@ func TestPollSaveStateErrorAfterAppend(t *testing.T) {
 		io.WriteString(w, sampleRSS)
 	}))
 	defer srv.Close()
-	// First poll succeeds and writes state file.
 	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
-	// Now make state dir read-only so atomic temp create fails.
 	stateDir := dir + "/state"
 	if err := os.Chmod(stateDir, 0o500); err != nil {
 		t.Fatal(err)
@@ -357,9 +366,6 @@ func TestPollRecordErrSaveFail(t *testing.T) {
 		t.Skip("root bypass")
 	}
 	p, _, dir := newPoller(t)
-	// Seed state file via a successful first poll on a different URL so
-	// LoadFeedState succeeds for THIS feed too (zero value via missing
-	// state file). Then make state dir read-only.
 	stateDir := dir + "/state"
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -409,25 +415,6 @@ func TestPoll304SaveFail(t *testing.T) {
 	}
 }
 
-func TestBackoffSecondsZero(t *testing.T) {
-	got := backoffSeconds(0)
-	if got <= 0 {
-		t.Fatalf("got %d", got)
-	}
-	if got2 := backoffSeconds(int64(MaxInterval * 2 / time.Second)); time.Duration(got2)*time.Second != MaxInterval {
-		t.Fatalf("not capped: %d", got2)
-	}
-}
-
-func TestClampSeconds(t *testing.T) {
-	if clampSeconds(time.Second, MinInterval, MaxInterval) != int64(MinInterval/time.Second) {
-		t.Fatal("lo")
-	}
-	if clampSeconds(MaxInterval*2, MinInterval, MaxInterval) != int64(MaxInterval/time.Second) {
-		t.Fatal("hi")
-	}
-}
-
 func TestNewSensibleDefaults(t *testing.T) {
 	p := New(nil)
 	if p.Client.Timeout == 0 || p.Parser == nil || p.Now == nil || p.MaxBodyBytes == 0 {
@@ -435,8 +422,14 @@ func TestNewSensibleDefaults(t *testing.T) {
 	}
 }
 
-func TestPollNotModifiedFirstCall(t *testing.T) {
+func TestPollNotModifiedClearsRetryAfter(t *testing.T) {
 	p, _, _ := newPoller(t)
+	// Seed a RetryAfter in the past (so we don't gate).
+	fh := store.FeedHash("http://x/")
+	st := store.FeedState{URL: "http://x/", RetryAfter: time.Unix(1, 0).UTC()}
+	if err := p.Store.SaveFeedState(fh, st); err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 	}))
@@ -444,24 +437,9 @@ func TestPollNotModifiedFirstCall(t *testing.T) {
 	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
-	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
-	if time.Duration(st.Interval)*time.Second != DefaultInterval {
-		t.Fatalf("interval=%ds want %v", st.Interval, DefaultInterval)
-	}
-}
-
-func TestPoll429NoRetryAfter(t *testing.T) {
-	p, _, _ := newPoller(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
-		t.Fatal("expected error")
-	}
-	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
-	if st.Interval == 0 {
-		t.Fatal("interval not set")
+	got, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
+	if !got.RetryAfter.IsZero() {
+		t.Fatalf("retry-after should be cleared on 304: %v", got.RetryAfter)
 	}
 }
 
@@ -516,7 +494,6 @@ func TestPollBodyReadError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
 		io.WriteString(w, "short")
-		// hijack to abort
 		if h, ok := w.(http.Hijacker); ok {
 			conn, _, _ := h.Hijack()
 			conn.Close()
@@ -528,31 +505,41 @@ func TestPollBodyReadError(t *testing.T) {
 	}
 }
 
-func TestBackoffMinClamp(t *testing.T) {
-	got := backoffSeconds(1)
-	if time.Duration(got)*time.Second != MinInterval {
-		t.Fatalf("got %ds want %v", got, MinInterval)
+func TestResetCooldown(t *testing.T) {
+	p, _, _ := newPoller(t)
+	// No state yet → no-op, no error.
+	if err := p.ResetCooldown("http://nope/"); err != nil {
+		t.Fatalf("noop err: %v", err)
+	}
+	// Seed a RetryAfter in the future, then clear it.
+	fh := store.FeedHash("http://x/")
+	st := store.FeedState{URL: "http://x/", RetryAfter: time.Now().Add(time.Hour)}
+	if err := p.Store.SaveFeedState(fh, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ResetCooldown("http://x/"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := p.Store.LoadFeedState(fh)
+	if !got.RetryAfter.IsZero() {
+		t.Fatalf("not cleared: %v", got.RetryAfter)
 	}
 }
 
-func TestTickOnceContextCancelMidLoop(t *testing.T) {
-	p, _, _ := newPoller(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, sampleRSS)
-	}))
-	defer srv.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancel
-	feeds := []string{srv.URL, srv.URL + "/other"}
-	p.tickOnce(ctx, feeds)
+func TestResetCooldownLoadError(t *testing.T) {
+	p, _, dir := newPoller(t)
+	fh := store.FeedHash("http://x/")
+	if err := makeStateDir(dir, fh); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ResetCooldown("http://x/"); err == nil {
+		t.Fatal("expected load error")
+	}
 }
 
 func makeStateDir(dir, fh string) error {
 	p := dir + "/state/" + fh + ".json"
-	if err := os.MkdirAll(p, 0o755); err != nil {
-		return err
-	}
-	return nil
+	return os.MkdirAll(p, 0o755)
 }
 
 func makeEntriesNonDir(dir, fh string) error {
@@ -562,17 +549,3 @@ func makeEntriesNonDir(dir, fh string) error {
 	}
 	return os.WriteFile(p+"/"+fh, nil, 0o644)
 }
-
-func blockStateDir(dir string) error {
-	// Make the data dir's `state` path a regular file → atomic write of
-	// state/<fh>.json fails because MkdirAll cannot create state.
-	p := dir + "/state"
-	if err := os.RemoveAll(p); err != nil {
-		return err
-	}
-	return os.WriteFile(p, nil, 0o644)
-}
-
-// Suppress unused-import warning if helpers ever drift.
-var _ = fmt.Sprintf
-var _ = strings.HasPrefix
