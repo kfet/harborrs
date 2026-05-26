@@ -81,6 +81,21 @@ func assertSignedInt64(t *testing.T, contract, s string) {
 	}
 }
 
+// assertUnsignedInt63 asserts s is a decimal that fits in [0, 2^63-1].
+// This is the strict-Reeder wire-format requirement for item longIds:
+// the value must parse as a non-negative signed int64.
+func assertUnsignedInt63(t *testing.T, contract, s string) {
+	t.Helper()
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		t.Errorf("compat %s: %q does not parse as signed int64: %v", contract, s, err)
+		return
+	}
+	if n < 0 {
+		t.Errorf("compat %s: %q is negative (%d); strict clients (Reeder) drop items whose longId exceeds int63", contract, s, n)
+	}
+}
+
 // Run executes the full Reeder / GReader conformance suite against the
 // embedder-supplied Harness factory. Each sub-test gets a fresh
 // Harness via newH(t).
@@ -136,11 +151,11 @@ func Run(t *testing.T, newH NewHarness) {
 			want[ItemLongID(hh)] = true
 		}
 		for _, r := range resp.ItemRefs {
-			assertSignedInt64(t, "item-ref-decimal/items-ids", r.ID)
+			assertUnsignedInt63(t, "item-ref-decimal/items-ids", r.ID)
 			if r.ID != r.LongID {
 				t.Errorf("compat item-ref-decimal/items-ids: id=%q longId=%q must be equal", r.ID, r.LongID)
 			}
-			assertSignedInt64(t, "longid-int64", r.LongID)
+			assertUnsignedInt63(t, "longid-int63/items-ids", r.LongID)
 			assertSignedInt64(t, "timestampUsec-int64", r.TimestampUsec)
 			if !want[r.ID] {
 				t.Errorf("compat item-ref-decimal/items-ids: unexpected longId %q", r.ID)
@@ -148,15 +163,50 @@ func Run(t *testing.T, newH NewHarness) {
 		}
 	})
 
-	t.Run("longid-roundtrip/highbit-negative", func(t *testing.T) {
-		// 0xba7fcb8d8885006e has the high bit set → longId must be
-		// a negative signed-int64 decimal.
-		const hash16 = "ba7fcb8d8885006e"
-		long := ItemLongID(hash16)
-		if !strings.HasPrefix(long, "-") {
-			t.Errorf("compat longid-roundtrip: expected negative decimal for high-bit hash %q, got %q", hash16, long)
+	t.Run("longid-unsigned-int63/wire-format", func(t *testing.T) {
+		// Strict-Reeder contract (v0.4.13+): every server-emitted
+		// item longId must parse as a non-negative signed int64
+		// (i.e. fit in int63). The implementation guarantees this
+		// by masking the high bit of the underlying sha1 hash; the
+		// suite verifies it black-box by seeding a feed and
+		// scanning every emitted ref.
+		//
+		// Pre-v0.4.13, ~half of items emitted longIds with the high
+		// bit set, which Reeder silently dropped — a major item
+		// visibility bug.
+		h := newH(t)
+		const n = 8
+		h.SeedFeed(t, "Wide", "Wide", n)
+		w := Do(t, h, "GET", "/reader/api/0/stream/items/ids?s="+StreamReadingList+"&n=100", nil)
+		var resp itemsIDsResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
 		}
-		assertSignedInt64(t, "longid-roundtrip", long)
+		if len(resp.ItemRefs) != n {
+			t.Fatalf("itemRefs=%d, want %d", len(resp.ItemRefs), n)
+		}
+		for _, r := range resp.ItemRefs {
+			assertUnsignedInt63(t, "longid-unsigned-int63/items-ids.id", r.ID)
+			assertUnsignedInt63(t, "longid-unsigned-int63/items-ids.longId", r.LongID)
+		}
+		// stream/contents emits 16-hex item ids; cross-check that
+		// the same int63 guarantee holds on that path.
+		c := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/https://feed.example/Wide", nil)
+		var cresp streamResponseJSON
+		if err := json.Unmarshal(c.Body.Bytes(), &cresp); err != nil {
+			t.Fatalf("unmarshal contents: %v body=%s", err, c.Body.String())
+		}
+		for _, it := range cresp.Items {
+			hex := strings.TrimPrefix(it.ID, "tag:google.com,2005:reader/item/")
+			n, err := strconv.ParseUint(hex, 16, 64)
+			if err != nil {
+				t.Errorf("compat longid-unsigned-int63/contents: id %q not 16-hex: %v", it.ID, err)
+				continue
+			}
+			if n>>63 != 0 {
+				t.Errorf("compat longid-unsigned-int63/contents: id %q has top bit set (decoded=%d); strict clients drop it", it.ID, n)
+			}
+		}
 	})
 
 	t.Run("accept-decimal-longid/edit-tag", func(t *testing.T) {
@@ -164,7 +214,7 @@ func Run(t *testing.T, newH NewHarness) {
 		_, hashes := h.SeedFeed(t, "F", "F", 2)
 		// Decimal long id (Reeder uses this shape on writes).
 		long := ItemLongID(hashes[1])
-		assertSignedInt64(t, "accept-decimal-longid", long)
+		assertUnsignedInt63(t, "accept-decimal-longid", long)
 		body := url.Values{"i": {long}, "a": {StateStarredID}}
 		if w := Do(t, h, "POST", "/reader/api/0/edit-tag", body); w.Code != 200 {
 			t.Fatalf("compat accept-decimal-longid: code=%d body=%s", w.Code, w.Body.String())
@@ -228,6 +278,82 @@ func Run(t *testing.T, newH NewHarness) {
 		}
 		if !seen[FeedStreamID(u)] || !seen[LabelStreamID("News")] {
 			t.Errorf("compat direct-stream-ids: %v missing %q and/or %q", ds, FeedStreamID(u), LabelStreamID("News"))
+		}
+	})
+
+	t.Run("items-contents-empty/reading-list-stream-id", func(t *testing.T) {
+		// v0.4.13: POST /stream/items/contents with no `i` params
+		// must respond with a well-formed stream envelope keyed on
+		// the reading-list stream id and a fresh `updated`
+		// timestamp — not the pre-fix placeholder `{"id":"items",
+		// "updated":0,...}`. Strict clients reject the placeholder
+		// shape as malformed.
+		h := newH(t)
+		h.SeedFeed(t, "F", "F", 1)
+		w := Do(t, h, "POST", "/reader/api/0/stream/items/contents", url.Values{})
+		if w.Code != 200 {
+			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp streamResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+		}
+		if resp.ID != StreamReadingList {
+			t.Errorf("compat items-contents-empty: id=%q, want %q", resp.ID, StreamReadingList)
+		}
+		if resp.Updated <= 0 {
+			t.Errorf("compat items-contents-empty: updated=%d, want >0 (current server time)", resp.Updated)
+		}
+		if len(resp.Items) != 0 {
+			t.Errorf("compat items-contents-empty: items=%d, want 0", len(resp.Items))
+		}
+	})
+
+	t.Run("timestamp-encoding/stream-contents", func(t *testing.T) {
+		// v0.4.8/v0.4.9 wire-format lock:
+		//   - published/updated = entry display time, in seconds
+		//   - timestampUsec     = entry display time, in microseconds
+		//   - crawlTimeMsec     = entry FetchedAt, in milliseconds
+		// The current harness uses Published == FetchedAt per entry,
+		// so we cannot differentiate the two sources here; this
+		// contract still pins the seconds/usec/msec encoding and
+		// catches accidental unit regressions.
+		h := newH(t)
+		base := time.Unix(1700000000, 0).UTC() // fixed, well-defined ms/usec
+		stamps := []time.Time{base, base.Add(time.Minute)}
+		u, hashes := h.SeedFeedAt(t, "TS", "TS", stamps)
+		w := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/"+u, nil)
+		if w.Code != 200 {
+			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp streamResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+		}
+		byID := map[string]streamItemJSON{}
+		for _, it := range resp.Items {
+			byID[it.ID] = it
+		}
+		for i, hh := range hashes {
+			it, ok := byID[ItemID(hh)]
+			if !ok {
+				t.Fatalf("compat timestamp-encoding: missing item for hash %q", hh)
+			}
+			wantSec := stamps[i].Unix()
+			wantUsec := strconv.FormatInt(stamps[i].UnixMicro(), 10)
+			wantMsec := strconv.FormatInt(stamps[i].UnixMilli(), 10)
+			if it.Published != wantSec {
+				t.Errorf("compat timestamp-encoding: item[%d].published=%d, want %d (seconds)", i, it.Published, wantSec)
+			}
+			if it.Updated != wantSec {
+				t.Errorf("compat timestamp-encoding: item[%d].updated=%d, want %d (seconds)", i, it.Updated, wantSec)
+			}
+			if it.TimestampUsec != wantUsec {
+				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (microseconds)", i, it.TimestampUsec, wantUsec)
+			}
+			if it.CrawlTimeMsec != wantMsec {
+				t.Errorf("compat timestamp-encoding: item[%d].crawlTimeMsec=%q, want %q (milliseconds, from FetchedAt)", i, it.CrawlTimeMsec, wantMsec)
+			}
 		}
 	})
 

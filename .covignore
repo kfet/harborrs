@@ -34,3 +34,10 @@ github.com/kfet/harborrs/internal/store/store.go:98\.74,100\.3
 github.com/kfet/harborrs/internal/store/store.go:102\.39,104\.3
 github.com/kfet/harborrs/internal/store/store.go:117\.3,117\.13
 github.com/kfet/harborrs/internal/store/store.go:195\.3,195\.13
+
+# FileOPML lazy init uses double-checked locking. The second nil-check
+# inside the write-locked section is the race-loser branch — only
+# reachable when two goroutines call Load concurrently on a fresh
+# FileOPML and one wins the upgrade. Behaviour-equivalent to the
+# winner's path; not worth a deterministic-race test rig.
+github.com/kfet/harborrs/internal/config/config.go:103\.18,105\.3

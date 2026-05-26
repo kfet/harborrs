@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `FileOPML` is now in-memory authoritative: the parsed `*store.OPML`
+  is the source of truth at runtime, with `subscriptions.opml` acting
+  as the persistence layer. The file is read and parsed once on first
+  `Load` (or `Save`); subsequent `Load`s return a defensive deep copy
+  of the in-memory state with no disk I/O. `Save` serializes, atomic-
+  writes the file, then on success replaces the in-memory state — a
+  failed write leaves the in-memory state untouched (no partial
+  state). Public `OPMLProvider` surface unchanged. Measured ~100×
+  speedup on the per-`Load` hot path (208 µs → 2 µs for a 60-feed
+  OPML on M1); removes a redundant disk read + XML parse on every
+  `stream/contents` request (which previously called `OPML.Load`
+  twice via `collectStream` + `writeStreamPage`). New tests cover
+  read-once, Load isolation, and Save-failure-keeps-state. New
+  `BenchmarkFileOPMLLoad` / `BenchmarkFileOPMLLoadColdDisk` lock the
+  steady-state vs pre-rework numbers.
+
+- Reeder/GReader conformance suite (`internal/reedercompat`) updated
+  to reflect v0.4.8 / v0.4.9 / v0.4.13 contracts:
+  - `longid-unsigned-int63/wire-format` (new) — seeds a feed and
+    asserts every `id` / `longId` on `stream/items/ids` and every
+    16-hex item id on `stream/contents` decodes to a non-negative
+    int63. Replaces the now-stale `longid-roundtrip/highbit-negative`
+    test (the v0.4.13 sha1-top-bit mask makes high-bit longIds
+    impossible by construction). Mutation-tested by un-masking the
+    hash: the suite fails loudly with "strict clients drop it".
+  - `items-contents-empty/reading-list-stream-id` (new) — POST
+    `/stream/items/contents` with no `i` params must respond with
+    `id == reading-list` and a fresh `updated` timestamp, not the
+    pre-v0.4.13 `{"id":"items","updated":0}` placeholder.
+  - `timestamp-encoding/stream-contents` (new) — pins
+    `published`/`updated` in seconds, `timestampUsec` in
+    microseconds, and `crawlTimeMsec` in milliseconds against a
+    fixed-epoch seed; locks v0.4.8 + v0.4.9 wire encoding against
+    accidental unit regressions.
+  - `ItemLongID` helper now uses unsigned decimal (`FormatUint`) to
+    mirror the implementation.
+
 ## [0.4.13] - 2026-05-25
 
 ### Added

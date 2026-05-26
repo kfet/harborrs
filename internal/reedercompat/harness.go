@@ -66,15 +66,22 @@ func ItemID(hash string) string {
 	return "tag:google.com,2005:reader/item/" + canonicalHex(hash)
 }
 
-// ItemLongID returns the decimal signed-int64 form GReader/Reeder
+// ItemLongID returns the decimal unsigned-int64 form GReader/Reeder
 // expect on stream/items/ids responses (and accept on edit-tag).
+//
+// The wire is unsigned decimal. The implementation masks the high bit
+// of the underlying 16-hex hash so every longId fits in a positive
+// int63 — Reeder (and likely other strict clients) silently drop items
+// whose longId parses as a negative signed-int64. Legacy clients that
+// emitted signed-decimal ids on writes are still accepted on the server
+// side; the suite asserts the read path emits unsigned only.
 func ItemLongID(hash string) string {
 	h := canonicalHex(hash)
 	n, err := strconv.ParseUint(h, 16, 64)
 	if err != nil {
 		return "0"
 	}
-	return strconv.FormatInt(int64(n), 10)
+	return strconv.FormatUint(n, 10)
 }
 
 // canonicalHex returns the canonical 16-hex form. The hash may already

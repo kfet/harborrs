@@ -68,32 +68,92 @@ func Save(path string, c Config) error {
 	return atomic.WriteFileMode(path, data, 0o600)
 }
 
-// FileOPML is a concrete store.OPMLProvider that reads/writes the OPML on
-// disk via the atomic helper.
+// FileOPML is a concrete store.OPMLProvider. The authoritative
+// subscription state lives in memory as a *store.OPML; the on-disk
+// subscriptions.opml file is the persistence layer.
+//
+// Lifecycle:
+//   - First Load (or Save) populates the in-memory state. On first
+//     Load this means reading and parsing the file once (missing file
+//     → empty OPML). After that, no further disk reads ever occur.
+//   - Load returns a defensive deep copy of the in-memory state so
+//     callers can mutate freely without aliasing.
+//   - Save serializes the supplied OPML, atomic-writes it to disk,
+//     and on success replaces the in-memory state with a defensive
+//     copy. A failed write leaves the in-memory state untouched.
+//
+// FileOPML is the sole writer of subscriptions.opml in-process.
 type FileOPML struct {
 	Path string
-	mu   sync.Mutex
+	mu   sync.RWMutex
+	cur  *store.OPML // nil until first Load/Save populates it
 }
 
-// Load reads the OPML file. Missing → empty *store.OPML.
-func (f *FileOPML) Load() (*store.OPML, error) {
+// ensureLoaded reads the file once into memory. Caller must hold no
+// lock. Safe to call concurrently.
+func (f *FileOPML) ensureLoaded() error {
+	f.mu.RLock()
+	if f.cur != nil {
+		f.mu.RUnlock()
+		return nil
+	}
+	f.mu.RUnlock()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.cur != nil {
+		return nil
+	}
 	o, err := store.ReadOPML(f.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &store.OPML{}, nil
+			f.cur = &store.OPML{}
+			return nil
 		}
-		return nil, err
+		return err
 	}
-	return o, nil
+	f.cur = o
+	return nil
 }
 
-// Save writes the OPML atomically.
+// Load returns a defensive deep copy of the in-memory OPML. Triggers a
+// one-time disk read on the first call; never reads disk again.
+func (f *FileOPML) Load() (*store.OPML, error) {
+	if err := f.ensureLoaded(); err != nil {
+		return nil, err
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return cloneOPML(f.cur), nil
+}
+
+// Save writes the OPML atomically to disk and, on success, replaces
+// the in-memory state. A failed disk write leaves the in-memory state
+// untouched.
 func (f *FileOPML) Save(o *store.OPML) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return o.WriteOPML(f.Path)
+	if err := o.WriteOPML(f.Path); err != nil {
+		return err
+	}
+	f.cur = cloneOPML(o)
+	return nil
+}
+
+// cloneOPML returns a deep copy with independent Feeds and Feed.Tags
+// slices so callers can mutate the returned value without aliasing the
+// in-memory state. Callers must pass a non-nil *store.OPML.
+func cloneOPML(o *store.OPML) *store.OPML {
+	cp := *o
+	if len(o.Feeds) > 0 {
+		cp.Feeds = make([]store.Feed, len(o.Feeds))
+		copy(cp.Feeds, o.Feeds)
+		for i, f := range o.Feeds {
+			if len(f.Tags) > 0 {
+				cp.Feeds[i].Tags = append([]string(nil), f.Tags...)
+			}
+		}
+	}
+	return &cp
 }
 
 // NewFileOPML returns a FileOPML for a data dir.
