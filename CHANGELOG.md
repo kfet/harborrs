@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-05-25
+
 ### Added
 
 - Reader API perf-regression guard (`TestPerfBudget` in
