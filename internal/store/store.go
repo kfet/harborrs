@@ -81,6 +81,19 @@ type Store struct {
 	// arrives atomically when the index lock is released.
 	idx    map[string][]Entry
 	byHash map[string]Entry
+
+	// contentVer is the validator for state-dependent reader
+	// endpoints (`unread-count`). It bumps on any mutation that
+	// changes a content-shaped response:
+	//   - SetRead / SetStarred (state flag flips)
+	//   - AppendEntries (new entries observable in unread counts)
+	// Persists across restarts because it is rebuilt from on-disk
+	// state-log UpdatedAt timestamps in Open; new-entry-only
+	// bumps after that point are in-process only, which is fine —
+	// after a restart the validator necessarily differs (it starts
+	// from a different `now()`), so clients pick up changes via
+	// the next 200 response.
+	contentVer time.Time
 }
 
 // Open opens (and lazily creates) a data dir, folding state logs.
@@ -230,6 +243,9 @@ func (s *Store) foldLog(path string, kind byte) error {
 			continue
 		}
 		s.state[hash] = st
+		if ts.After(s.contentVer) {
+			s.contentVer = ts
+		}
 	}
 	return sc.Err()
 }
@@ -239,6 +255,17 @@ func (s *Store) EntryState(hash string) EntryState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.state[CanonicalEntryHash(hash)]
+}
+
+// StateVersion returns the most-recent UpdatedAt across all entry
+// states — the ETag-validator for state-dependent reader endpoints.
+// Zero time iff no state mutation has ever been recorded (fresh data
+// dir). Persists across restarts because it is rebuilt from the
+// on-disk state logs in Open.
+func (s *Store) StateVersion() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.contentVer
 }
 
 // SetRead records a read/unread mutation. Idempotent.
@@ -304,6 +331,7 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 	}
 	st.UpdatedAt = now
 	s.state[hash] = st
+	s.contentVer = now
 	// Compact when log is 10× live set (and at least 32 entries to avoid churn).
 	if isRead && s.readN > 32 && s.readN > 10*s.liveR {
 		return s.compactLocked(path, 'r')
@@ -402,6 +430,16 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 			return list[i].Published.After(list[j].Published)
 		})
 		s.idx[feedHash] = list
+		// Bump the content version — new entries change the
+		// unread-count payload and must invalidate cached ETags.
+		// Only forward-monotonic within a process; after a restart
+		// the validator is rebuilt from state-log timestamps and
+		// new-entries-only bumps from before the restart are not
+		// preserved (clients see a forced refresh post-restart,
+		// which is fine).
+		if now := s.now().UTC(); now.After(s.contentVer) {
+			s.contentVer = now
+		}
 		s.mu.Unlock()
 	}
 	return added, nil

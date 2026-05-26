@@ -107,6 +107,15 @@ var ItemIDHex16Pattern = regexp.MustCompile(`^tag:google\.com,2005:reader/item/[
 // returns the recorder. Form-encoded body if vals is non-nil.
 func Do(t *testing.T, h Harness, method, path string, vals url.Values) *httptest.ResponseRecorder {
 	t.Helper()
+	return doRaw(t, h, newRequest(t, method, path, vals))
+}
+
+// newRequest builds a request with the Harness token already applied,
+// for callers that want to add extra headers before executing it via
+// doRaw. The token is always set when h.Token != ""; callers may
+// override with r.Header.Set if needed.
+func newRequest(t *testing.T, method, path string, vals url.Values) *http.Request {
+	t.Helper()
 	var r *http.Request
 	if vals != nil {
 		r = httptest.NewRequest(method, path, strings.NewReader(vals.Encode()))
@@ -114,7 +123,14 @@ func Do(t *testing.T, h Harness, method, path string, vals url.Values) *httptest
 	} else {
 		r = httptest.NewRequest(method, path, nil)
 	}
-	if h.Token != "" {
+	return r
+}
+
+// doRaw runs a prebuilt request through the Harness handler, applying
+// the Harness token if no Authorization header is already present.
+func doRaw(t *testing.T, h Harness, r *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	if h.Token != "" && r.Header.Get("Authorization") == "" {
 		r.Header.Set("Authorization", "GoogleLogin auth="+h.Token)
 	}
 	w := httptest.NewRecorder()

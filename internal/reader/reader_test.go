@@ -1475,3 +1475,155 @@ func TestApplyRequestFiltersStateStreamOT(t *testing.T) {
 		t.Fatalf("nt=before mark must exclude on state stream; body=%s", w.Body.String())
 	}
 }
+
+// --- ETag / If-None-Match tests ---
+
+// doWithHeaders is `do` with an extra header set step for ETag tests.
+func doWithHeaders(t *testing.T, handler http.Handler, method, path, tok string, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, path, nil)
+	if tok != "" {
+		r.Header.Set("Authorization", "GoogleLogin auth="+tok)
+	}
+	for k, v := range hdrs {
+		r.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	return w
+}
+
+func TestSubscriptionListETag(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"t"}}}
+	w := do(t, mux, "GET", "/reader/api/0/subscription/list", tok, nil)
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag")
+	}
+	if w.Header().Get("Cache-Control") == "" {
+		t.Error("no Cache-Control")
+	}
+	if w.Header().Get("Vary") == "" {
+		t.Error("no Vary")
+	}
+	// INM matches → 304, empty body.
+	w2 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": etag})
+	if w2.Code != http.StatusNotModified {
+		t.Errorf("INM match code=%d want 304; body=%s", w2.Code, w2.Body.String())
+	}
+	if w2.Body.Len() != 0 {
+		t.Errorf("304 body must be empty, got %d bytes", w2.Body.Len())
+	}
+	if w2.Header().Get("ETag") != etag {
+		t.Errorf("304 ETag=%q want %q", w2.Header().Get("ETag"), etag)
+	}
+	// OPML change → ETag changes.
+	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: "https://y/feed", Title: "Y"})
+	w3 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": etag})
+	if w3.Code != 200 {
+		t.Errorf("after OPML change code=%d want 200", w3.Code)
+	}
+	if got := w3.Header().Get("ETag"); got == "" || got == etag {
+		t.Errorf("ETag did not change across OPML mutation: was=%q now=%q", etag, got)
+	}
+	// Wildcard INM → 304.
+	w4 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": "*"})
+	if w4.Code != http.StatusNotModified {
+		t.Errorf("wildcard INM code=%d want 304", w4.Code)
+	}
+	// Weak ETag prefix on INM → still 304 (we accept W/ on input).
+	w5 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": "W/" + w3.Header().Get("ETag")})
+	if w5.Code != http.StatusNotModified {
+		t.Errorf("W/ INM code=%d want 304", w5.Code)
+	}
+	// Multiple ETags in INM (one matches) → 304.
+	w6 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": `"other", ` + w3.Header().Get("ETag")})
+	if w6.Code != http.StatusNotModified {
+		t.Errorf("multi-INM code=%d want 304", w6.Code)
+	}
+	// Non-matching INM → 200.
+	w7 := doWithHeaders(t, mux, "GET", "/reader/api/0/subscription/list", tok, map[string]string{"If-None-Match": `"nonsense"`})
+	if w7.Code != 200 {
+		t.Errorf("non-match INM code=%d want 200", w7.Code)
+	}
+}
+
+func TestTagListETag(t *testing.T) {
+	_, mux, tok, op, _ := fixture(t)
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"alpha"}}}
+	w := do(t, mux, "GET", "/reader/api/0/tag/list", tok, nil)
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag")
+	}
+	w2 := doWithHeaders(t, mux, "GET", "/reader/api/0/tag/list", tok, map[string]string{"If-None-Match": etag})
+	if w2.Code != http.StatusNotModified {
+		t.Errorf("INM match code=%d want 304", w2.Code)
+	}
+}
+
+func TestUnreadCountETag(t *testing.T) {
+	_, mux, tok, op, st := fixture(t)
+	u := seedFeed(t, op, st, 3, "F")
+	w := do(t, mux, "GET", "/reader/api/0/unread-count?output=json", tok, nil)
+	etag := w.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag")
+	}
+	// Re-GET → 304.
+	w2 := doWithHeaders(t, mux, "GET", "/reader/api/0/unread-count?output=json", tok, map[string]string{"If-None-Match": etag})
+	if w2.Code != http.StatusNotModified {
+		t.Errorf("re-GET code=%d want 304", w2.Code)
+	}
+	// SetRead → ETag changes.
+	es, _ := st.ListEntries(store.FeedHash(u))
+	if err := st.SetRead(es[0].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	w3 := doWithHeaders(t, mux, "GET", "/reader/api/0/unread-count?output=json", tok, map[string]string{"If-None-Match": etag})
+	if w3.Code != 200 {
+		t.Errorf("after SetRead code=%d want 200", w3.Code)
+	}
+	if got := w3.Header().Get("ETag"); got == "" || got == etag {
+		t.Errorf("ETag did not change across SetRead: was=%q now=%q", etag, got)
+	}
+}
+
+func TestUnreadCountETagLoadErr(t *testing.T) {
+	// OPML.Load failure → 500, not a stray 304/200 with a half-built ETag.
+	_, mux, tok, op, _ := fixture(t)
+	op.loadErr = errLoad
+	w := do(t, mux, "GET", "/reader/api/0/unread-count?output=json", tok, nil)
+	if w.Code != 500 {
+		t.Errorf("code=%d want 500", w.Code)
+	}
+}
+
+var errLoad = errOPMLLoad("boom")
+
+type errOPMLLoad string
+
+func (e errOPMLLoad) Error() string { return string(e) }
+
+func TestMatchesINMEdgeCases(t *testing.T) {
+	// Empty INM or empty etag → false; both branches separately.
+	if matchesINM("", `"a"`) {
+		t.Error("empty INM should not match")
+	}
+	if matchesINM(`"a"`, "") {
+		t.Error("empty etag should not match")
+	}
+}
+
+func TestETagOPMLOnEmpty(t *testing.T) {
+	// etagOPML on a fresh OPML still returns a non-empty quoted value
+	// (Marshal produces a deterministic minimal document).
+	op := &store.OPML{}
+	if etagOPML(op) == "" {
+		t.Error("empty OPML should still yield an ETag")
+	}
+}

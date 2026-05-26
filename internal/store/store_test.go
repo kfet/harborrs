@@ -879,3 +879,50 @@ func TestIsHexEmpty(t *testing.T) {
 		t.Fatal("empty string is not hex")
 	}
 }
+
+func TestStateVersion(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fresh store → zero.
+	if !s.StateVersion().IsZero() {
+		t.Errorf("fresh StateVersion=%v, want zero", s.StateVersion())
+	}
+	// AppendEntries bumps the version.
+	fh := FeedHash("https://x/feed")
+	if _, err := s.AppendEntries(fh, []Entry{{GUID: "g1", Link: "l1"}}); err != nil {
+		t.Fatal(err)
+	}
+	afterAppend := s.StateVersion()
+	if afterAppend.IsZero() {
+		t.Error("StateVersion zero after AppendEntries")
+	}
+	// SetRead bumps further.
+	es, _ := s.ListEntries(fh)
+	if err := s.SetRead(es[0].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	afterRead := s.StateVersion()
+	if !afterRead.After(afterAppend) {
+		t.Errorf("StateVersion did not advance across SetRead: append=%v read=%v", afterAppend, afterRead)
+	}
+	// Idempotent SetRead → no further bump.
+	if err := s.SetRead(es[0].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	if s.StateVersion() != afterRead {
+		t.Errorf("idempotent SetRead bumped StateVersion: %v → %v", afterRead, s.StateVersion())
+	}
+	// Persist across re-open. State-log timestamps round to the second
+	// (RFC3339 without sub-second), so post-restart the version is
+	// truncated to seconds. Assert the truncated equality.
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, got := afterRead.Truncate(time.Second), s2.StateVersion(); !got.Equal(want) {
+		t.Errorf("StateVersion not restored from logs: was=%v (trunc=%v) now=%v", afterRead, want, got)
+	}
+}

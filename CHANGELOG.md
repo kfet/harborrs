@@ -4,6 +4,65 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- ETag / If-None-Match on the three poll-hot GReader endpoints
+  (`subscription/list`, `tag/list`, `unread-count`). Each response
+  emits a strong, quoted ETag plus `Cache-Control: private, no-cache`
+  and `Vary: Authorization`; a request that includes
+  `If-None-Match: <etag>` matching the current validator returns 304
+  Not Modified with no body. Reeder fires these three endpoints on
+  every sync, so the 304 path collapses three full round trips per
+  sync into ~zero-byte conditional GETs whenever subscription state
+  and entry state are unchanged. The `unread-count` handler does the
+  INM check before the per-feed unread scan, so a 304 also avoids
+  the index walk entirely.
+
+- Validator design:
+  - `subscription/list` and `tag/list`: validator is
+    `sha256[:8](OPML.Marshal())` — a deterministic short fingerprint
+    over the same canonical-sorted XML the server writes to disk, so
+    equal OPML → equal ETag across processes.
+  - `unread-count`: validator combines the OPML fingerprint with the
+    store's content version (`StateVersion()`), encoded as
+    `"<opml_fp>.<unix_us>"`. The content version is bumped on every
+    successful `SetRead` / `SetStarred` (state-flag flips) and on
+    `AppendEntries` (new entries observable via unread counts). It
+    is rebuilt from on-disk state-log UpdatedAt timestamps on
+    `store.Open` — so state-flag changes survive restarts; new-entry-
+    only bumps do not, which manifests as a single forced 200 right
+    after restart (acceptable on a single-user, single-writer server).
+
+- New `Store.StateVersion()` method backing the validator and a
+  `contentVer time.Time` field on `Store`. `StateVersion` is
+  forward-monotonic within a process lifetime.
+
+- 6 new conformance contracts in `internal/reedercompat`:
+  - `etag-conditional/subscription-list` — 304 on INM match;
+    ETag changes across OPML mutation.
+  - `etag-conditional/tag-list` — same shape, mutation via tag set
+    change.
+  - `etag-conditional/unread-count` — 304 on same state; ETag
+    changes across both `SetRead` and `SetStarred`; post-mutation
+    re-INM yields 304 with the new ETag.
+  - `etag-conditional/unread-count-tracks-content-changes` — new
+    entries arriving via `SeedFeed` (AppendEntries internally)
+    invalidate the validator. Catches regressions where the
+    `unread-count` validator only tracks state-flag mutations and
+    misses the new-entry case.
+  - `etag-conditional/headers` — `ETag`, `Cache-Control` with
+    `no-cache`, and `Vary` including `Authorization` are all
+    present on the 200 response across the three endpoints.
+  - Reader-level unit tests (`internal/reader/reader_test.go`)
+    cover the `matchesINM` edge cases not exposed via the
+    conformance API: empty inputs, wildcard `*`, weak-tag `W/`
+    prefix on INM, comma-separated multi-tag list, non-match.
+
+- Mutation tests: stripping the state-version from `etagOPMLState`
+  makes both the reader unit test and the compat suite fail loudly
+  on the read-state and starred-state mutation cases ("ETag did not
+  change across SetRead").
+
 ## [0.4.15] - 2026-05-26
 
 ### Changed

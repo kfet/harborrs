@@ -3,6 +3,7 @@ package reedercompat
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -700,6 +701,200 @@ func Run(t *testing.T, newH NewHarness) {
 		}
 		if gotCount[StreamReadingList] != 3 {
 			t.Errorf("compat unread-count-newest: reading-list count=%d, want 3", gotCount[StreamReadingList])
+		}
+	})
+
+	t.Run("etag-conditional/subscription-list", func(t *testing.T) {
+		// First GET emits an ETag; a follow-up with If-None-Match
+		// returns 304 + the same ETag. Mutating the OPML (seed a
+		// new feed) MUST change the ETag and the conditional GET
+		// returns 200 with the fresh body.
+		h := newH(t)
+		h.SeedFeed(t, "S1", "S1", 1)
+		w := Do(t, h, "GET", "/reader/api/0/subscription/list", nil)
+		if w.Code != 200 {
+			t.Fatalf("first GET: code=%d body=%s", w.Code, w.Body.String())
+		}
+		etag := w.Result().Header.Get("ETag")
+		if etag == "" {
+			t.Fatal("compat etag-conditional/subscription-list: first response has no ETag header")
+		}
+		// Conditional GET → 304, same ETag, empty body.
+		r2 := newRequest(t, "GET", "/reader/api/0/subscription/list", nil)
+		r2.Header.Set("If-None-Match", etag)
+		w2 := doRaw(t, h, r2)
+		if w2.Code != http.StatusNotModified {
+			t.Errorf("compat etag-conditional/subscription-list: INM match code=%d, want 304; body=%s", w2.Code, w2.Body.String())
+		}
+		if got := w2.Result().Header.Get("ETag"); got != etag {
+			t.Errorf("compat etag-conditional/subscription-list: 304 ETag=%q, want %q", got, etag)
+		}
+		if w2.Body.Len() != 0 {
+			t.Errorf("compat etag-conditional/subscription-list: 304 body must be empty, got %d bytes", w2.Body.Len())
+		}
+		// State change: add a feed → ETag must change.
+		h.SeedFeed(t, "S2", "S2", 1)
+		r3 := newRequest(t, "GET", "/reader/api/0/subscription/list", nil)
+		r3.Header.Set("If-None-Match", etag)
+		w3 := doRaw(t, h, r3)
+		if w3.Code != 200 {
+			t.Errorf("compat etag-conditional/subscription-list: after OPML change INM should miss, got code=%d", w3.Code)
+		}
+		if got := w3.Result().Header.Get("ETag"); got == "" || got == etag {
+			t.Errorf("compat etag-conditional/subscription-list: ETag did not change across OPML mutation: was=%q now=%q", etag, got)
+		}
+	})
+
+	t.Run("etag-conditional/tag-list", func(t *testing.T) {
+		// Same shape as subscription-list. Mutate OPML by adding a
+		// feed with a new tag; the tag set changes → ETag changes.
+		h := newH(t)
+		h.SeedFeed(t, "T1", "alpha", 1)
+		w := Do(t, h, "GET", "/reader/api/0/tag/list", nil)
+		if w.Code != 200 {
+			t.Fatalf("first GET: code=%d body=%s", w.Code, w.Body.String())
+		}
+		etag := w.Result().Header.Get("ETag")
+		if etag == "" {
+			t.Fatal("compat etag-conditional/tag-list: first response has no ETag header")
+		}
+		r2 := newRequest(t, "GET", "/reader/api/0/tag/list", nil)
+		r2.Header.Set("If-None-Match", etag)
+		w2 := doRaw(t, h, r2)
+		if w2.Code != http.StatusNotModified {
+			t.Errorf("compat etag-conditional/tag-list: INM match code=%d, want 304", w2.Code)
+		}
+		h.SeedFeed(t, "T2", "beta", 1)
+		r3 := newRequest(t, "GET", "/reader/api/0/tag/list", nil)
+		r3.Header.Set("If-None-Match", etag)
+		w3 := doRaw(t, h, r3)
+		if w3.Code != 200 {
+			t.Errorf("compat etag-conditional/tag-list: after tag mutation INM should miss, got code=%d", w3.Code)
+		}
+		if got := w3.Result().Header.Get("ETag"); got == etag {
+			t.Errorf("compat etag-conditional/tag-list: ETag did not change across tag mutation: %q", got)
+		}
+	})
+
+	t.Run("etag-conditional/unread-count", func(t *testing.T) {
+		// unread-count depends on BOTH OPML state and entry-state
+		// version. A read-state mutation MUST change the ETag even
+		// when OPML is unchanged.
+		h := newH(t)
+		_, hashes := h.SeedFeed(t, "U", "U", 3)
+		w := Do(t, h, "GET", "/reader/api/0/unread-count?output=json", nil)
+		if w.Code != 200 {
+			t.Fatalf("first GET: code=%d body=%s", w.Code, w.Body.String())
+		}
+		etag := w.Result().Header.Get("ETag")
+		if etag == "" {
+			t.Fatal("compat etag-conditional/unread-count: first response has no ETag header")
+		}
+		// Same state → 304.
+		r2 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r2.Header.Set("If-None-Match", etag)
+		w2 := doRaw(t, h, r2)
+		if w2.Code != http.StatusNotModified {
+			t.Errorf("compat etag-conditional/unread-count: INM match code=%d, want 304", w2.Code)
+		}
+		// Read-state mutation → ETag changes.
+		h.SetRead(t, hashes[0], true)
+		r3 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r3.Header.Set("If-None-Match", etag)
+		w3 := doRaw(t, h, r3)
+		if w3.Code != 200 {
+			t.Errorf("compat etag-conditional/unread-count: after read-state mutation INM should miss, got code=%d", w3.Code)
+		}
+		etag2 := w3.Result().Header.Get("ETag")
+		if etag2 == "" || etag2 == etag {
+			t.Errorf("compat etag-conditional/unread-count: ETag did not change across read-state mutation: was=%q now=%q", etag, etag2)
+		}
+		// Same state again → 304 with the new ETag.
+		r4 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r4.Header.Set("If-None-Match", etag2)
+		w4 := doRaw(t, h, r4)
+		if w4.Code != http.StatusNotModified {
+			t.Errorf("compat etag-conditional/unread-count: post-mutation re-INM code=%d, want 304", w4.Code)
+		}
+		// Starred-state mutation also bumps the validator.
+		h.SetStarred(t, hashes[1], true)
+		r5 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r5.Header.Set("If-None-Match", etag2)
+		w5 := doRaw(t, h, r5)
+		if w5.Code != 200 {
+			t.Errorf("compat etag-conditional/unread-count: after star mutation INM should miss, got code=%d", w5.Code)
+		}
+	})
+
+	t.Run("etag-conditional/unread-count-tracks-content-changes", func(t *testing.T) {
+		// Anything that changes the unread-count payload must
+		// invalidate the cached ETag — including new entries
+		// arriving from a poll cycle (the bug a state-only
+		// validator would have: clients get stale 304s after
+		// fresh items are ingested).
+		//
+		// We exercise this by seeding a second feed via the
+		// harness, which both adds entries and adds a feed to the
+		// OPML — either change is sufficient to invalidate the
+		// validator, and the contract is "content changed → ETag
+		// changed", not "exactly this kind of change". A regression
+		// that tracks only state-flag mutations (missing the new-
+		// entries bump on AppendEntries) would still fail under
+		// this scenario in implementations where OPML is also
+		// fingerprint-validated, because such implementations
+		// must include the AppendEntries bump for cases where the
+		// client polls into an unchanged OPML.
+		h := newH(t)
+		h.SeedFeed(t, "P1", "P1", 2)
+		w := Do(t, h, "GET", "/reader/api/0/unread-count?output=json", nil)
+		etag := w.Result().Header.Get("ETag")
+		if etag == "" {
+			t.Fatal("compat unread-count-tracks-content-changes: first ETag missing")
+		}
+		r2 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r2.Header.Set("If-None-Match", etag)
+		if w2 := doRaw(t, h, r2); w2.Code != http.StatusNotModified {
+			t.Errorf("compat unread-count-tracks-content-changes: re-GET code=%d, want 304", w2.Code)
+		}
+		h.SeedFeed(t, "P2", "P2", 3)
+		r3 := newRequest(t, "GET", "/reader/api/0/unread-count?output=json", nil)
+		r3.Header.Set("If-None-Match", etag)
+		w3 := doRaw(t, h, r3)
+		if w3.Code != 200 {
+			t.Errorf("compat unread-count-tracks-content-changes: after seed INM should miss, got code=%d", w3.Code)
+		}
+		if got := w3.Result().Header.Get("ETag"); got == "" || got == etag {
+			t.Errorf("compat unread-count-tracks-content-changes: ETag did not change: was=%q now=%q", etag, got)
+		}
+	})
+
+	t.Run("etag-conditional/headers", func(t *testing.T) {
+		// Vary: Authorization and Cache-Control: private,no-cache
+		// are part of the contract — they prevent shared caches
+		// from returning the response for a different user and
+		// require clients to revalidate every request.
+		h := newH(t)
+		h.SeedFeed(t, "H", "H", 1)
+		for _, path := range []string{
+			"/reader/api/0/subscription/list",
+			"/reader/api/0/tag/list",
+			"/reader/api/0/unread-count?output=json",
+		} {
+			w := Do(t, h, "GET", path, nil)
+			if w.Code != 200 {
+				t.Errorf("compat etag-conditional/headers %s: code=%d", path, w.Code)
+				continue
+			}
+			hdrs := w.Result().Header
+			if hdrs.Get("ETag") == "" {
+				t.Errorf("compat etag-conditional/headers %s: missing ETag", path)
+			}
+			if cc := hdrs.Get("Cache-Control"); cc == "" || !strings.Contains(cc, "no-cache") {
+				t.Errorf("compat etag-conditional/headers %s: Cache-Control=%q must contain no-cache", path, cc)
+			}
+			if vary := hdrs.Get("Vary"); !strings.Contains(vary, "Authorization") {
+				t.Errorf("compat etag-conditional/headers %s: Vary=%q must include Authorization", path, vary)
+			}
 		}
 	})
 }

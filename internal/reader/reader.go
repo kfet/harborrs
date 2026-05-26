@@ -7,7 +7,9 @@
 package reader
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -201,7 +203,7 @@ func (s *Server) handleSubscriptionList(w http.ResponseWriter, r *http.Request) 
 		}
 		out.Subscriptions = append(out.Subscriptions, item)
 	}
-	writeJSON(w, out)
+	s.serveConditionalJSON(w, r, etagOPML(op), out)
 }
 
 func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +313,7 @@ func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
 	for _, n := range op.AllTags() {
 		out.Tags = append(out.Tags, tag{ID: labelStreamID(n), Type: "folder"})
 	}
-	writeJSON(w, out)
+	s.serveConditionalJSON(w, r, etagOPML(op), out)
 }
 
 // handleRenameTag implements `/reader/api/0/rename-tag`: rewrites every
@@ -919,6 +921,17 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Early INM check — skip the full per-feed unread scan on 304.
+	etag := etagOPMLState(op, s.Store.StateVersion())
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("Vary", "Authorization")
+		if matchesINM(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	type uc struct {
 		ID                      string `json:"id"`
 		Count                   int    `json:"count"`
@@ -963,6 +976,91 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// opmlFingerprint returns a short, deterministic fingerprint of the
+// OPML's logical content. Used as the validator for state-independent
+// reader endpoints (`subscription/list`, `tag/list`). OPML.Marshal is
+// deterministic (feeds sorted by title then URL), so equal OPML →
+// equal fingerprint across processes.
+func opmlFingerprint(o *store.OPML) string {
+	b, err := o.Marshal()
+	if err != nil {
+		// Marshal only fails on encoding bugs; degrade to a unique
+		// per-call value so the ETag never matches (forces 200).
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+// etagOPML returns the ETag value (already quoted) for an OPML-only
+// validator.
+func etagOPML(o *store.OPML) string {
+	fp := opmlFingerprint(o)
+	if fp == "" {
+		return ""
+	}
+	return `"` + fp + `"`
+}
+
+// etagOPMLState returns the ETag value for endpoints whose payload
+// depends on both OPML and entry-state. The state-version is encoded
+// as a Unix-microsecond decimal so equal-state → equal-ETag across
+// processes (StateVersion is rebuilt from on-disk logs on Open).
+func etagOPMLState(o *store.OPML, sv time.Time) string {
+	fp := opmlFingerprint(o)
+	if fp == "" {
+		return ""
+	}
+	return `"` + fp + "." + strconv.FormatInt(sv.UnixMicro(), 10) + `"`
+}
+
+// serveConditionalJSON writes v as JSON with caching headers, or
+// returns 304 Not Modified if the request's If-None-Match matches
+// the supplied etag. The etag must already be quoted ("..."); pass
+// an empty string to skip ETag handling entirely.
+//
+// Headers set on 200 and 304:
+//   - ETag: <etag>
+//   - Cache-Control: private, no-cache  (must revalidate every time;
+//     client may keep the cached body but must come back with INM)
+//   - Vary: Authorization
+func (s *Server) serveConditionalJSON(w http.ResponseWriter, r *http.Request, etag string, v any) {
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("Vary", "Authorization")
+		if matchesINM(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+	writeJSON(w, v)
+}
+
+// matchesINM does a textually-strict comparison of If-None-Match.
+// Per RFC 7232 the value is a comma-separated list of opaque ETags
+// or the bare `*`. We accept any list member that exactly equals the
+// supplied etag string (the etag we emit is always strong + quoted;
+// we never produce W/ "weak" etags, but accept them on input by
+// stripping the prefix so a client that re-quotes an etag with W/
+// still gets a 304).
+func matchesINM(inm, etag string) bool {
+	if inm == "" || etag == "" {
+		return false
+	}
+	if inm == "*" {
+		return true
+	}
+	for _, tok := range strings.Split(inm, ",") {
+		tok = strings.TrimSpace(tok)
+		tok = strings.TrimPrefix(tok, "W/")
+		if tok == etag {
+			return true
+		}
+	}
+	return false
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
