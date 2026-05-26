@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-05-26
+
 ### Changed
 
 - Internal refactor (no behaviour change): extract `applyETag(w, r, etag) bool`
