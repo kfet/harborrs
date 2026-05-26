@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-05-26
+
 ### Changed
 
 - Reeder/GReader conformance suite (`internal/reedercompat`) — make
