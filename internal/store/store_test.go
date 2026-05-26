@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -680,6 +681,26 @@ func TestEntryHashLengthAndCanonical(t *testing.T) {
 	}
 	if got := CanonicalEntryHash("not-hex-but-longer"); got != "not-hex-but-longer" {
 		t.Fatalf("CanonicalEntryHash nonhex=%q", got)
+	}
+}
+
+// TestEntryHashFitsInt63 guards the wire-format invariant that every
+// EntryHash decodes to a non-negative int64. Reeder (and likely other
+// strict Greader clients) parses the decimal `longId` as a signed
+// int64 and silently drops items whose value exceeds 2^63-1, which
+// before the high-bit mask manifested as ~50% of items missing from
+// the feed display. Sweeps a wide input space to catch any regression
+// that re-introduces a top bit in the hash.
+func TestEntryHashFitsInt63(t *testing.T) {
+	for i := 0; i < 10000; i++ {
+		h := EntryHash(strconv.Itoa(i), "https://example.com/"+strconv.Itoa(i*7+3))
+		n, err := strconv.ParseUint(h, 16, 64)
+		if err != nil {
+			t.Fatalf("hash %q not parseable: %v", h, err)
+		}
+		if n > 1<<63-1 {
+			t.Fatalf("hash %q (%d) exceeds int63 max — top bit not masked", h, n)
+		}
 	}
 }
 

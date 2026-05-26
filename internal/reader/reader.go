@@ -411,7 +411,12 @@ func itemLongID(hash string) string {
 	if err != nil {
 		return "0"
 	}
-	return strconv.FormatInt(int64(n), 10)
+	// Google Reader item ids are unsigned 64-bit decimals on the wire.
+	// Reeder (and likely other strict clients) silently drop items whose
+	// `id` / `longId` parse as negative signed decimals, which is why a
+	// roughly-half-of-items display gap appears: feeds whose sha1-derived
+	// 16-hex hashes start with 8..f map to negative int64 and get culled.
+	return strconv.FormatUint(n, 10)
 }
 
 func readerItemHex(hash string) string { return store.CanonicalEntryHash(hash) }
@@ -420,9 +425,11 @@ func itemIDToHash(id string) string {
 	if strings.HasPrefix(id, "tag:google.com,2005:reader/item/") {
 		id = strings.TrimPrefix(id, "tag:google.com,2005:reader/item/")
 	}
-	// Long-form decimal int64, as emitted by longId / used by some
-	// Google Reader clients. Negative numbers are the signed decimal form
-	// of a 64-bit item id whose high bit is set.
+	// Decimal forms: unsigned (current; emitted by itemLongID) or signed
+	// (legacy / older Reader clients). Try unsigned first, then signed.
+	if n, err := strconv.ParseUint(id, 10, 64); err == nil {
+		return fmt.Sprintf("%016x", n)
+	}
 	if n, err := strconv.ParseInt(id, 10, 64); err == nil {
 		return fmt.Sprintf("%016x", uint64(n))
 	}
@@ -458,7 +465,11 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 		wantOrder = append(wantOrder, h)
 	}
 	if len(wantOrder) == 0 {
-		writeJSON(w, streamResponse{ID: "items", Items: []streamItem{}})
+		writeJSON(w, streamResponse{
+			ID:      streamReadingList,
+			Updated: s.Now().Unix(),
+			Items:   []streamItem{},
+		})
 		return
 	}
 	found := map[string]store.Entry{}
@@ -474,8 +485,9 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, streamResponse{
-		ID:    "items",
-		Items: s.toStreamItems(entries, op),
+		ID:      streamReadingList,
+		Updated: s.Now().Unix(),
+		Items:   s.toStreamItems(entries, op),
 	})
 }
 

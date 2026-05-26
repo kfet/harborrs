@@ -1336,18 +1336,23 @@ func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
 		t.Fatalf("current tag id -> hash %q", got)
 	}
 	long := itemLongID("ba7fcb8d8885006e")
-	if long != "-5008060451871457170" { // signed int64 decimal of 0xba7fcb8d8885006e
+	if long != "13438683621838094446" { // unsigned int64 decimal of 0xba7fcb8d8885006e
 		t.Fatalf("longId=%q", long)
 	}
 	if got := itemIDToHash(long); got != "ba7fcb8d8885006e" {
 		t.Fatalf("longId -> hash %q", got)
+	}
+	// Legacy clients may POST back the signed-int64 decimal form,
+	// emitted by harborrs ≤ v0.4.12 via FormatInt. Round-trip parity.
+	if got := itemIDToHash("-5008060451871457170"); got != "ba7fcb8d8885006e" {
+		t.Fatalf("legacy signed longId -> hash %q", got)
 	}
 
 	_, mux, tok, op, st := fixture(t)
 	u := "https://feed.example/highbit"
 	op.opml.Feeds = append(op.opml.Feeds, store.Feed{XMLURL: u, Title: "F", Tags: []string{"F"}, HTMLURL: "https://feed.example"})
 	entry := store.Entry{
-		Hash:      "ba7fcb8d8885006e", // high bit set, so longId is negative
+		Hash:      "ba7fcb8d8885006e", // top bit set; can occur only via legacy/external input now that EntryHash masks it
 		FeedHash:  store.FeedHash(u),
 		GUID:      "g",
 		Link:      "https://feed.example/highbit/1",

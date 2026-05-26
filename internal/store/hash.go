@@ -36,12 +36,22 @@ func FeedHash(url string) string {
 // EntryHash returns the Reader-compatible short hex hash for an entry,
 // derived from the (GUID, link) pair. Either may be empty; both empty yields a
 // stable hash too, which lets us de-dup degenerate "no identity" entries.
+//
+// The high bit of the first byte is masked off so the 16-hex hash always
+// fits in a positive int64 when decoded. Google Reader's monotonic
+// uint64 item ids never used the top bit, and at least one mature client
+// (Reeder) silently drops items whose `longId` exceeds int64 max — manifesting
+// as roughly half of items missing from the feed display. Masking the
+// high bit costs us 1 bit of hash space (still ~63 bits, no collision
+// risk at this scale) and keeps the wire format compatible.
 func EntryHash(guid, link string) string {
 	h := sha1.New()
 	h.Write([]byte(guid))
 	h.Write([]byte{0})
 	h.Write([]byte(link))
-	return hex.EncodeToString(h.Sum(nil))[:EntryHashLen]
+	sum := h.Sum(nil)
+	sum[0] &= 0x7F
+	return hex.EncodeToString(sum)[:EntryHashLen]
 }
 
 // CanonicalEntryHash normalises legacy on-disk entry hashes to the current

@@ -38,6 +38,29 @@ All notable changes to this project will be documented in this file.
   the entry rows and reads more naturally in the split-panel detail
   view.
 
+### Fixed
+
+- Reader API: ~50% of entries were silently dropped by strict Greader
+  clients (Reeder confirmed) because their decimal `longId` exceeded
+  signed-int64 max. Root cause: `EntryHash` produced the full 16-hex
+  sha1, half of which have the top bit set, decoding to values above
+  `2^63-1`. Fix masks the top bit of the first sha1 byte so every
+  hash decodes to a positive int63 on the wire. Costs 1 bit of hash
+  entropy (still ~63 bits, no collision risk at any realistic scale).
+  No migration: entries created before this release retain their
+  original hashes and continue to behave as before; new entries
+  ingested after upgrade become fully visible to strict clients.
+- Reader API: `stream/items/contents` response now sets `id` to the
+  reading-list stream and `updated` to the current server timestamp
+  (previously `"items"` / `0`). Spec-compliance fix noticed while
+  diagnosing the above.
+- Reader API: `longId` is now formatted as unsigned decimal
+  (`FormatUint`) rather than signed (`FormatInt`). With the
+  top-bit-masked hash this is observationally identical for new
+  entries, but `itemIDToHash` now accepts both unsigned and signed
+  decimal POST bodies so clients caching IDs emitted by harborrs
+  ≤ v0.4.12 still resolve correctly.
+
 ## [0.4.12] - 2026-05-24
 
 ### Fixed
