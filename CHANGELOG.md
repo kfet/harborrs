@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-05-26
+
 ### Changed
 
 - `FileOPML` is now in-memory authoritative: the parsed `*store.OPML`
