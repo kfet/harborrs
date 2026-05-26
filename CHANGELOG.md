@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-05-26
+
 ### Added
 
 - ETag / If-None-Match on the three poll-hot GReader endpoints
