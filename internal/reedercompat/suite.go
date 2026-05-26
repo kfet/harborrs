@@ -310,18 +310,22 @@ func Run(t *testing.T, newH NewHarness) {
 	})
 
 	t.Run("timestamp-encoding/stream-contents", func(t *testing.T) {
-		// v0.4.8/v0.4.9 wire-format lock:
-		//   - published/updated = entry display time, in seconds
-		//   - timestampUsec     = entry display time, in microseconds
+		// v0.4.8/v0.4.9 wire-format lock — both units AND source:
+		//   - published/updated = entry Published, in seconds
+		//   - timestampUsec     = entry Published, in microseconds
 		//   - crawlTimeMsec     = entry FetchedAt, in milliseconds
-		// The current harness uses Published == FetchedAt per entry,
-		// so we cannot differentiate the two sources here; this
-		// contract still pins the seconds/usec/msec encoding and
-		// catches accidental unit regressions.
+		// Published and FetchedAt are deliberately set to disjoint
+		// times so the test differentiates which field each wire slot
+		// reads from — not just that the units happen to be right.
+		// A regression that swaps the two sources will fail here.
 		h := newH(t)
-		base := time.Unix(1700000000, 0).UTC() // fixed, well-defined ms/usec
-		stamps := []time.Time{base, base.Add(time.Minute)}
-		u, hashes := h.SeedFeedAt(t, "TS", "TS", stamps)
+		// Two fixed, well-defined timestamps with no overlap. Use
+		// values that round-trip cleanly through seconds/ms/µs.
+		pubBase := time.Unix(1700000000, 0).UTC()   // 2023-11-14 22:13:20 UTC
+		fetchBase := time.Unix(1800000000, 0).UTC() // 2027-01-15 08:00:00 UTC
+		published := []time.Time{pubBase, pubBase.Add(time.Minute)}
+		fetched := []time.Time{fetchBase, fetchBase.Add(time.Minute)}
+		u, hashes := h.SeedFeedTimes(t, "TS", "TS", published, fetched)
 		w := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/"+u, nil)
 		if w.Code != 200 {
 			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
@@ -339,21 +343,56 @@ func Run(t *testing.T, newH NewHarness) {
 			if !ok {
 				t.Fatalf("compat timestamp-encoding: missing item for hash %q", hh)
 			}
-			wantSec := stamps[i].Unix()
-			wantUsec := strconv.FormatInt(stamps[i].UnixMicro(), 10)
-			wantMsec := strconv.FormatInt(stamps[i].UnixMilli(), 10)
-			if it.Published != wantSec {
-				t.Errorf("compat timestamp-encoding: item[%d].published=%d, want %d (seconds)", i, it.Published, wantSec)
+			wantPubSec := published[i].Unix()
+			wantPubUsec := strconv.FormatInt(published[i].UnixMicro(), 10)
+			wantFetchMsec := strconv.FormatInt(fetched[i].UnixMilli(), 10)
+			if it.Published != wantPubSec {
+				t.Errorf("compat timestamp-encoding: item[%d].published=%d, want %d (Published, seconds)", i, it.Published, wantPubSec)
 			}
-			if it.Updated != wantSec {
-				t.Errorf("compat timestamp-encoding: item[%d].updated=%d, want %d (seconds)", i, it.Updated, wantSec)
+			if it.Updated != wantPubSec {
+				t.Errorf("compat timestamp-encoding: item[%d].updated=%d, want %d (Published, seconds)", i, it.Updated, wantPubSec)
 			}
-			if it.TimestampUsec != wantUsec {
-				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (microseconds)", i, it.TimestampUsec, wantUsec)
+			if it.TimestampUsec != wantPubUsec {
+				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (Published, microseconds)", i, it.TimestampUsec, wantPubUsec)
 			}
-			if it.CrawlTimeMsec != wantMsec {
-				t.Errorf("compat timestamp-encoding: item[%d].crawlTimeMsec=%q, want %q (milliseconds, from FetchedAt)", i, it.CrawlTimeMsec, wantMsec)
+			if it.CrawlTimeMsec != wantFetchMsec {
+				t.Errorf("compat timestamp-encoding: item[%d].crawlTimeMsec=%q, want %q (FetchedAt, milliseconds)", i, it.CrawlTimeMsec, wantFetchMsec)
 			}
+		}
+	})
+
+	t.Run("timestamp-encoding/zero-published-falls-back-to-fetched", func(t *testing.T) {
+		// Edge: when Published is zero (e.g. feed item with no
+		// pubDate), the display time falls back to FetchedAt for
+		// timestampUsec / published / updated. crawlTimeMsec stays
+		// pinned to FetchedAt regardless. This is the documented
+		// `entryDisplayTime` contract in reader.go.
+		h := newH(t)
+		fetch := time.Unix(1800000000, 0).UTC()
+		u, hashes := h.SeedFeedTimes(t, "TZ", "TZ", []time.Time{{}}, []time.Time{fetch})
+		w := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/"+u, nil)
+		var resp streamResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+		}
+		if len(resp.Items) != 1 {
+			t.Fatalf("items=%d, want 1", len(resp.Items))
+		}
+		it := resp.Items[0]
+		if it.ID != ItemID(hashes[0]) {
+			t.Fatalf("item id mismatch: got %q want %q", it.ID, ItemID(hashes[0]))
+		}
+		wantSec := fetch.Unix()
+		wantUsec := strconv.FormatInt(fetch.UnixMicro(), 10)
+		wantMsec := strconv.FormatInt(fetch.UnixMilli(), 10)
+		if it.Published != wantSec || it.Updated != wantSec {
+			t.Errorf("compat zero-published-fallback: published=%d updated=%d, want both %d (FetchedAt seconds)", it.Published, it.Updated, wantSec)
+		}
+		if it.TimestampUsec != wantUsec {
+			t.Errorf("compat zero-published-fallback: timestampUsec=%q, want %q (FetchedAt µs)", it.TimestampUsec, wantUsec)
+		}
+		if it.CrawlTimeMsec != wantMsec {
+			t.Errorf("compat zero-published-fallback: crawlTimeMsec=%q, want %q (FetchedAt ms)", it.CrawlTimeMsec, wantMsec)
 		}
 	})
 
@@ -417,11 +456,12 @@ func Run(t *testing.T, newH NewHarness) {
 		// pre-existing contract; assert it still holds.
 		h := newH(t)
 		base := time.Now().UTC().Add(-3 * time.Hour)
-		u, _ := h.SeedFeedAt(t, "Filters", "F", []time.Time{
+		stamps := []time.Time{
 			base,
 			base.Add(time.Hour),
 			base.Add(2 * time.Hour),
-		})
+		}
+		u, _ := h.SeedFeedTimes(t, "Filters", "F", stamps, stamps)
 		path := "/reader/api/0/stream/items/ids?s=" + url.QueryEscape("feed/"+u) +
 			"&ot=" + strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10) +
 			"&nt=" + strconv.FormatInt(base.Add(90*time.Minute).Unix(), 10) + "&n=10"
@@ -463,7 +503,7 @@ func Run(t *testing.T, newH NewHarness) {
 		for i := range fetched {
 			fetched[i] = futureFetched
 		}
-		_, hashes := h.SeedFeedAt(t, "RS", "RS", fetched)
+		_, hashes := h.SeedFeedTimes(t, "RS", "RS", fetched, fetched)
 		var tMark time.Time
 		for i := 0; i < marked; i++ {
 			tMark = h.SetRead(t, hashes[i], true)
@@ -524,7 +564,7 @@ func Run(t *testing.T, newH NewHarness) {
 		for i := range fetched {
 			fetched[i] = futureFetched
 		}
-		_, hashes := h.SeedFeedAt(t, "ST", "ST", fetched)
+		_, hashes := h.SeedFeedTimes(t, "ST", "ST", fetched, fetched)
 		var tMark time.Time
 		for i := 0; i < marked; i++ {
 			tMark = h.SetStarred(t, hashes[i], true)
@@ -623,8 +663,8 @@ func Run(t *testing.T, newH NewHarness) {
 	t.Run("unread-count-newest/per-row+global+output-json", func(t *testing.T) {
 		h := newH(t)
 		base := time.Now().UTC().Add(-24 * time.Hour)
-		urlA, _ := h.SeedFeedAt(t, "A", "A", []time.Time{base, base.Add(1 * time.Hour)})
-		urlB, _ := h.SeedFeedAt(t, "B", "B", []time.Time{base.Add(10 * time.Hour)})
+		urlA, _ := h.SeedFeedTimes(t, "A", "A", []time.Time{base, base.Add(1 * time.Hour)}, []time.Time{base, base.Add(1 * time.Hour)})
+		urlB, _ := h.SeedFeedTimes(t, "B", "B", []time.Time{base.Add(10 * time.Hour)}, []time.Time{base.Add(10 * time.Hour)})
 		w := Do(t, h, "GET", "/reader/api/0/unread-count?output=json", nil)
 		if w.Code != 200 {
 			t.Fatalf("compat output-json: code=%d body=%s", w.Code, w.Body.String())

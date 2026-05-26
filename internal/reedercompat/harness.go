@@ -15,11 +15,11 @@ import (
 // NewHarness(t) once per sub-test so each contract gets a clean slate.
 //
 // The Harness deliberately uses concrete types over interfaces to keep
-// the public surface tiny. SeedFeed/SeedFeedAt return per-entry
-// 16-hex item hashes (the canonical id form, which the suite then
-// folds into GReader-format ids and longIds itself). SetRead /
-// SetStarred return the UpdatedAt time the implementation recorded;
-// the suite uses this to assert ot/nt windows on state streams.
+// the public surface tiny. Seed methods return per-entry 16-hex item
+// hashes (the canonical id form, which the suite then folds into
+// GReader-format ids and longIds itself). SetRead / SetStarred return
+// the UpdatedAt time the implementation recorded; the suite uses this
+// to assert ot/nt windows on state streams.
 type Harness struct {
 	// Handler serves the GReader API surface (and ClientLogin).
 	Handler http.Handler
@@ -27,14 +27,18 @@ type Harness struct {
 	Token string
 
 	// SeedFeed registers a feed with title=name (tags = [tag]) and
-	// appends `count` entries. Default time shape: Published descending
-	// from now by minute, FetchedAt = now. Returns the feed URL and the
-	// per-entry 16-hex item hash in seed order.
+	// appends `count` entries with Published == FetchedAt == now()
+	// (descending by minute is the embedder's choice; the suite only
+	// requires the set of entries to exist and the hashes to be
+	// returned in seed order).
 	SeedFeed func(t *testing.T, name, tag string, count int) (feedURL string, hashes []string)
 
-	// SeedFeedAt is like SeedFeed but lets the caller pin each entry's
-	// FetchedAt. Published descends from now by minute.
-	SeedFeedAt func(t *testing.T, name, tag string, fetched []time.Time) (feedURL string, hashes []string)
+	// SeedFeedTimes is the differentiating variant: each entry takes
+	// its own Published and FetchedAt time. The two slices must have
+	// the same length and define the entries in seed order. Pass the
+	// same slice twice when the test does not need to differentiate
+	// the two sources.
+	SeedFeedTimes func(t *testing.T, name, tag string, published, fetched []time.Time) (feedURL string, hashes []string)
 
 	// SetRead flips the read flag and returns the UpdatedAt the
 	// implementation recorded for that entry's state. The suite uses

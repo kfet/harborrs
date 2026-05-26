@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Reeder/GReader conformance suite (`internal/reedercompat`) — make
+  `timestamp-encoding/stream-contents` differentiate the *source* of
+  each wire field, not just the unit. `Harness.SeedFeedAt(fetched)` is
+  replaced by `Harness.SeedFeedTimes(published, fetched)` so each
+  entry can be seeded with disjoint Published and FetchedAt times.
+  The test now asserts `published`/`updated`/`timestampUsec` read from
+  the entry's Published while `crawlTimeMsec` reads from FetchedAt;
+  a regression that swaps the two sources fails loudly with
+  "want X (Published, …)" / "want Y (FetchedAt, …)" diagnostics.
+  Mutation-tested by swapping `displayTime`/`e.FetchedAt` in
+  `toStreamItems` — both failing items report the wrong source.
+  New `timestamp-encoding/zero-published-falls-back-to-fetched`
+  sub-contract locks the `entryDisplayTime` zero-Published fallback
+  path (Published-zero → display time = FetchedAt → all three
+  display-time wire slots and crawlTimeMsec align on FetchedAt).
+  Suite-public API is now: `SeedFeed(count)` (all-equal Published =
+  FetchedAt = now) and `SeedFeedTimes(published, fetched)` (parallel
+  per-entry control); the old `SeedFeedAt` is removed and existing
+  callers in the suite pass the same slice twice when they don't need
+  to differentiate.
+
 ## [0.4.14] - 2026-05-26
 
 ### Changed

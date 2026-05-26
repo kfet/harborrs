@@ -64,24 +64,27 @@ func TestReederCompat(t *testing.T) {
 		s.MaxPage = 10
 		handler := s.Routes(http.NewServeMux())
 
-		seedAt := func(t *testing.T, name, tag string, fetched []time.Time) (string, []string) {
+		seedTimes := func(t *testing.T, name, tag string, published, fetched []time.Time) (string, []string) {
 			t.Helper()
+			if len(published) != len(fetched) {
+				t.Fatalf("seedTimes: published(%d) and fetched(%d) length mismatch", len(published), len(fetched))
+			}
 			u := "https://feed.example/" + name
 			op.opml.Feeds = append(op.opml.Feeds, store.Feed{
 				XMLURL: u, Title: name, Tags: []string{tag},
 				HTMLURL: "https://feed.example",
 			})
 			fh := store.FeedHash(u)
-			es := make([]store.Entry, len(fetched))
-			for i, ft := range fetched {
+			es := make([]store.Entry, len(published))
+			for i := range published {
 				es[i] = store.Entry{
 					GUID:      name + "-g" + strconv.Itoa(i),
 					Link:      "https://feed.example/" + name + "/" + strconv.Itoa(i),
 					Title:     name + " " + strconv.Itoa(i),
 					Content:   "c",
 					Summary:   "s",
-					Published: ft,
-					FetchedAt: ft,
+					Published: published[i],
+					FetchedAt: fetched[i],
 				}
 			}
 			if _, err := st.AppendEntries(fh, es); err != nil {
@@ -92,8 +95,6 @@ func TestReederCompat(t *testing.T) {
 				t.Fatal(err)
 			}
 			hashes := make([]string, len(got))
-			// Re-list returns entries sorted (impl-specific); map back
-			// to seed order via GUID.
 			byGUID := map[string]string{}
 			for _, e := range got {
 				byGUID[e.GUID] = e.Hash
@@ -106,18 +107,18 @@ func TestReederCompat(t *testing.T) {
 		seed := func(t *testing.T, name, tag string, count int) (string, []string) {
 			t.Helper()
 			now := time.Now().UTC()
-			fetched := make([]time.Time, count)
-			for i := range fetched {
-				fetched[i] = now
+			stamps := make([]time.Time, count)
+			for i := range stamps {
+				stamps[i] = now
 			}
-			return seedAt(t, name, tag, fetched)
+			return seedTimes(t, name, tag, stamps, stamps)
 		}
 
 		return reedercompat.Harness{
-			Handler:    handler,
-			Token:      tok,
-			SeedFeed:   seed,
-			SeedFeedAt: seedAt,
+			Handler:       handler,
+			Token:         tok,
+			SeedFeed:      seed,
+			SeedFeedTimes: seedTimes,
 			SetRead: func(t *testing.T, hash string, v bool) time.Time {
 				t.Helper()
 				if err := st.SetRead(hash, v); err != nil {
