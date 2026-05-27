@@ -109,6 +109,50 @@ a `tokens.json` file (small, easy to inspect).
   block.
 - **Auth**: cookie session. htmx requests inherit cookies automatically.
 
+## Concurrency model
+
+Single-user, in-memory authoritative state. Disk is a write-through
+log, not a cache.
+
+- **`subscriptions.opml` is loaded once at startup**, parsed into a
+  `*store.OPML`, and held in an `atomic.Pointer[store.OPML]` inside a
+  `*internal/subs.Subs`. Readers call `s.OPML()` for a lock-free
+  immutable snapshot; mutators call `s.Mutate(func(op *store.OPML){…})`
+  which serialises writes via a `sync.Mutex`, clones the current OPML,
+  applies the closure, writes to disk atomically, and stores the new
+  pointer. The returned `*store.OPML` value MUST be treated as
+  immutable — same contract as any `atomic.Pointer` payload.
+- **No `Load` / `Save` interface.** No snapshot ceremony, no copy on
+  read. Reader/UI/Poller handlers receive `*subs.Subs` directly and
+  call `.OPML()` at most once per request, passing the pointer to
+  helpers.
+- **`store.OPML.Clone()`** returns a deep copy (Feeds + per-feed
+  Tags). Used by `Subs.Mutate`. Mutators should never mutate the
+  pointer obtained via `.OPML()`.
+
+### Concurrent polling
+
+- The polling scheduler fans out per-feed fetches with a bounded
+  worker pool (default 8, exposed as `Poller.Concurrency`). Each
+  goroutine takes a slot via a buffered channel `sem` and releases it
+  on exit; `sync.WaitGroup` joins.
+- `gofeed.Parser` is **not goroutine-safe** when shared. Each `Poll`
+  call constructs a fresh `gofeed.NewParser()`. `Poller.Parser` is
+  retained only as a default/sentinel for tests; the hot path never
+  shares it.
+- `AppendEntries` dedupes against the in-memory `s.byHash` index, not
+  by re-scanning NDJSON archives. The disk-rescan path is gone from
+  the poll hot loop.
+
+### Unread counters
+
+- `Store` maintains per-feed `unreadCount` + `newestUnreadFetchedAtUsec`
+  in memory, updated by `AppendEntries` (new entries default unread →
+  `++`) and `setFlag` (read=true → `--`, read=false → `++`). Built at
+  `Open` from the index + state fold.
+- `handleUnreadCount` reads these counters: O(feeds), no per-entry
+  state lookup.
+
 ## Constraints
 
 - **Stdlib-mostly.** The only acceptable third-party dependency right

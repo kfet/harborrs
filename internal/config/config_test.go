@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/kfet/harborrs/internal/store"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -66,35 +64,9 @@ func TestLoadEmptyDefaultsApplied(t *testing.T) {
 	}
 }
 
-func TestFileOPMLRoundtrip(t *testing.T) {
-	dir := t.TempDir()
-	f := NewFileOPML(dir)
-	o, err := f.Load()
-	if err != nil || len(o.Feeds) != 0 {
-		t.Fatalf("empty load: %+v err=%v", o, err)
-	}
-	o.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
-	if err := f.Save(o); err != nil {
-		t.Fatal(err)
-	}
-	o2, err := f.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(o2.Feeds) != 1 {
-		t.Fatalf("feeds=%d", len(o2.Feeds))
-	}
-}
-
-func TestFileOPMLLoadError(t *testing.T) {
-	dir := t.TempDir()
-	f := &FileOPML{Path: filepath.Join(dir, "sub.opml")}
-	// Make path a directory → ReadOPML returns EISDIR error.
-	os.MkdirAll(f.Path, 0o755)
-	if _, err := f.Load(); err == nil {
-		t.Fatal("expected err")
-	}
-}
+// TestFileOPMLRoundtrip / TestFileOPMLLoadError removed: FileOPML
+// moved out of config — the in-memory subscriptions.opml lives in
+// internal/subs and is exercised there.
 
 func TestSaveMarshalIsAlwaysOK(t *testing.T) {
 	// MarshalIndent doesn't error on Config values; smoke-test that Save

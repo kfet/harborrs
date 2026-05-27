@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: subscriptions.opml is now held entirely in memory behind an
+  `atomic.Pointer[store.OPML]` in the new `internal/subs` package.
+  Readers (Reader API + UI) take a lock-free pointer; mutators serialise
+  through a `sync.Mutex`, clone, apply, persist to disk, atomic-store
+  the new pointer. The `OPMLProvider` interface and `config.FileOPML`
+  are gone. Handlers that previously did 2–3 `Load()` calls per request
+  now do one, then thread the pointer down to helpers. No user-visible
+  behaviour change; this fixes lock contention under concurrent clients.
+- Internal: feed polling fans out concurrently (default 8 workers,
+  configurable via `Poller.Concurrency`) with a bounded semaphore. Each
+  `Poll` call uses a fresh `gofeed.NewParser()` since the parser is not
+  goroutine-safe when shared.
+- Internal: `Store.AppendEntries` dedupes against the in-memory entry
+  index instead of re-scanning every NDJSON archive on every poll. The
+  disk-scanning `knownHashes` helper is gone from the hot path.
+- Reader API: `/reader/api/0/unread-count` is now O(feeds) — the store
+  maintains per-feed unread counters maintained on `AppendEntries` and
+  `SetRead`. Previously this endpoint walked every entry of every feed
+  and called `EntryState` (which takes an RLock) per entry.
+
 ## [0.4.12] - 2026-05-24
 
 ### Fixed

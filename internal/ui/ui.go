@@ -21,6 +21,7 @@ import (
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
 
 //go:embed templates/*.html
@@ -29,18 +30,12 @@ var embeddedTemplates embed.FS
 //go:embed static/*
 var embeddedStatic embed.FS
 
-// OPMLProvider is the same shape used by internal/reader.
-type OPMLProvider interface {
-	Load() (*store.OPML, error)
-	Save(*store.OPML) error
-}
-
 // Server is the htmx UI HTTP surface. Construct via New and mount with
 // Routes(mux).
 type Server struct {
 	Store     *store.Store
 	Auth      *auth.Store
-	OPML      OPMLProvider
+	Subs      *subs.Subs
 	Theme     string
 	Overrides string // base config dir; "overrides/" is expected underneath
 	Secure    bool   // set Secure flag on session cookies (https deployments)
@@ -71,11 +66,11 @@ type Server struct {
 }
 
 // New builds a UI server. Theme defaults to "auto".
-func New(s *store.Store, a *auth.Store, o OPMLProvider, theme, overrides string) (*Server, error) {
+func New(s *store.Store, a *auth.Store, sb *subs.Subs, theme, overrides string) (*Server, error) {
 	if theme == "" {
 		theme = "auto"
 	}
-	srv := &Server{Store: s, Auth: a, OPML: o, Theme: theme, Overrides: overrides}
+	srv := &Server{Store: s, Auth: a, Subs: sb, Theme: theme, Overrides: overrides}
 	if err := srv.loadTemplates(); err != nil {
 		return nil, err
 	}
@@ -419,11 +414,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	unreadOnly := effectiveUnreadOnly(r)
 	writeUnreadCookie(w, r, s.Secure)
 	tagFilter := r.URL.Query().Get("tag") // "" → all; store.ReservedTagUntagged → untagged
@@ -573,11 +564,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	feed := op.Find(urlS)
 	if feed == nil {
 		http.NotFound(w, r)
@@ -640,11 +627,7 @@ type entryWithFeed struct {
 }
 
 func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scope string, keep func(store.EntryState) bool) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	var all []entryWithFeed
 	for _, f := range op.Feeds {
 		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
@@ -703,13 +686,9 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = u
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Add(store.Feed{XMLURL: u, Title: title, Tags: tags})
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.Subs.Mutate(func(op *store.OPML) {
+		op.Add(store.Feed{XMLURL: u, Title: title, Tags: tags})
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -735,26 +714,32 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url and add/remove", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	f := op.Find(u)
-	if f == nil {
+	var notFound bool
+	var feedTags []string
+	var allTags []string
+	mutErr := s.Subs.Mutate(func(op *store.OPML) {
+		f := op.Find(u)
+		if f == nil {
+			notFound = true
+			return
+		}
+		if add != "" {
+			for _, t := range parseTagInput(add) {
+				f.AddTag(t)
+			}
+		}
+		if rem != "" {
+			f.RemoveTag(rem)
+		}
+		feedTags = append([]string(nil), f.Tags...)
+		allTags = op.AllTags()
+	})
+	if notFound {
 		http.NotFound(w, r)
 		return
 	}
-	if add != "" {
-		for _, t := range parseTagInput(add) {
-			f.AddTag(t)
-		}
-	}
-	if rem != "" {
-		f.RemoveTag(rem)
-	}
-	if err := s.OPML.Save(op); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if mutErr != nil {
+		http.Error(w, mutErr.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -763,7 +748,7 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		ScopeID  string
 		FeedTags []string
 		AllTags  []string
-	}{u, f.Tags, op.AllTags()})
+	}{u, feedTags, allTags})
 }
 
 // handleFeedRemove unsubscribes.
@@ -781,13 +766,7 @@ func (s *Server) handleFeedRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Remove(u)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.Subs.Mutate(func(op *store.OPML) { op.Remove(u) }); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -803,11 +782,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scope := r.URL.Query().Get("scope")
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	mark := func(feedURL string) error {
 		es, err := s.Store.ListEntries(store.FeedHash(feedURL))
 		if err != nil {
@@ -876,11 +851,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	e, f, ok, err := s.findEntry(op, hash)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -931,11 +902,7 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		return
 	}
 	// Find the entry to re-render its row (or full detail).
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	e, f, ok, err := s.findEntry(op, hash)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

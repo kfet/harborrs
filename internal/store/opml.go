@@ -231,6 +231,32 @@ func (o *OPML) Find(xmlURL string) *Feed {
 	return nil
 }
 
+// Clone returns a deep copy of the OPML — Feeds slice and each feed's
+// Tags slice. Callers can safely mutate the result.
+//
+// This is the primitive used by Subs.Mutate to support
+// copy-on-write semantics: the live `atomic.Pointer[store.OPML]`
+// payload is immutable by convention, so any mutation goes via
+// Clone + apply + atomic.Store.
+func (o *OPML) Clone() *OPML {
+	if o == nil {
+		return &OPML{}
+	}
+	out := &OPML{Title: o.Title}
+	if len(o.Feeds) == 0 {
+		return out
+	}
+	out.Feeds = make([]Feed, len(o.Feeds))
+	for i, f := range o.Feeds {
+		nf := f
+		if len(f.Tags) > 0 {
+			nf.Tags = append([]string(nil), f.Tags...)
+		}
+		out.Feeds[i] = nf
+	}
+	return out
+}
+
 // AllTags returns the deduped + sorted union of every feed's Tags. Used
 // by the Reader tag/list endpoint and the UI sidebar.
 func (o *OPML) AllTags() []string {

@@ -19,6 +19,7 @@ import (
 	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/reedercompat"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
 
 var testPwHash = mustHashPw()
@@ -31,20 +32,17 @@ func mustHashPw() string {
 	return h
 }
 
-// memOPML is a minimal in-memory OPMLProvider for the conformance run.
+// memOPML wraps a *subs.Subs for the conformance harness. The opml
+// field aliases the live atomic.Pointer payload so seedAt's in-place
+// mutations are visible to the server immediately.
 type memOPML struct {
-	opml store.OPML
+	sb   *subs.Subs
+	opml *store.OPML
 }
 
-func (m *memOPML) Load() (*store.OPML, error) {
-	cp := m.opml
-	cp.Feeds = append([]store.Feed{}, m.opml.Feeds...)
-	return &cp, nil
-}
-func (m *memOPML) Save(o *store.OPML) error {
-	m.opml = *o
-	m.opml.Feeds = append([]store.Feed{}, o.Feeds...)
-	return nil
+func newMemOPML() *memOPML {
+	o := &store.OPML{}
+	return &memOPML{sb: subs.NewForTest(o), opml: o}
 }
 
 func TestReederCompat(t *testing.T) {
@@ -57,8 +55,8 @@ func TestReederCompat(t *testing.T) {
 		cfg := auth.Config{Username: "u", PasswordHash: testPwHash}
 		as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), cfg)
 		tok, _ := as.IssueAPIToken("u", "p")
-		op := &memOPML{}
-		s := reader.New(st, as, op)
+		op := newMemOPML()
+		s := reader.New(st, as, op.sb)
 		// Crank MaxPage down so the continuation-paging contract is
 		// exercised on a small seed without needing 1000 entries.
 		s.MaxPage = 10

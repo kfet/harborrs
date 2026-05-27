@@ -81,6 +81,15 @@ type Store struct {
 	// arrives atomically when the index lock is released.
 	idx    map[string][]Entry
 	byHash map[string]Entry
+
+	// Per-feed unread counters. Maintained by AppendEntries (new
+	// entries default unread → ++) and setFlag (read=true → --,
+	// read=false → ++). Initialised at Open by folding the index
+	// against the state map. handleUnreadCount reads these directly so
+	// the GReader unread-count endpoint is O(feeds) instead of
+	// O(entries).
+	unreadN     map[string]int   // feedHash → unread count
+	unreadNewUs map[string]int64 // feedHash → newest unread FetchedAt µs since epoch
 }
 
 // Open opens (and lazily creates) a data dir, folding state logs.
@@ -91,7 +100,7 @@ func Open(dir string) (*Store, error) {
 	if err := migrateEntryHashes(dir); err != nil {
 		return nil, err
 	}
-	s := &Store{Dir: dir, state: map[string]EntryState{}, idx: map[string][]Entry{}, byHash: map[string]Entry{}, now: time.Now}
+	s := &Store{Dir: dir, state: map[string]EntryState{}, idx: map[string][]Entry{}, byHash: map[string]Entry{}, unreadN: map[string]int{}, unreadNewUs: map[string]int64{}, now: time.Now}
 	if err := s.foldLog(filepath.Join(dir, "read.log"), 'r'); err != nil {
 		return nil, err
 	}
@@ -102,7 +111,30 @@ func Open(dir string) (*Store, error) {
 	if err := s.buildIndex(); err != nil {
 		return nil, err
 	}
+	s.recountUnread()
 	return s, nil
+}
+
+// recountUnread rebuilds the per-feed unread counters from the
+// in-memory index + state map. Called at Open after buildIndex.
+func (s *Store) recountUnread() {
+	for fh, list := range s.idx {
+		var n int
+		var newest int64
+		for _, e := range list {
+			if s.state[e.Hash].Read {
+				continue
+			}
+			n++
+			if us := e.FetchedAt.UnixMicro(); us > newest {
+				newest = us
+			}
+		}
+		if n > 0 {
+			s.unreadN[fh] = n
+			s.unreadNewUs[fh] = newest
+		}
+	}
 }
 
 // buildIndex scans every entries/<feedHash>/*.ndjson on disk and
@@ -127,6 +159,7 @@ func (s *Store) buildIndex() error {
 			return err
 		}
 		var list []Entry
+		feedSeen := make(map[string]struct{})
 		for _, e := range ents {
 			if !strings.HasSuffix(e.Name(), ".ndjson") {
 				continue
@@ -136,6 +169,16 @@ func (s *Store) buildIndex() error {
 				if en.FeedHash == "" {
 					en.FeedHash = fh
 				}
+				// Safety net: if duplicate hashes ever made it onto
+				// disk *within this feed* (e.g. an old buggy version,
+				// or a tightly raced AppendEntries in the past), keep
+				// only the first occurrence in the index. Scoped
+				// per-feed because cross-feed hash collisions are a
+				// legitimate shape (shared-content syndication).
+				if _, dup := feedSeen[en.Hash]; dup {
+					return nil
+				}
+				feedSeen[en.Hash] = struct{}{}
 				list = append(list, en)
 				s.byHash[en.Hash] = en
 				return nil
@@ -293,6 +336,7 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 		return err
 	}
 	// Persist succeeded — now apply the in-memory mutation.
+	st.UpdatedAt = now
 	if isRead {
 		st.Read = want
 		s.liveR = newLiveR
@@ -302,8 +346,36 @@ func (s *Store) setFlag(hash string, want, isRead bool) error {
 		s.liveS = newLiveS
 		s.starN++
 	}
-	st.UpdatedAt = now
 	s.state[hash] = st
+	// Unread counter maintenance happens after s.state is updated so
+	// recomputeNewestUnreadLocked observes the new Read flag.
+	if isRead {
+		if e, ok := s.byHash[hash]; ok {
+			fh := e.FeedHash
+			if want {
+				if s.unreadN[fh] > 0 {
+					s.unreadN[fh]--
+					if s.unreadN[fh] == 0 {
+						delete(s.unreadN, fh)
+						delete(s.unreadNewUs, fh)
+					} else if e.FetchedAt.UnixMicro() == s.unreadNewUs[fh] {
+						// We just marked the newest-unread entry as
+						// read. The remaining max may be lower —
+						// rescan. If any other unread entry shared the
+						// same UnixMicro, max stays unchanged either
+						// way, so this is the only case worth the
+						// recompute.
+						s.recomputeNewestUnreadLocked(fh)
+					}
+				}
+			} else {
+				s.unreadN[fh]++
+				if us := e.FetchedAt.UnixMicro(); us > s.unreadNewUs[fh] {
+					s.unreadNewUs[fh] = us
+				}
+			}
+		}
+	}
 	// Compact when log is 10× live set (and at least 32 entries to avoid churn).
 	if isRead && s.readN > 32 && s.readN > 10*s.liveR {
 		return s.compactLocked(path, 'r')
@@ -346,17 +418,49 @@ func (s *Store) compactLocked(path string, kind byte) error {
 	return nil
 }
 
+// recomputeNewestUnreadLocked rescans the index for feedHash and
+// updates unreadNewUs to the newest FetchedAt among unread entries.
+// Caller must hold s.mu and must guarantee s.unreadN[fh] > 0 — the
+// loop will then find at least one unread entry and update the map.
+func (s *Store) recomputeNewestUnreadLocked(fh string) {
+	var newest int64
+	for _, e := range s.idx[fh] {
+		if s.state[e.Hash].Read {
+			continue
+		}
+		if us := e.FetchedAt.UnixMicro(); us > newest {
+			newest = us
+		}
+	}
+	s.unreadNewUs[fh] = newest
+}
+
+// UnreadCount returns the cached per-feed unread count + newest unread
+// FetchedAt µs.
+func (s *Store) UnreadCount(feedHash string) (count int, newestUs int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.unreadN[feedHash], s.unreadNewUs[feedHash]
+}
+
 // AppendEntries appends entries to feed's current.ndjson. Returns the
-// subset that was actually new (de-duplicated by entry hash within the
-// feed by scanning current + most recent archive).
+// subset that was actually new (de-duplicated against the in-memory
+// entry index — see comments on Store.idx / Store.byHash).
 func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	known, err := s.knownHashes(feedHash)
-	if err != nil {
-		return nil, err
+	// Snapshot known hashes from the feed's own in-memory index. No
+	// disk read. Dedup is per-feed by design: two feeds publishing the
+	// same GUID+link (shared-content syndication) each get their own
+	// entry — same scope as the pre-refactor knownHashes(feedHash).
+	s.mu.RLock()
+	feedList := s.idx[feedHash]
+	known := make(map[string]struct{}, len(feedList))
+	for _, e := range feedList {
+		known[e.Hash] = struct{}{}
 	}
+	s.mu.RUnlock()
 	dir := filepath.Join(s.Dir, "entries", feedHash)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -377,10 +481,10 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		if e.FeedHash == "" {
 			e.FeedHash = feedHash
 		}
-		if known[e.Hash] {
+		if _, ok := known[e.Hash]; ok {
 			continue
 		}
-		known[e.Hash] = true
+		known[e.Hash] = struct{}{}
 		line, err := jsonMarshal(e)
 		if err != nil {
 			return added, err
@@ -394,9 +498,30 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 	if len(added) > 0 {
 		s.mu.Lock()
 		list := s.idx[feedHash]
+		// Build a per-feed hash set for the write-locked re-check;
+		// concurrent AppendEntries calls for the same feed could race
+		// past the RLock snapshot above. Scope is per-feed for the
+		// same reason as the snapshot — see comment up top.
+		inFeed := make(map[string]struct{}, len(list))
+		for _, e := range list {
+			inFeed[e.Hash] = struct{}{}
+		}
 		for _, e := range added {
+			if _, dup := inFeed[e.Hash]; dup {
+				continue
+			}
+			inFeed[e.Hash] = struct{}{}
 			list = append(list, e)
 			s.byHash[e.Hash] = e
+			// New entries are unread by default unless the state map
+			// already says otherwise (rare: log entries for a hash
+			// that pre-dates the entry file, e.g. after migration).
+			if !s.state[e.Hash].Read {
+				s.unreadN[feedHash]++
+				if us := e.FetchedAt.UnixMicro(); us > s.unreadNewUs[feedHash] {
+					s.unreadNewUs[feedHash] = us
+				}
+			}
 		}
 		sort.Slice(list, func(i, j int) bool {
 			return list[i].Published.After(list[j].Published)
@@ -405,32 +530,6 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		s.mu.Unlock()
 	}
 	return added, nil
-}
-
-// knownHashes returns the set of entry hashes currently known for a feed
-// across current + all archives.
-func (s *Store) knownHashes(feedHash string) (map[string]bool, error) {
-	set := map[string]bool{}
-	dir := filepath.Join(s.Dir, "entries", feedHash)
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return set, nil
-		}
-		return nil, err
-	}
-	for _, ent := range ents {
-		if !strings.HasSuffix(ent.Name(), ".ndjson") {
-			continue
-		}
-		if err := scanEntries(filepath.Join(dir, ent.Name()), func(e Entry) error {
-			set[CanonicalEntryHash(e.Hash)] = true
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return set, nil
 }
 
 // scanEntries calls fn for each JSON object in the file.

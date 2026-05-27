@@ -16,36 +16,39 @@ import (
 
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
 
-// memOPML is an in-memory OPMLProvider. Failure modes can be injected via
-// loadErr / saveErr.
+// memOPML is a test wrapper around *subs.Subs. The opml field is the
+// same pointer the Subs' atomic.Pointer holds, so tests that mutate
+// `op.opml.Feeds` see those changes immediately reflected when the
+// server calls Subs.OPML() (which returns the same pointer).
+//
+// saveErr injects a write error into the next Mutate via SetWriteHook.
 type memOPML struct {
-	mu      sync.Mutex
-	opml    store.OPML
-	loadErr error
+	sb      *subs.Subs
+	opml    *store.OPML
 	saveErr error
+	restore func() // restore closure for the active write hook
+	_       sync.Mutex
 }
 
-func (m *memOPML) Load() (*store.OPML, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.loadErr != nil {
-		return nil, m.loadErr
-	}
-	cp := m.opml
-	cp.Feeds = append([]store.Feed{}, m.opml.Feeds...)
-	return &cp, nil
+func newMemOPML() *memOPML {
+	o := &store.OPML{}
+	return &memOPML{sb: subs.NewForTest(o), opml: o}
 }
-func (m *memOPML) Save(o *store.OPML) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.saveErr != nil {
-		return m.saveErr
+
+// SetSaveErr arms (or disarms) a write-error injection on the next
+// Mutate. Setting nil restores the default no-op writer.
+func (m *memOPML) SetSaveErr(err error) {
+	if m.restore != nil {
+		m.restore()
+		m.restore = nil
 	}
-	m.opml = *o
-	m.opml.Feeds = append([]store.Feed{}, o.Feeds...)
-	return nil
+	m.saveErr = err
+	if err != nil {
+		m.restore = m.sb.SetWriteHook(func(*store.OPML, string) error { return err })
+	}
 }
 
 var testPwHash = mustHashPw()
@@ -69,8 +72,8 @@ func fixture(t *testing.T) (*Server, http.Handler, string, *memOPML, *store.Stor
 	cfg := auth.Config{Username: "u", PasswordHash: testPwHash}
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), cfg)
 	tok, _ := as.IssueAPIToken("u", "p")
-	op := &memOPML{}
-	s := New(st, as, op)
+	op := newMemOPML()
+	s := New(st, as, op.sb)
 	mux := http.NewServeMux()
 	handler := s.Routes(mux)
 	return s, handler, tok, op, st
@@ -187,21 +190,6 @@ func TestSubscriptionListAndTagList(t *testing.T) {
 	}
 }
 
-func TestSubscriptionListLoadErr(t *testing.T) {
-	_, mux, tok, op, _ := fixture(t)
-	op.loadErr = errBoom
-	for _, p := range []string{
-		"/reader/api/0/subscription/list",
-		"/reader/api/0/tag/list",
-		"/reader/api/0/unread-count",
-	} {
-		w := do(t, mux, "GET", p, tok, nil)
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
-	}
-}
-
 func TestSubscriptionEdit(t *testing.T) {
 	_, mux, tok, op, _ := fixture(t)
 	body := url.Values{"ac": {"subscribe"}, "s": {"feed/https://x/y"}, "t": {"X"}, "a": {"user/-/label/F"}}
@@ -267,15 +255,10 @@ func TestSubscriptionEdit(t *testing.T) {
 	}
 }
 
-func TestSubscriptionEditLoadAndSaveErr(t *testing.T) {
+func TestSubscriptionEditSaveErr(t *testing.T) {
 	_, mux, tok, op, _ := fixture(t)
-	op.loadErr = errBoom
 	body := url.Values{"ac": {"subscribe"}, "s": {"feed/x"}}
-	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, body); w.Code != 500 {
-		t.Fatalf("load err code=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	op.SetSaveErr(errBoom)
 	if w := do(t, mux, "POST", "/reader/api/0/subscription/edit", tok, body); w.Code != 500 {
 		t.Fatalf("save err code=%d", w.Code)
 	}
@@ -292,13 +275,7 @@ func TestQuickAdd(t *testing.T) {
 	if w := do(t, mux, "POST", "/reader/api/0/subscription/quickadd", tok, url.Values{}); w.Code != 400 {
 		t.Fatalf("missing=%d", w.Code)
 	}
-	// load err
-	op.loadErr = errBoom
-	if w := do(t, mux, "POST", "/reader/api/0/subscription/quickadd", tok, body); w.Code != 500 {
-		t.Fatalf("load err=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	op.SetSaveErr(errBoom)
 	if w := do(t, mux, "POST", "/reader/api/0/subscription/quickadd", tok, body); w.Code != 500 {
 		t.Fatalf("save err=%d", w.Code)
 	}
@@ -388,21 +365,6 @@ func TestStreamLabelStarredReadAndDefault(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if len(resp.Items) != 4 {
 		t.Fatalf("unread=%d", len(resp.Items))
-	}
-}
-
-func TestStreamContentsLoadErr(t *testing.T) {
-	_, mux, tok, op, _ := fixture(t)
-	op.loadErr = errBoom
-	for _, p := range []string{
-		"/reader/api/0/stream/contents/feed/x",
-		"/reader/api/0/stream/items/ids",
-		"/reader/api/0/stream/items/contents",
-	} {
-		w := do(t, mux, "POST", p, tok, url.Values{"i": {"abc"}})
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
 	}
 }
 
@@ -537,12 +499,7 @@ func TestMarkAllRead(t *testing.T) {
 	if w := do(t, mux, "POST", "/reader/api/0/mark-all-as-read", tok, url.Values{}); w.Code != 400 {
 		t.Fatalf("missing=%d", w.Code)
 	}
-	// load err
-	op.loadErr = errBoom
-	body2 := url.Values{"s": {"feed/" + u}}
-	if w := do(t, mux, "POST", "/reader/api/0/mark-all-as-read", tok, body2); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
+	_ = u
 }
 
 func TestUnreadCount(t *testing.T) {
@@ -611,7 +568,7 @@ func TestReaderTimeHelpers(t *testing.T) {
 func TestUnknownFeedHashStillRenders(t *testing.T) {
 	srv, _, _, op, _ := fixture(t)
 	op.opml.Feeds = []store.Feed{{XMLURL: "https://known/feed"}}
-	o, _ := op.Load()
+	o := op.opml
 	items := srv.toStreamItems([]store.Entry{
 		{Hash: "h1", FeedHash: "unknown", Title: "T"},
 	}, o)
@@ -652,9 +609,9 @@ func TestWriteJSONEncodeError(t *testing.T) {
 
 func TestCollectStreamEmpty(t *testing.T) {
 	srv, _, _, op, _ := fixture(t)
-	es, err := srv.collectStream("feed/none")
-	if err != nil || len(es) != 0 {
-		t.Fatalf("es=%v err=%v", es, err)
+	es := srv.collectStream("feed/none", op.opml)
+	if len(es) != 0 {
+		t.Fatalf("es=%v", es)
 	}
 	_ = op
 }
@@ -869,13 +826,7 @@ func TestRenameTag(t *testing.T) {
 	if !op.opml.Feeds[0].HasTag("new") || op.opml.Feeds[0].HasTag("old") {
 		t.Fatalf("not renamed: %v", op.opml.Feeds[0].Tags)
 	}
-	// load error
-	op.loadErr = errBoom
-	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 500 {
-		t.Fatalf("load err=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	op.SetSaveErr(errBoom)
 	if w := do(t, mux, "POST", "/reader/api/0/rename-tag", tok, body); w.Code != 500 {
 		t.Fatalf("save err=%d", w.Code)
 	}
@@ -894,12 +845,7 @@ func TestDisableTag(t *testing.T) {
 	if op.opml.Feeds[0].HasTag("x") {
 		t.Fatalf("still has x: %v", op.opml.Feeds[0].Tags)
 	}
-	op.loadErr = errBoom
-	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, body); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	op.SetSaveErr(errBoom)
 	if w := do(t, mux, "POST", "/reader/api/0/disable-tag", tok, body); w.Code != 500 {
 		t.Fatalf("save=%d", w.Code)
 	}

@@ -95,13 +95,15 @@ func TestAppendEntries_MkdirSurfacesAsKnownHashesError(t *testing.T) {
 func TestKnownHashes_ReadDirError(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)
-	// Pre-create entries/<fh> as a *file* (not dir), so ReadDir returns
-	// a non-NotExist error (ENOTDIR).
+	// Pre-create entries/<fh> as a *file* (not dir). AppendEntries no
+	// longer scans the disk to build the known-hashes set (it uses the
+	// in-memory index), but MkdirAll on a path whose final component
+	// is a regular file still errors with ENOTDIR.
 	fh := "rd"
 	os.MkdirAll(filepath.Join(dir, "entries"), 0o755)
 	os.WriteFile(filepath.Join(dir, "entries", fh), nil, 0o644)
-	if _, err := s.knownHashes(fh); err == nil {
-		t.Fatal("expected readdir error")
+	if _, err := s.AppendEntries(fh, []Entry{{GUID: "x"}}); err == nil {
+		t.Fatal("expected mkdir error")
 	}
 }
 

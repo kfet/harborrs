@@ -1,5 +1,4 @@
-// Package config holds the on-disk configuration for harborrs and the
-// concrete OPMLProvider used by the UI and Reader API.
+// Package config holds the on-disk configuration for harborrs.
 package config
 
 import (
@@ -7,12 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sync"
 
 	"github.com/kfet/harborrs/internal/atomic"
 	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/store"
 )
 
 // Config is the on-disk configuration loaded from `config.json` in the
@@ -66,37 +62,4 @@ func Save(path string, c Config) error {
 		return err
 	}
 	return atomic.WriteFileMode(path, data, 0o600)
-}
-
-// FileOPML is a concrete store.OPMLProvider that reads/writes the OPML on
-// disk via the atomic helper.
-type FileOPML struct {
-	Path string
-	mu   sync.Mutex
-}
-
-// Load reads the OPML file. Missing → empty *store.OPML.
-func (f *FileOPML) Load() (*store.OPML, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	o, err := store.ReadOPML(f.Path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &store.OPML{}, nil
-		}
-		return nil, err
-	}
-	return o, nil
-}
-
-// Save writes the OPML atomically.
-func (f *FileOPML) Save(o *store.OPML) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return o.WriteOPML(f.Path)
-}
-
-// NewFileOPML returns a FileOPML for a data dir.
-func NewFileOPML(dataDir string) *FileOPML {
-	return &FileOPML{Path: filepath.Join(dataDir, "subscriptions.opml")}
 }

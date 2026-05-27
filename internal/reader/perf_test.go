@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
 
 // BenchmarkReederLikeSync replays the Reeder access-log shape observed
@@ -25,11 +26,11 @@ func BenchmarkReederLikeSync(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	op := &memOPMLBench{}
+	op := &store.OPML{}
 	now := time.Now().UTC()
 	for f := 0; f < numFeeds; f++ {
 		u := "https://feed.example/" + strconv.Itoa(f) + ".xml"
-		op.opml.Feeds = append(op.opml.Feeds, store.Feed{
+		op.Feeds = append(op.Feeds, store.Feed{
 			XMLURL: u,
 			Title:  "Feed " + strconv.Itoa(f),
 			Tags:   []string{"folder" + strconv.Itoa(f%5)},
@@ -53,7 +54,7 @@ func BenchmarkReederLikeSync(b *testing.B) {
 		}
 	}
 
-	srv := &Server{Store: st, OPML: op, Now: time.Now, MaxPage: 200}
+	srv := &Server{Store: st, Subs: subs.NewForTest(op), Now: time.Now, MaxPage: 200}
 	mux := http.NewServeMux()
 	// Skip auth wrapper — that's not what we're measuring. Mount
 	// handlers directly so the benchmark targets the data path.
@@ -64,7 +65,7 @@ func BenchmarkReederLikeSync(b *testing.B) {
 	// Build a representative set of 100 long-form ids to fetch via
 	// stream/items/contents. We pull them straight from the index so
 	// the benchmark setup doesn't depend on the handler under test.
-	allEntries := st.IndexedEntries(store.FeedHash(op.opml.Feeds[0].XMLURL))
+	allEntries := st.IndexedEntries(store.FeedHash(op.Feeds[0].XMLURL))
 	contentIDs := make([]string, 0, 100)
 	for _, e := range allEntries {
 		contentIDs = append(contentIDs, itemLongID(e.Hash))
@@ -103,15 +104,9 @@ func BenchmarkReederLikeSync(b *testing.B) {
 	}
 }
 
-// memOPMLBench is a benchmark-local OPMLProvider implementation —
-// reader_test.go already defines a memOPML for unit tests, but it's in
-// the same package so we use a distinct name to avoid collision.
-type memOPMLBench struct {
-	opml store.OPML
-}
-
-func (m *memOPMLBench) Load() (*store.OPML, error) { c := m.opml; return &c, nil }
-func (m *memOPMLBench) Save(o *store.OPML) error   { m.opml = *o; return nil }
+// memOPMLBench was a benchmark-local OPMLProvider implementation. With
+// the new internal/subs in-memory model, benchmarks use subs.NewForTest
+// directly, so the shim is no longer needed.
 
 // BenchmarkListVsIndexed contrasts the disk-backed ListEntries path
 // (what the Reader handlers used pre-index) against the new in-memory

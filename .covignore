@@ -29,8 +29,8 @@ github.com/kfet/harborrs/internal/selfupdate/selfupdate.go
 # between migration and folding. The direct foldLog error path is exercised.
 # buildIndex's top-level ReadDir error is similarly race-only (entries/
 # was just walked by migrateEntryHashes).
-github.com/kfet/harborrs/internal/store/store.go:95\.71,97\.3
-github.com/kfet/harborrs/internal/store/store.go:98\.74,100\.3
-github.com/kfet/harborrs/internal/store/store.go:102\.39,104\.3
-github.com/kfet/harborrs/internal/store/store.go:117\.3,117\.13
-github.com/kfet/harborrs/internal/store/store.go:195\.3,195\.13
+github.com/kfet/harborrs/internal/store/store.go:104\.71,106\.3
+github.com/kfet/harborrs/internal/store/store.go:107\.74,109\.3
+github.com/kfet/harborrs/internal/store/store.go:111\.39,113\.3
+github.com/kfet/harborrs/internal/store/store.go:149\.3,149\.13
+github.com/kfet/harborrs/internal/store/store.go:238\.3,238\.13

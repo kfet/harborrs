@@ -36,6 +36,7 @@ import (
 	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/selfupdate"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 	uipkg "github.com/kfet/harborrs/internal/ui"
 )
 
@@ -173,7 +174,11 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "auth:", err)
 		return 1
 	}
-	op := config.NewFileOPML(data)
+	op, err := subs.Open(filepath.Join(data, "subscriptions.opml"))
+	if err != nil {
+		fmt.Fprintln(stderr, "subs:", err)
+		return 1
+	}
 	mux := http.NewServeMux()
 	readSrv := reader.New(st, as, op)
 	readSrv.Version = harborrs.Version
@@ -215,10 +220,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 
 	poller := poll.New(st)
 	feeds := func() []string {
-		o, err := op.Load()
-		if err != nil {
-			return nil
-		}
+		o := op.OPML()
 		urls := make([]string, 0, len(o.Feeds))
 		for _, f := range o.Feeds {
 			urls = append(urls, f.XMLURL)
@@ -271,23 +273,25 @@ func cmdImport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "read:", err)
 		return 1
 	}
-	op := config.NewFileOPML(data)
-	cur, err := op.Load()
+	op, err := subs.Open(filepath.Join(data, "subscriptions.opml"))
 	if err != nil {
 		fmt.Fprintln(stderr, "load:", err)
 		return 1
 	}
 	added := 0
-	for _, f := range inc.Feeds {
-		if cur.Add(f) {
-			added++
+	var total int
+	if err := op.Mutate(func(cur *store.OPML) {
+		for _, f := range inc.Feeds {
+			if cur.Add(f) {
+				added++
+			}
 		}
-	}
-	if err := op.Save(cur); err != nil {
+		total = len(cur.Feeds)
+	}); err != nil {
 		fmt.Fprintln(stderr, "save:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "imported %d new feed(s), %d total\n", added, len(cur.Feeds))
+	fmt.Fprintf(stdout, "imported %d new feed(s), %d total\n", added, total)
 	return 0
 }
 
@@ -304,12 +308,12 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "store:", err)
 		return 1
 	}
-	op := config.NewFileOPML(data)
-	o, err := op.Load()
+	op, err := subs.Open(filepath.Join(data, "subscriptions.opml"))
 	if err != nil {
 		fmt.Fprintln(stderr, "opml:", err)
 		return 1
 	}
+	o := op.OPML()
 	p := poll.New(st)
 	total := 0
 	for _, f := range o.Feeds {

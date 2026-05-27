@@ -331,8 +331,13 @@ func TestListEntriesBadJSON(t *testing.T) {
 	if _, err := s.ListEntries(fh); err == nil {
 		t.Fatal("expected json error")
 	}
-	if _, err := s.AppendEntries(fh, []Entry{{GUID: "x"}}); err == nil {
-		t.Fatal("expected knownHashes error")
+	// AppendEntries no longer reads the existing ndjson — dedupe is
+	// done against the in-memory index. The bad-JSON line should be
+	// preserved untouched and the new entry appended after it.
+	if added, err := s.AppendEntries(fh, []Entry{{GUID: "x"}}); err != nil {
+		t.Fatalf("append: %v", err)
+	} else if len(added) != 1 {
+		t.Fatalf("added=%d", len(added))
 	}
 }
 

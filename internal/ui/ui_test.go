@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"html/template"
 	"net/http"
 	"net/http/cookiejar"
@@ -15,35 +16,38 @@ import (
 
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/config"
-	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
 
+// memOPML is a test wrapper around *subs.Subs (matching the helper in
+// internal/reader/reader_test.go). The opml field aliases the live
+// pointer the Subs' atomic.Pointer holds, so in-place test mutations
+// of `op.opml.Feeds = …` are visible to the server immediately.
 type memOPML struct {
-	op      store.OPML
-	loadErr error
+	sb      *subs.Subs
+	opml    *store.OPML
 	saveErr error
+	restore func()
 }
 
-func (m *memOPML) Load() (*store.OPML, error) {
-	if m.loadErr != nil {
-		return nil, m.loadErr
-	}
-	cp := m.op
-	cp.Feeds = append([]store.Feed{}, m.op.Feeds...)
-	return &cp, nil
-}
-func (m *memOPML) Save(o *store.OPML) error {
-	if m.saveErr != nil {
-		return m.saveErr
-	}
-	m.op = *o
-	return nil
+func newMemOPML() *memOPML {
+	o := &store.OPML{}
+	return &memOPML{sb: subs.NewForTest(o), opml: o}
 }
 
-// Compile-time check our memOPML satisfies the reader's interface too —
-// keeps the two packages aligned.
-var _ reader.OPMLProvider = (*memOPML)(nil)
+func (m *memOPML) SetSaveErr(err error) {
+	if m.restore != nil {
+		m.restore()
+		m.restore = nil
+	}
+	m.saveErr = err
+	if err != nil {
+		m.restore = m.sb.SetWriteHook(func(*store.OPML, string) error { return err })
+	}
+}
+
+var errBoom = errors.New("boom")
 
 var testPwHash = mustHashPw()
 
@@ -63,9 +67,9 @@ func fixture(t *testing.T) (*Server, *http.ServeMux, *store.Store, *memOPML, str
 		t.Fatal(err)
 	}
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: testPwHash})
-	op := &memOPML{}
+	op := newMemOPML()
 	overrideDir := filepath.Join(dir, "cfg")
-	srv, err := New(st, as, op, "dark", overrideDir)
+	srv, err := New(st, as, op.sb, "dark", overrideDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,7 @@ func TestRequireSessionRedirects(t *testing.T) {
 
 func TestHome(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	// Home now defaults to "unread only", which would hide a feed
 	// with no entries. Pass ?unread=0 to exercise the show-all path
 	// where the seeded feed is visible.
@@ -154,17 +158,11 @@ func TestHome(t *testing.T) {
 	if w2.Code != 404 {
 		t.Fatalf("nope code=%d", w2.Code)
 	}
-	// Load err
-	op.loadErr = errBoom
-	w3 := do(mux, req("GET", "/ui/", tok, nil))
-	if w3.Code != 500 {
-		t.Fatalf("home load err: %d", w3.Code)
-	}
 }
 
 func TestHomeListErr(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	// Corrupt entries file → ListEntries fails.
 	fh := store.FeedHash("https://x/feed")
 	feedDir := filepath.Join(st.Dir, "entries", fh)
@@ -179,7 +177,7 @@ func TestHomeListErr(t *testing.T) {
 func seed(t *testing.T, st *store.Store, op *memOPML, count int) string {
 	t.Helper()
 	u := "https://demo.example/feed"
-	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "Demo", HTMLURL: "https://demo.example"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: u, Title: "Demo", HTMLURL: "https://demo.example"}}
 	now := time.Now().UTC()
 	var es []store.Entry
 	for i := 0; i < count; i++ {
@@ -259,14 +257,6 @@ func TestFeedAndEntryErrors(t *testing.T) {
 			t.Fatalf("%s code=%d", p, w.Code)
 		}
 	}
-	// Load err for feed + entry.
-	op.loadErr = errBoom
-	for _, p := range []string{"/ui/feed?id=" + u, "/ui/entry?id=x"} {
-		w := do(mux, req("GET", p, tok, nil))
-		if w.Code != 500 {
-			t.Fatalf("%s load err: %d", p, w.Code)
-		}
-	}
 }
 
 func TestSetReadAndStarred(t *testing.T) {
@@ -291,16 +281,11 @@ func TestSetReadAndStarred(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/entry/read", tok, nil)); w.Code != 400 {
 		t.Fatalf("miss=%d", w.Code)
 	}
-	// load err
-	op.loadErr = errBoom
-	if w := do(mux, req("POST", "/ui/entry/read?id="+h, tok, nil)); w.Code != 500 {
-		t.Fatalf("loaderr=%d", w.Code)
-	}
 }
 
 func TestSetReadNotFound(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://nofeed/feed"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://nofeed/feed"}}
 	if w := do(mux, req("POST", "/ui/entry/read?id=nosuch&state=1", tok, nil)); w.Code != 404 {
 		t.Fatalf("code=%d", w.Code)
 	}
@@ -366,7 +351,7 @@ func TestThemeOverride(t *testing.T) {
 
 	st, _ := store.Open(t.TempDir())
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{Username: "u", PasswordHash: testPwHash})
-	srv, err := New(st, as, &memOPML{}, "", filepath.Join(dir, "cfg"))
+	srv, err := New(st, as, newMemOPML().sb, "", filepath.Join(dir, "cfg"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +378,7 @@ func TestNewBadOverrides(t *testing.T) {
 	os.WriteFile(filepath.Join(bad, "x.html"), []byte("{{define"), 0o644)
 	st, _ := store.Open(t.TempDir())
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{})
-	if _, err := New(st, as, &memOPML{}, "", filepath.Join(dir, "cfg")); err == nil {
+	if _, err := New(st, as, newMemOPML().sb, "", filepath.Join(dir, "cfg")); err == nil {
 		t.Fatal("expected parse err")
 	}
 }
@@ -420,12 +405,8 @@ func TestLoadTemplatesGlobError(t *testing.T) {
 	}
 }
 
-// errBoom for shared test errors.
-type berr string
-
-func (b berr) Error() string { return string(b) }
-
-var errBoom = berr("boom")
+// (errBoom is defined at the top of the file together with the
+// memOPML helper.)
 
 func TestAllUnread(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
@@ -462,17 +443,7 @@ func TestStarredView(t *testing.T) {
 	}
 }
 
-func TestCrossFeedLoadErr(t *testing.T) {
-	_, mux, _, op, tok, _ := fixture(t)
-	op.loadErr = errBoom
-	for _, p := range []string{"/ui/all", "/ui/starred"} {
-		w := do(mux, req("GET", p, tok, nil))
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
-	}
-}
-
+// TestCrossFeedLoadErr removed: OPML reads cannot fail anymore.
 func TestCrossFeedListErr(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := seed(t, st, op, 1)
@@ -543,12 +514,6 @@ func TestMarkAllReadBadInputs(t *testing.T) {
 func TestMarkAllReadErrors(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := seed(t, st, op, 1)
-	// Load err
-	op.loadErr = errBoom
-	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
 	// ListEntries err (feed scope)
 	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
 	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644)
@@ -647,16 +612,16 @@ func TestFeedAdd(t *testing.T) {
 	if w.Code != 303 {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
-	if len(op.op.Feeds) != 1 || !op.op.Feeds[0].HasTag("News") {
-		t.Fatalf("feeds=%+v", op.op.Feeds)
+	if len(op.opml.Feeds) != 1 || !op.opml.Feeds[0].HasTag("News") {
+		t.Fatalf("feeds=%+v", op.opml.Feeds)
 	}
 	// title defaults to url
 	form2 := url.Values{"url": {"https://other.example/feed"}}
 	if w := do(mux, req("POST", "/ui/feed/add", tok, form2)); w.Code != 303 {
 		t.Fatalf("default title code=%d", w.Code)
 	}
-	if op.op.Feeds[1].Title != "https://other.example/feed" {
-		t.Fatalf("title=%q", op.op.Feeds[1].Title)
+	if op.opml.Feeds[1].Title != "https://other.example/feed" {
+		t.Fatalf("title=%q", op.opml.Feeds[1].Title)
 	}
 }
 
@@ -670,14 +635,8 @@ func TestFeedAddErrors(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/add", tok, url.Values{})); w.Code != 400 {
 		t.Fatalf("missing=%d", w.Code)
 	}
-	// load err
-	op.loadErr = errBoom
 	form := url.Values{"url": {"https://x/feed"}}
-	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	op.SetSaveErr(errBoom)
 	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 500 {
 		t.Fatalf("save=%d", w.Code)
 	}
@@ -685,13 +644,13 @@ func TestFeedAddErrors(t *testing.T) {
 
 func TestFeedRemove(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	form := url.Values{"url": {"https://x/feed"}}
 	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 303 {
 		t.Fatalf("code=%d", w.Code)
 	}
-	if len(op.op.Feeds) != 0 {
-		t.Fatalf("not removed: %+v", op.op.Feeds)
+	if len(op.opml.Feeds) != 0 {
+		t.Fatalf("not removed: %+v", op.opml.Feeds)
 	}
 }
 
@@ -703,13 +662,8 @@ func TestFeedRemoveErrors(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/remove", tok, url.Values{})); w.Code != 400 {
 		t.Fatalf("missing=%d", w.Code)
 	}
-	op.loadErr = errBoom
+	op.SetSaveErr(errBoom)
 	form := url.Values{"url": {"x"}}
-	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
 	if w := do(mux, req("POST", "/ui/feed/remove", tok, form)); w.Code != 500 {
 		t.Fatalf("save=%d", w.Code)
 	}
@@ -718,7 +672,7 @@ func TestFeedRemoveErrors(t *testing.T) {
 func TestSetReadDetailViewSummaryFallback(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := "https://nc.example/feed"
-	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: u, Title: "X"}}
 	now := time.Now().UTC()
 	st.AppendEntries(store.FeedHash(u), []store.Entry{
 		{GUID: "g", Link: "https://nc/x", Title: "T", Summary: "summ-only", Published: now, FetchedAt: now},
@@ -746,7 +700,7 @@ func TestFeedAddParseFormErr(t *testing.T) {
 
 func TestHomeShowsAddLinkNoInlineRemove(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	w := do(mux, req("GET", "/ui/", tok, nil))
 	body := w.Body.String()
 	// home should *link* to the add-feed page, not carry an inline form.
@@ -764,7 +718,7 @@ func TestHomeShowsAddLinkNoInlineRemove(t *testing.T) {
 
 func TestFeedPageShowsUnsubscribe(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	w := do(mux, req("GET", "/ui/feed?id=https%3A%2F%2Fx%2Ffeed", tok, nil))
 	body := w.Body.String()
 	if !strings.Contains(body, "feed/remove") || !strings.Contains(body, "unsubscribe") {
@@ -815,7 +769,7 @@ func TestHomeWithEntries(t *testing.T) {
 func TestEntrySummaryFallback(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := "https://nocontent.example/feed"
-	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: u, Title: "X"}}
 	now := time.Now().UTC()
 	st.AppendEntries(store.FeedHash(u), []store.Entry{
 		{GUID: "g", Link: "https://x", Title: "T", Summary: "summary-only", Published: now, FetchedAt: now},
@@ -834,7 +788,7 @@ func TestLoadTemplatesParseFSError(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(t.TempDir())
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), auth.Config{})
-	if _, err := New(st, as, &memOPML{}, "", ""); err == nil {
+	if _, err := New(st, as, newMemOPML().sb, "", ""); err == nil {
 		t.Fatal("expected parse err")
 	}
 }
@@ -872,7 +826,7 @@ func settingsFixture(t *testing.T) (*Server, *http.ServeMux, *auth.Store, string
 		t.Fatal(err)
 	}
 	as, _ := auth.OpenStore(filepath.Join(dir, "tokens.json"), cfg.Auth)
-	srv, err := New(st, as, &memOPML{}, "light", dir)
+	srv, err := New(st, as, newMemOPML().sb, "light", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1086,7 @@ func TestFeedNewPostNoPreviewer(t *testing.T) {
 
 func TestFeedNewPostPreviewError(t *testing.T) {
 	srv, mux, _, _, tok, _ := fixture(t)
-	srv.Previewer = &stubPreviewer{err: berr("nope")}
+	srv.Previewer = &stubPreviewer{err: errors.New("nope")}
 	w := do(mux, req("POST", "/ui/feed/new", tok, url.Values{"url": {"https://x/"}}))
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "could not fetch feed") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
@@ -1189,7 +1143,7 @@ func TestFormatPublished(t *testing.T) {
 
 func TestHomeUnreadFilter(t *testing.T) {
 	srv, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://x/empty", Title: "Empty"},
 		{XMLURL: "https://x/hot", Title: "Hot"},
 	}
@@ -1240,7 +1194,7 @@ func TestHomeUnreadFilter(t *testing.T) {
 
 func TestHomeUnreadFilterAllCaughtUp(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/empty", Title: "Empty"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/empty", Title: "Empty"}}
 	w := do(mux, req("GET", "/ui/?unread=1", tok, nil))
 	if !strings.Contains(w.Body.String(), "all caught up") {
 		t.Fatalf("expected caught-up empty state: %s", w.Body.String())
@@ -1544,7 +1498,7 @@ func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
 	_, mux, st, op, _, _ := fixture(t)
 	// Seed a feed with one unread entry — the default home view is
 	// "show unread only", which would hide a feed with no entries.
-	op.op.Feeds = []store.Feed{{XMLURL: "https://demo.example/feed", Title: "Demo"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://demo.example/feed", Title: "Demo"}}
 	{
 		fh := store.FeedHash("https://demo.example/feed")
 		now := time.Now()
@@ -1630,13 +1584,13 @@ func TestParseTagInput(t *testing.T) {
 
 func TestHomeSidebarAndTagFilter(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}},
 		{XMLURL: "https://b/feed", Title: "B", Tags: []string{"tech", "daily"}},
 		{XMLURL: "https://c/feed", Title: "C"},
 	}
 	// Seed one unread entry per feed.
-	for _, f := range op.op.Feeds {
+	for _, f := range op.opml.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		st.AppendEntries(fh, []store.Entry{{GUID: "g-" + f.XMLURL, Link: f.XMLURL + "/1", Title: "T", Published: time.Now(), FetchedAt: time.Now()}})
 	}
@@ -1669,7 +1623,7 @@ func TestHomeSidebarAndTagFilter(t *testing.T) {
 		t.Fatalf("unread+tag=%d", w.Code)
 	}
 	// Now mark every entry read so unread-filter empties C bucket.
-	for _, f := range op.op.Feeds {
+	for _, f := range op.opml.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		es, _ := st.ListEntries(fh)
 		for _, e := range es {
@@ -1694,7 +1648,7 @@ func TestHomeSidebarNoRealTags(t *testing.T) {
 	// When no feed carries any tag, the sidebar must still render the
 	// two pinned rows but skip the separator + real-tag block.
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	w := do(mux, req("GET", "/ui/", tok, nil))
 	body := w.Body.String()
 	if !strings.Contains(body, "All") || !strings.Contains(body, "Untagged") {
@@ -1710,11 +1664,11 @@ func TestHomeBadgesAreScopeAware(t *testing.T) {
 	// "show unread only (N)" pill must reflect the filtered scope,
 	// not the global totals — otherwise the numbers confuse users.
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}},
 		{XMLURL: "https://b/feed", Title: "B"}, // untagged
 	}
-	for _, f := range op.op.Feeds {
+	for _, f := range op.opml.Feeds {
 		fh := store.FeedHash(f.XMLURL)
 		st.AppendEntries(fh, []store.Entry{{GUID: "g-" + f.XMLURL, Link: f.XMLURL + "/1", Title: "T", Published: time.Now(), FetchedAt: time.Now()}})
 	}
@@ -1736,7 +1690,7 @@ func TestHomeBadgesAreScopeAware(t *testing.T) {
 
 func TestHomeUnreadCountsErr(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed"}}
 	fh := store.FeedHash("https://x/feed")
 	feedDir := filepath.Join(st.Dir, "entries", fh)
 	os.MkdirAll(feedDir, 0o755)
@@ -1748,7 +1702,7 @@ func TestHomeUnreadCountsErr(t *testing.T) {
 
 func TestFeedTagChip(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	// Method check
 	if w := do(mux, req("GET", "/ui/feed/tag", tok, nil)); w.Code != 405 {
 		t.Fatalf("method=%d", w.Code)
@@ -1759,8 +1713,8 @@ func TestFeedTagChip(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("add code=%d body=%s", w.Code, w.Body.String())
 	}
-	if !op.op.Feeds[0].HasTag("news") {
-		t.Fatalf("not added: %v", op.op.Feeds[0].Tags)
+	if !op.opml.Feeds[0].HasTag("news") {
+		t.Fatalf("not added: %v", op.opml.Feeds[0].Tags)
 	}
 	if !strings.Contains(w.Body.String(), "news") {
 		t.Fatalf("fragment missing tag: %s", w.Body.String())
@@ -1770,8 +1724,8 @@ func TestFeedTagChip(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, form2)); w.Code != 200 {
 		t.Fatalf("rem code=%d", w.Code)
 	}
-	if op.op.Feeds[0].HasTag("news") {
-		t.Fatalf("not removed: %v", op.op.Feeds[0].Tags)
+	if op.opml.Feeds[0].HasTag("news") {
+		t.Fatalf("not removed: %v", op.opml.Feeds[0].Tags)
 	}
 	// Missing inputs
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, url.Values{"url": {"https://x/feed"}})); w.Code != 400 {
@@ -1782,13 +1736,8 @@ func TestFeedTagChip(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, form3)); w.Code != 404 {
 		t.Fatalf("nope=%d", w.Code)
 	}
-	// Load error
-	op.loadErr = errBoom
-	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 500 {
-		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
-	op.saveErr = errBoom
+	// Save error path.
+	op.SetSaveErr(errBoom)
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 500 {
 		t.Fatalf("save=%d", w.Code)
 	}
@@ -1806,7 +1755,7 @@ func TestFeedAddDropsReservedTag(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/add", tok, form)); w.Code != 303 {
 		t.Fatalf("code=%d", w.Code)
 	}
-	got := op.op.Feeds[0].Tags
+	got := op.opml.Feeds[0].Tags
 	if len(got) != 1 || got[0] != "ok" {
 		t.Fatalf("got %v", got)
 	}
@@ -1815,13 +1764,13 @@ func TestFeedAddDropsReservedTag(t *testing.T) {
 func TestFeedTagChipDropsReserved(t *testing.T) {
 	// /ui/feed/tag add=__untagged__ → 200 (silent drop), feed unchanged.
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
 	form := url.Values{"url": {"https://x/feed"}, "add": {store.ReservedTagUntagged}}
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
 	}
-	if len(op.op.Feeds[0].Tags) != 0 {
-		t.Fatalf("reserved leaked: %v", op.op.Feeds[0].Tags)
+	if len(op.opml.Feeds[0].Tags) != 0 {
+		t.Fatalf("reserved leaked: %v", op.opml.Feeds[0].Tags)
 	}
 }
 
@@ -1833,7 +1782,7 @@ func TestFeedTagChipExoticTagName(t *testing.T) {
 	// POSTs the literal value.
 	_, mux, _, op, tok, _ := fixture(t)
 	odd := `a"b\c`
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{odd}}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{odd}}}
 	w := do(mux, req("GET", "/ui/feed?id=https://x/feed", tok, nil))
 	body := w.Body.String()
 	// Source must HTML-escape the tag inside the form's hidden input.
@@ -1845,8 +1794,8 @@ func TestFeedTagChipExoticTagName(t *testing.T) {
 	if w := do(mux, req("POST", "/ui/feed/tag", tok, form)); w.Code != 200 {
 		t.Fatalf("remove code=%d", w.Code)
 	}
-	if op.op.Feeds[0].HasTag(odd) {
-		t.Fatalf("not removed: %v", op.op.Feeds[0].Tags)
+	if op.opml.Feeds[0].HasTag(odd) {
+		t.Fatalf("not removed: %v", op.opml.Feeds[0].Tags)
 	}
 }
 
@@ -1865,7 +1814,7 @@ func TestFeedTagChipBadForm(t *testing.T) {
 
 func TestFeedViewIncludesTagChips(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"news"}}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X", Tags: []string{"news"}}}
 	w := do(mux, req("GET", "/ui/feed?id=https://x/feed", tok, nil))
 	if w.Code != 200 {
 		t.Fatalf("code=%d", w.Code)
@@ -1937,7 +1886,7 @@ func TestEntryRowUsesIconButtons(t *testing.T) {
 // to unread feeds when neither ?unread= nor the cookie is set.
 func TestHomeDefaultsToUnreadOnly(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "Alpha"},
 		{XMLURL: "https://b/feed", Title: "Bravo"},
 	}
@@ -1964,7 +1913,7 @@ func TestHomeDefaultsToUnreadOnly(t *testing.T) {
 // plain navigations honour without the query param.
 func TestUnreadCookiePersistsAcrossPages(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "Alpha"},
 		{XMLURL: "https://b/feed", Title: "Bravo"},
 	}
@@ -2012,13 +1961,13 @@ func TestUnreadCookiePersistsAcrossPages(t *testing.T) {
 // toggle. Feeds with multiple tags duplicate across groups.
 func TestHomeFeedGroupsByTag(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "Alpha", Tags: []string{"tech"}},
 		{XMLURL: "https://b/feed", Title: "Bravo", Tags: []string{"tech", "daily"}},
 		{XMLURL: "https://c/feed", Title: "Charlie"}, // untagged
 	}
 	now := time.Now()
-	for _, f := range op.op.Feeds {
+	for _, f := range op.opml.Feeds {
 		st.AppendEntries(store.FeedHash(f.XMLURL), []store.Entry{
 			{GUID: "g-" + f.XMLURL, Title: "T", Published: now, FetchedAt: now},
 		})
@@ -2055,7 +2004,7 @@ func TestHomeFeedGroupsByTag(t *testing.T) {
 // one freely.
 func TestTagChipsHaveDatalistOfAllTags(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{
+	op.opml.Feeds = []store.Feed{
 		{XMLURL: "https://a/feed", Title: "Alpha", Tags: []string{"tech", "weekly"}},
 		{XMLURL: "https://b/feed", Title: "Bravo", Tags: []string{"news"}},
 	}
@@ -2092,7 +2041,7 @@ func TestTagChipsHaveDatalistOfAllTags(t *testing.T) {
 // markup contract is what tests can pin down.
 func TestTagChipRemoveIsLessProminent(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}}}
+	op.opml.Feeds = []store.Feed{{XMLURL: "https://a/feed", Title: "A", Tags: []string{"tech"}}}
 	w := do(mux, req("GET", "/ui/feed?id="+url.QueryEscape("https://a/feed"), tok, nil))
 	body := w.Body.String()
 	if !strings.Contains(body, `class="tagchip-x"`) {

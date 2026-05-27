@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kfet/harborrs/internal/store"
@@ -18,20 +19,29 @@ import (
 
 // Defaults for the scheduler.
 const (
-	DefaultInterval = 1 * time.Hour
-	MinInterval     = 15 * time.Minute
-	MaxInterval     = 24 * time.Hour
-	UserAgent       = "harborrs/0.1 (+https://github.com/kfet/harborrs)"
+	DefaultInterval    = 1 * time.Hour
+	MinInterval        = 15 * time.Minute
+	MaxInterval        = 24 * time.Hour
+	UserAgent          = "harborrs/0.1 (+https://github.com/kfet/harborrs)"
+	DefaultConcurrency = 8
 )
 
 // Poller fetches feeds and writes results to a Store.
 type Poller struct {
 	Store  *store.Store
 	Client *http.Client
+	// Parser is retained as a default/sentinel only. Poll never uses
+	// the shared instance — gofeed.Parser is not goroutine-safe when
+	// shared across concurrent feeds, so each Poll call builds a
+	// fresh gofeed.NewParser(). Production code should not read this
+	// field.
 	Parser *gofeed.Parser
 	Now    func() time.Time
 	// MaxBodyBytes caps how much body we read per feed (default 10MiB).
 	MaxBodyBytes int64
+	// Concurrency bounds the number of feeds polled in parallel by
+	// tickOnce. Zero or negative → DefaultConcurrency.
+	Concurrency int
 }
 
 // New builds a Poller with sensible defaults. Store is required.
@@ -42,6 +52,7 @@ func New(s *store.Store) *Poller {
 		Parser:       gofeed.NewParser(),
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,
+		Concurrency:  DefaultConcurrency,
 	}
 }
 
@@ -121,7 +132,7 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		return 0, p.recordErr(fh, &st, errors.New("body too large"))
 	}
 
-	parsed, err := p.Parser.ParseString(string(body))
+	parsed, err := gofeed.NewParser().ParseString(string(body))
 	if err != nil {
 		return 0, p.recordErr(fh, &st, err)
 	}
@@ -251,7 +262,17 @@ func (p *Poller) Run(ctx context.Context, feeds func() []string, tick time.Durat
 
 func (p *Poller) tickOnce(ctx context.Context, urls []string) {
 	now := p.Now().UTC()
+	conc := p.Concurrency
+	if conc <= 0 {
+		conc = DefaultConcurrency
+	}
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+loop:
 	for _, u := range urls {
+		if ctx.Err() != nil {
+			break
+		}
 		fh := store.FeedHash(u)
 		st, err := p.Store.LoadFeedState(fh)
 		if err != nil {
@@ -260,9 +281,17 @@ func (p *Poller) tickOnce(ctx context.Context, urls []string) {
 		if !st.NextFetch.IsZero() && st.NextFetch.After(now) {
 			continue
 		}
-		_, _ = p.Poll(ctx, u)
-		if ctx.Err() != nil {
-			return
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break loop
 		}
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_, _ = p.Poll(ctx, u)
+		}(u)
 	}
+	wg.Wait()
 }

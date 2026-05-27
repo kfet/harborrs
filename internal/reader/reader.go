@@ -20,22 +20,15 @@ import (
 
 	"github.com/kfet/harborrs/internal/auth"
 	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harborrs/internal/subs"
 )
-
-// OPMLProvider lets the Reader server fetch (and atomically replace) the
-// subscriptions OPML. The host (cmd/harborrs) supplies this so the Reader
-// package stays decoupled from the file layout.
-type OPMLProvider interface {
-	Load() (*store.OPML, error)
-	Save(*store.OPML) error
-}
 
 // Server is the Reader API HTTP surface. Construct via New and mount with
 // Routes(mux).
 type Server struct {
 	Store   *store.Store
 	Auth    *auth.Store
-	OPML    OPMLProvider
+	Subs    *subs.Subs
 	Now     func() time.Time
 	MaxPage int
 
@@ -49,10 +42,10 @@ type Server struct {
 	mu sync.Mutex // guards subscription mutations
 }
 
-// New returns a Server with sensible defaults. All three fields are
+// New returns a Server with sensible defaults. All three deps are
 // required.
-func New(s *store.Store, a *auth.Store, opml OPMLProvider) *Server {
-	return &Server{Store: s, Auth: a, OPML: opml, Now: time.Now, MaxPage: 100}
+func New(s *store.Store, a *auth.Store, sb *subs.Subs) *Server {
+	return &Server{Store: s, Auth: a, Subs: sb, Now: time.Now, MaxPage: 100}
 }
 
 // Routes registers every Reader endpoint on mux. The returned handler
@@ -181,11 +174,7 @@ const (
 )
 
 func (s *Server) handleSubscriptionList(w http.ResponseWriter, r *http.Request) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	out := struct {
 		Subscriptions []subItem `json:"subscriptions"`
 	}{}
@@ -207,11 +196,6 @@ func (s *Server) handleSubscriptionList(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	streamID := r.FormValue("s")
 	url := strings.TrimPrefix(streamID, "feed/")
 	if url == "" {
@@ -229,36 +213,42 @@ func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) 
 		}
 		return out
 	}
-	switch ac {
-	case "subscribe":
-		title := r.FormValue("t")
-		if title == "" {
-			title = url
+	var badReq string
+	err := s.Subs.Mutate(func(op *store.OPML) {
+		switch ac {
+		case "subscribe":
+			title := r.FormValue("t")
+			if title == "" {
+				title = url
+			}
+			tags := stripLabels(r.Form["a"])
+			op.Add(store.Feed{XMLURL: url, Title: title, Tags: tags})
+		case "unsubscribe":
+			op.Remove(url)
+		case "edit":
+			f := op.Find(url)
+			if f == nil {
+				badReq = "not found"
+				return
+			}
+			if t := r.FormValue("t"); t != "" {
+				f.Title = t
+			}
+			for _, t := range stripLabels(r.Form["a"]) {
+				f.AddTag(t)
+			}
+			for _, t := range stripLabels(r.Form["r"]) {
+				f.RemoveTag(t)
+			}
+		default:
+			badReq = "bad ac"
 		}
-		tags := stripLabels(r.Form["a"])
-		op.Add(store.Feed{XMLURL: url, Title: title, Tags: tags})
-	case "unsubscribe":
-		op.Remove(url)
-	case "edit":
-		f := op.Find(url)
-		if f == nil {
-			http.Error(w, "not found", http.StatusBadRequest)
-			return
-		}
-		if t := r.FormValue("t"); t != "" {
-			f.Title = t
-		}
-		for _, t := range stripLabels(r.Form["a"]) {
-			f.AddTag(t)
-		}
-		for _, t := range stripLabels(r.Form["r"]) {
-			f.RemoveTag(t)
-		}
-	default:
-		http.Error(w, "bad ac", http.StatusBadRequest)
+	})
+	if badReq != "" {
+		http.Error(w, badReq, http.StatusBadRequest)
 		return
 	}
-	if err := s.OPML.Save(op); err != nil {
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -273,13 +263,9 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Add(store.Feed{XMLURL: url, Title: url})
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.Subs.Mutate(func(op *store.OPML) {
+		op.Add(store.Feed{XMLURL: url, Title: url})
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -291,11 +277,7 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	type tag struct {
 		ID   string `json:"id"`
 		Type string `json:"type,omitempty"`
@@ -331,13 +313,9 @@ func (s *Server) handleRenameTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reserved tag name", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.RenameTag(oldName, newName)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.Subs.Mutate(func(op *store.OPML) {
+		op.RenameTag(oldName, newName)
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -354,13 +332,9 @@ func (s *Server) handleDisableTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing s", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.DisableTag(name)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.Subs.Mutate(func(op *store.OPML) {
+		op.DisableTag(name)
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -431,22 +405,15 @@ func itemIDToHash(id string) string {
 
 func (s *Server) handleStreamContents(w http.ResponseWriter, r *http.Request) {
 	streamID := strings.TrimPrefix(r.URL.Path, "/reader/api/0/stream/contents/")
-	items, err := s.collectStream(streamID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
+	items := s.collectStream(streamID, op)
 	items = s.applyRequestFilters(items, r, streamID)
 	s.sortForRequest(items, r)
-	s.writeStreamPage(w, streamID, items, r)
+	s.writeStreamPage(w, streamID, items, r, op)
 }
 
 func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	wantOrder := []string{}
 	want := map[string]bool{}
 	for _, id := range r.Form["i"] {
@@ -480,12 +447,10 @@ func (s *Server) handleItemsContents(w http.ResponseWriter, r *http.Request) {
 }
 
 // collectStream gathers entries for a stream id. Only the common stream
-// kinds are supported; unknown ids resolve to "all entries".
-func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		return nil, err
-	}
+// kinds are supported; unknown ids resolve to "all entries". op must be
+// the live OPML pointer (s.Subs.OPML()); callers grab it once per
+// request and pass it in to avoid repeated atomic loads.
+func (s *Server) collectStream(streamID string, op *store.OPML) []store.Entry {
 	var entries []store.Entry
 	gather := func(filter func(store.Feed) bool) {
 		for _, f := range op.Feeds {
@@ -523,7 +488,7 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Published.After(entries[j].Published)
 	})
-	return entries, nil
+	return entries
 }
 
 func filterEntries(es []store.Entry, ok func(store.Entry) bool) []store.Entry {
@@ -652,8 +617,7 @@ func directStreamsByFeed(op *store.OPML) map[string][]string {
 }
 
 // writeStreamPage paginates entries and writes a streamResponse.
-func (s *Server) writeStreamPage(w http.ResponseWriter, streamID string, entries []store.Entry, r *http.Request) {
-	op, _ := s.OPML.Load()
+func (s *Server) writeStreamPage(w http.ResponseWriter, streamID string, entries []store.Entry, r *http.Request, op *store.OPML) {
 	n := s.MaxPage
 	if v := r.FormValue("n"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 && i < s.MaxPage {
@@ -758,17 +722,11 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 	if streamID == "" {
 		streamID = streamReadingList
 	}
-	entries, err := s.collectStream(streamID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
+	entries := s.collectStream(streamID, op)
 	entries = s.applyRequestFilters(entries, r, streamID)
 	s.sortForRequest(entries, r)
-	directStreams := map[string][]string{}
-	if op, err := s.OPML.Load(); err == nil {
-		directStreams = directStreamsByFeed(op)
-	}
+	directStreams := directStreamsByFeed(op)
 	n := s.MaxPage
 	if v := r.FormValue("n"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
@@ -882,11 +840,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			cutoff = time.UnixMicro(usec).UTC()
 		}
 	}
-	entries, err := s.collectStream(streamID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	entries := s.collectStream(streamID, s.Subs.OPML())
 	for _, e := range entries {
 		if !cutoff.IsZero() && e.Published.After(cutoff) {
 			continue
@@ -900,13 +854,11 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUnreadCount returns per-feed unread counts + an overall reading-
-// list total.
+// list total. O(feeds): the Store maintains per-feed unread counters
+// updated by AppendEntries and SetRead, so this handler never scans
+// entries.
 func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	op := s.Subs.OPML()
 	type uc struct {
 		ID                      string `json:"id"`
 		Count                   int    `json:"count"`
@@ -920,18 +872,7 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 	var globalNewest int64
 	for _, f := range op.Feeds {
 		fh := store.FeedHash(f.XMLURL)
-		es := s.Store.IndexedEntries(fh)
-		count := 0
-		var newest int64
-		for _, e := range es {
-			if s.Store.EntryState(e.Hash).Read {
-				continue
-			}
-			count++
-			if ts := e.FetchedAt.UnixMicro(); ts > newest {
-				newest = ts
-			}
-		}
+		count, newest := s.Store.UnreadCount(fh)
 		if newest > globalNewest {
 			globalNewest = newest
 		}
