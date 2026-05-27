@@ -109,50 +109,6 @@ a `tokens.json` file (small, easy to inspect).
   block.
 - **Auth**: cookie session. htmx requests inherit cookies automatically.
 
-## Concurrency model
-
-Single-user, in-memory authoritative state. Disk is a write-through
-log, not a cache.
-
-- **`subscriptions.opml` is loaded once at startup**, parsed into a
-  `*store.OPML`, and held in an `atomic.Pointer[store.OPML]` inside a
-  `*internal/subs.Subs`. Readers call `s.OPML()` for a lock-free
-  immutable snapshot; mutators call `s.Mutate(func(op *store.OPML){…})`
-  which serialises writes via a `sync.Mutex`, clones the current OPML,
-  applies the closure, writes to disk atomically, and stores the new
-  pointer. The returned `*store.OPML` value MUST be treated as
-  immutable — same contract as any `atomic.Pointer` payload.
-- **No `Load` / `Save` interface.** No snapshot ceremony, no copy on
-  read. Reader/UI/Poller handlers receive `*subs.Subs` directly and
-  call `.OPML()` at most once per request, passing the pointer to
-  helpers.
-- **`store.OPML.Clone()`** returns a deep copy (Feeds + per-feed
-  Tags). Used by `Subs.Mutate`. Mutators should never mutate the
-  pointer obtained via `.OPML()`.
-
-### Concurrent polling
-
-- The polling scheduler fans out per-feed fetches with a bounded
-  worker pool (default 8, exposed as `Poller.Concurrency`). Each
-  goroutine takes a slot via a buffered channel `sem` and releases it
-  on exit; `sync.WaitGroup` joins.
-- `gofeed.Parser` is **not goroutine-safe** when shared. Each `Poll`
-  call constructs a fresh `gofeed.NewParser()`. `Poller.Parser` is
-  retained only as a default/sentinel for tests; the hot path never
-  shares it.
-- `AppendEntries` dedupes against the in-memory `s.byHash` index, not
-  by re-scanning NDJSON archives. The disk-rescan path is gone from
-  the poll hot loop.
-
-### Unread counters
-
-- `Store` maintains per-feed `unreadCount` + `newestUnreadFetchedAtUsec`
-  in memory, updated by `AppendEntries` (new entries default unread →
-  `++`) and `setFlag` (read=true → `--`, read=false → `++`). Built at
-  `Open` from the index + state fold.
-- `handleUnreadCount` reads these counters: O(feeds), no per-entry
-  state lookup.
-
 ## Constraints
 
 - **Stdlib-mostly.** The only acceptable third-party dependency right
@@ -163,6 +119,34 @@ log, not a cache.
   `*Server` value; HTTP handlers are methods on it.
 - **Tests run real polling against real local HTTP servers** spun up
   with `httptest.NewServer`. No mocking the HTTP client.
+
+## Concurrency model
+
+Idiomatic Go. No mutexes around things that don't need them.
+
+- **In-memory state is the source of truth.** Disk is persistence, not
+  the read path. Load once at startup, serve from memory, write to
+  disk only on mutation. Applies to OPML, parsed config, anything
+  else read on every request.
+- **Read-mostly snapshots: `atomic.Pointer[T]`, not `sync.RWMutex`.**
+  Readers do a lock-free `Load()` and treat the returned pointer as
+  immutable. Writers serialise via a private `sync.Mutex`,
+  copy-on-write, then `Store()` the new pointer. Never mutate a value
+  a reader might be looking at.
+- **Hand snapshots down the call stack.** A handler takes one
+  `Snapshot()` at the top and passes it to helpers. Do not re-snapshot
+  per helper — that defeats the point and lets state shift mid-request.
+- **Concurrency primitives in order of preference:** channels for
+  producer/consumer or fan-out; `sync.WaitGroup` + buffered chan
+  semaphore for bounded parallelism; `atomic.*` for counters and
+  pointers; `sync.Mutex` only when you actually need to guard a
+  multi-field invariant. `sync.RWMutex` is almost always a smell —
+  reach for `atomic.Pointer` first.
+- **I/O is parallel by default.** Polling N feeds is N goroutines
+  (bounded by a chan semaphore), not a for-loop with one
+  `http.Client`.
+- **No global state, no `init()` registries.** Already in Constraints;
+  restated because it's a concurrency-correctness rule too.
 
 ## Workflow
 
