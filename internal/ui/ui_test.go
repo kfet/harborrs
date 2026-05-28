@@ -2281,3 +2281,83 @@ func TestSplitLayoutCSS(t *testing.T) {
 		}
 	}
 }
+
+// TestLinksOpenInNewTab — links inside rendered entry content must
+// open in a new browser tab so the reader doesn't lose their place in
+// the feed list. The rewriter must add target="_blank" and the
+// noopener noreferrer rel pair to every <a> that doesn't already
+// carry a target attribute.
+func TestLinksOpenInNewTab(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := "https://demo.example/feed"
+	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "Demo", HTMLURL: "https://demo.example"}}
+	now := time.Now().UTC()
+	e := store.Entry{
+		GUID:      "g1",
+		Link:      "https://demo.example/p1",
+		Title:     "T",
+		Content:   `<p>see <a href="https://example.com/a">A</a> and <A HREF="https://example.com/b">B</A>, plus <a href="https://example.com/c" target="_self">C</a>.</p>`,
+		Summary:   "summary",
+		Published: now, FetchedAt: now,
+	}
+	if _, err := st.AppendEntries(store.FeedHash(u), []store.Entry{e}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	es, _ := st.ListEntries(store.FeedHash(u))
+	w := do(mux, req("GET", "/ui/entry?id="+es[0].Hash, tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	body := w.Body.String()
+	// Tags without an existing target= must be rewritten.
+	if !strings.Contains(body, `<a href="https://example.com/a" target="_blank" rel="noopener noreferrer">`) {
+		t.Fatalf("lowercase <a> not rewritten: %s", body)
+	}
+	if !strings.Contains(body, `<a HREF="https://example.com/b" target="_blank" rel="noopener noreferrer">`) {
+		t.Fatalf("uppercase <A> not rewritten: %s", body)
+	}
+	// Tags with an existing target= must be left untouched (author
+	// intent wins) — and crucially must NOT have a second target= or
+	// rel= appended after it.
+	if !strings.Contains(body, `<a href="https://example.com/c" target="_self">`) {
+		t.Fatalf("explicit target=_self should be preserved verbatim: %s", body)
+	}
+	if strings.Contains(body, `target="_self" target="_blank"`) {
+		t.Fatalf("double target= attribute appended: %s", body)
+	}
+
+	// Also exercise the toggleFlag detail-view branch, which renders
+	// the same body through a separate handler path.
+	wd := do(mux, req("POST", "/ui/entry/read?id="+es[0].Hash+"&state=1&view=detail", tok, nil))
+	if wd.Code != 200 {
+		t.Fatalf("detail code=%d", wd.Code)
+	}
+	if !strings.Contains(wd.Body.String(), `target="_blank" rel="noopener noreferrer"`) {
+		t.Fatalf("detail view body not rewritten: %s", wd.Body.String())
+	}
+
+	// Body falling back to Summary path: empty Content, summary holds
+	// the link.
+	e2 := store.Entry{
+		GUID: "g2", Link: "https://demo.example/p2", Title: "T2",
+		Content: "", Summary: `<a href="https://example.com/s">S</a>`,
+		Published: now, FetchedAt: now,
+	}
+	if _, err := st.AppendEntries(store.FeedHash(u), []store.Entry{e2}); err != nil {
+		t.Fatalf("append2: %v", err)
+	}
+	es2, _ := st.ListEntries(store.FeedHash(u))
+	var h2 string
+	for _, x := range es2 {
+		if x.GUID == "g2" {
+			h2 = x.Hash
+		}
+	}
+	w2 := do(mux, req("GET", "/ui/entry?id="+h2+"&panel=1", tok, nil))
+	if w2.Code != 200 {
+		t.Fatalf("panel code=%d", w2.Code)
+	}
+	if !strings.Contains(w2.Body.String(), `target="_blank" rel="noopener noreferrer"`) {
+		t.Fatalf("panel/summary-fallback body not rewritten: %s", w2.Body.String())
+	}
+}

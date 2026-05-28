@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -901,6 +902,37 @@ func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed
 	return store.Entry{}, store.Feed{}, false, nil
 }
 
+// aTagOpenRe matches the opening `<a ...>` tag (case-insensitive).
+// The submatch is the attribute span between `<a` and `>`.
+var aTagOpenRe = regexp.MustCompile(`(?is)<a\b([^>]*)>`)
+
+// openLinksInNewTab rewrites every `<a>` opening tag in s so that
+// activating the link opens it in a new browser tab. Tags that already
+// carry a `target=` attribute are left untouched (the author's intent
+// wins). For all others, `target="_blank" rel="noopener noreferrer"`
+// is appended to the existing attribute list.
+func openLinksInNewTab(s string) string {
+	return aTagOpenRe.ReplaceAllStringFunc(s, func(m string) string {
+		// m is `<a` + attrs + `>`; pull attrs out by slice.
+		attrs := m[2 : len(m)-1]
+		if strings.Contains(strings.ToLower(attrs), "target=") {
+			return m
+		}
+		return "<a" + attrs + ` target="_blank" rel="noopener noreferrer">`
+	})
+}
+
+// entryBody resolves the displayable HTML body of e (Content, falling
+// back to Summary) and post-processes it for the web UI — currently
+// just rewriting `<a>` tags so links open in a new tab.
+func entryBody(e store.Entry) template.HTML {
+	body := e.Content
+	if body == "" {
+		body = e.Summary
+	}
+	return template.HTML(openLinksInNewTab(body))
+}
+
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("id")
 	if hash == "" {
@@ -921,10 +953,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body := e.Content
-	if body == "" {
-		body = e.Summary
-	}
+	body := entryBody(e)
 	// panel=1 — render just the entry-detail fragment, no chrome.
 	// Used by the split-panel layout's hx-get on entry rows so the
 	// right pane swaps in the entry view without a full page load.
@@ -935,7 +964,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 			State     store.EntryState
 			FeedURL   string
 			FeedTitle string
-		}{e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+		}{e, body, s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		return
@@ -947,7 +976,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		State     store.EntryState
 		FeedURL   string
 		FeedTitle string
-	}{s.base(r), e, template.HTML(body), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+	}{s.base(r), e, body, s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 	s.render(w, "entry", data)
 }
 
@@ -995,17 +1024,13 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.Query().Get("view") == "detail" {
-		body := e.Content
-		if body == "" {
-			body = e.Summary
-		}
 		data := struct {
 			Entry     store.Entry
 			Body      template.HTML
 			State     store.EntryState
 			FeedURL   string
 			FeedTitle string
-		}{e, template.HTML(body), st, f.XMLURL, f.Title}
+		}{e, entryBody(e), st, f.XMLURL, f.Title}
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		// Out-of-band patch for the matching list row, so the
 		// split-panel keeps the list and the open entry in sync when

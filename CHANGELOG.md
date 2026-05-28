@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Web UI: links inside rendered article content now open in a new
+  browser tab. Every `<a>` tag in the entry body that doesn't already
+  carry a `target=` attribute is rewritten with
+  `target="_blank" rel="noopener noreferrer"` before the body is
+  handed to the template, so following a link no longer loses the
+  reader's place in the feed list. Author-set `target=` values are
+  preserved verbatim.
+
 ## [0.4.18] - 2026-05-26
 
 ### Changed
