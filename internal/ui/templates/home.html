@@ -19,11 +19,6 @@
 <a href="./{{if .Name}}?tag={{.Name}}{{end}}">{{.Label}} <span class="count">{{.Unread}}</span></a>
 </li>
 {{end}}
-{{if .Tags}}<li class="sep"></li>{{range .Tags}}
-<li class="{{if eq $.TagFilter .Name}}active{{end}}">
-<a href="./?tag={{.Name}}">{{.Label}} <span class="count">{{.Unread}}</span></a>
-</li>
-{{end}}{{end}}
 </ul>
 </aside>
 

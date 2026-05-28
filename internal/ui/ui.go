@@ -471,14 +471,9 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		}
 		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count, Tags: f.Tags})
 	}
-	tags := op.AllTags()
 	pinned := []tagCount{
 		{Name: "", Label: "All", Unread: buckets[""]},
 		{Name: store.ReservedTagUntagged, Label: "Untagged", Unread: buckets[store.ReservedTagUntagged]},
-	}
-	sidebar := make([]tagCount, 0, len(tags))
-	for _, t := range tags {
-		sidebar = append(sidebar, tagCount{Name: t, Label: t, Unread: buckets[t]})
 	}
 	groups := buildFeedGroups(feeds, tagFilter)
 	data := struct {
@@ -487,11 +482,10 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Total      int
 		WithUnread int
 		UnreadOnly bool
-		Sidebar    []tagCount // pinned rows
-		Tags       []tagCount // real tag rows (empty when no tags exist)
+		Sidebar    []tagCount // pinned rows (All / Untagged)
 		TagFilter  string
 		Groups     []feedGroup
-	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, sidebar, tagFilter, groups}
+	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, tagFilter, groups}
 	s.render(w, "home", data)
 }
 

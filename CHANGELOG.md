@@ -13,6 +13,10 @@ All notable changes to this project will be documented in this file.
   handed to the template, so following a link no longer loses the
   reader's place in the feed list. Author-set `target=` values are
   preserved verbatim.
+- Web UI home page: the sidebar no longer lists individual labels as
+  bullets — labels already appear as group headers in the feed list,
+  so showing them twice was redundant. The sidebar now holds only the
+  pinned "All" and "Untagged" affordances.
 
 ### Fixed
 
