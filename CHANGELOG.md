@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-05-28
+
 ### Changed
 
 - Web UI: links inside rendered article content now open in a new
