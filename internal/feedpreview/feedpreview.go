@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"time"
@@ -71,7 +72,7 @@ func (p *Previewer) Preview(url string) (*ui.FeedPreview, error) {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 	out := &ui.FeedPreview{
-		Title:       f.Title,
+		Title:       html.UnescapeString(f.Title),
 		Description: f.Description,
 		Link:        f.Link,
 	}
@@ -80,7 +81,7 @@ func (p *Previewer) Preview(url string) (*ui.FeedPreview, error) {
 		max = 10
 	}
 	for i := 0; i < max; i++ {
-		out.Items = append(out.Items, ui.FeedPreviewItem{Title: f.Items[i].Title})
+		out.Items = append(out.Items, ui.FeedPreviewItem{Title: html.UnescapeString(f.Items[i].Title)})
 	}
 	return out, nil
 }

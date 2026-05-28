@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strconv"
@@ -135,17 +136,19 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 
 	entries := make([]store.Entry, 0, len(parsed.Items))
 	for _, it := range parsed.Items {
+		// Decode HTML entities once at ingestion in *text* fields only
+		// (Title, Author.Name). Summary / Content are HTML and stay raw.
 		e := store.Entry{
 			FeedHash:  fh,
 			GUID:      it.GUID,
 			Link:      it.Link,
-			Title:     it.Title,
+			Title:     html.UnescapeString(it.Title),
 			Summary:   it.Description,
 			Content:   it.Content,
 			FetchedAt: now,
 		}
 		if it.Author != nil {
-			e.Author = it.Author.Name
+			e.Author = html.UnescapeString(it.Author.Name)
 		}
 		if it.PublishedParsed != nil {
 			e.Published = it.PublishedParsed.UTC()

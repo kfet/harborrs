@@ -78,6 +78,52 @@ func TestPollSuccess(t *testing.T) {
 	}
 }
 
+// TestPollDecodesHTMLEntitiesInTitleAndAuthor pins the regression
+// behaviour for the title-entity-decode fix: feed titles / author
+// names that arrive with HTML entities (numeric, hex, or named) must
+// be decoded once at ingestion so the rest of the pipeline sees plain
+// unicode text. Compare against the bug report: a title rendered as
+// literal "&#8216;unintended&#8217;" in the web UI instead of curly
+// quotes.
+func TestPollDecodesHTMLEntitiesInTitleAndAuthor(t *testing.T) {
+	p, _, _ := newPoller(t)
+	const rssWithEntities = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>S</title>
+    <item>
+      <title>Motorola says affiliate hijacking of Amazon app was &amp;#8216;unintended&amp;#8217; &amp;amp; broken &amp;#x27;quote&amp;#x27;</title>
+      <link>https://x.example/a</link>
+      <guid>guid-a</guid>
+      <author>jane@example.com (Jane &amp;amp; Co)</author>
+      <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, rssWithEntities)
+	}))
+	defer srv.Close()
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	es, err := p.Store.ListEntries(store.FeedHash(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(es) != 1 {
+		t.Fatalf("got %d entries", len(es))
+	}
+	want := "Motorola says affiliate hijacking of Amazon app was \u2018unintended\u2019 & broken 'quote'"
+	if es[0].Title != want {
+		t.Fatalf("title not decoded:\n got=%q\nwant=%q", es[0].Title, want)
+	}
+	if got := es[0].Author; got != "Jane & Co" {
+		t.Fatalf("author not decoded: got=%q want=%q", got, "Jane & Co")
+	}
+}
+
 func TestPollNotModified(t *testing.T) {
 	p, _, _ := newPoller(t)
 	first := true

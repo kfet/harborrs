@@ -14,6 +14,17 @@ All notable changes to this project will be documented in this file.
   reader's place in the feed list. Author-set `target=` values are
   preserved verbatim.
 
+### Fixed
+
+- Decode HTML entities in feed-supplied **title** and **author name**
+  text once at ingestion (and in the add-feed preview), so the web UI
+  no longer renders literal entity strings like `&#8216;unintended&#8217;`
+  to the user. The decode is applied only to text fields — `summary`
+  and `content` (which are HTML) are left untouched, so this does not
+  start trusting raw HTML in title fields and introduces no XSS
+  surface. Templates continue to escape `&`, `<`, `>`, `'` etc. on
+  output as normal.
+
 ## [0.4.18] - 2026-05-26
 
 ### Changed

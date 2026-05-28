@@ -2282,6 +2282,57 @@ func TestSplitLayoutCSS(t *testing.T) {
 	}
 }
 
+// TestEntryTitleEntityDecodeRender pins the title-entity-decode fix
+// from the rendering side: once ingestion has decoded HTML entities in
+// a title to plain unicode (curly quotes, ampersands, apostrophes),
+// html/template must render those code points directly (or via the
+// canonical minimal escape for & < > etc.) — never as the original
+// numeric / named entity strings the user reported seeing in the UI.
+func TestEntryTitleEntityDecodeRender(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := "https://demo.example/feed"
+	op.op.Feeds = []store.Feed{{XMLURL: u, Title: "Demo", HTMLURL: "https://demo.example"}}
+	// Title is what the poll-ingestion layer would have produced:
+	// entities already decoded to plain unicode, including a bare &
+	// which the template must re-escape on output.
+	decoded := "Motorola says affiliate hijacking of Amazon app was \u2018unintended\u2019 & 'quote'"
+	now := time.Now().UTC()
+	if _, err := st.AppendEntries(store.FeedHash(u), []store.Entry{{
+		GUID: "g1", Link: "https://demo.example/a", Title: decoded,
+		Content: "<p>body</p>", Summary: "s", Published: now, FetchedAt: now,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	w := do(mux, req("GET", "/ui/feed?id="+u, tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// Curly quotes round-trip as their unicode code points — no
+	// escaping required by html/template.
+	if !strings.Contains(body, "\u2018unintended\u2019") {
+		t.Fatalf("rendered HTML missing decoded curly quotes around 'unintended'")
+	}
+	// A bare & must come out as &amp; — that's html/template doing its
+	// normal escape on plain text, NOT us shipping a literal entity.
+	if !strings.Contains(body, "&amp;") {
+		t.Fatalf("expected & to be escaped to &amp; in rendered HTML, got: %s", body)
+	}
+	// html/template canonically escapes apostrophe to &#39; in HTML
+	// text context; that's "properly escaped by the template" and
+	// distinct from the bug's leftover entity strings below.
+	if !strings.Contains(body, "&#39;quote&#39;") {
+		t.Fatalf("expected apostrophe to be canonically escaped to &#39; in rendered HTML, got: %s", body)
+	}
+	// Crucially: none of the original entity strings must survive into
+	// the rendered HTML — that's exactly the bug.
+	for _, ent := range []string{"&#8216;", "&#8217;", "&#x27;", "&amp;#8216;", "&amp;#8217;", "&amp;amp;"} {
+		if strings.Contains(body, ent) {
+			t.Fatalf("rendered HTML still contains raw entity %q", ent)
+		}
+	}
+}
+
 // TestLinksOpenInNewTab — links inside rendered entry content must
 // open in a new browser tab so the reader doesn't lose their place in
 // the feed list. The rewriter must add target="_blank" and the

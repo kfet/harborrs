@@ -11,10 +11,10 @@ import (
 
 const rss = `<?xml version="1.0"?>
 <rss version="2.0"><channel>
-<title>Example</title>
+<title>Example &amp;amp; Co</title>
 <description>an example feed</description>
 <link>https://example.com</link>
-<item><title>One</title><link>https://example.com/1</link></item>
+<item><title>One &amp;#8216;quoted&amp;#8217;</title><link>https://example.com/1</link></item>
 <item><title>Two</title><link>https://example.com/2</link></item>
 </channel></rss>`
 
@@ -29,10 +29,12 @@ func TestPreviewOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Title != "Example" || out.Link != "https://example.com" {
+	// Title and item titles must arrive entity-decoded (regression
+	// pin for the title-entity-decode fix).
+	if out.Title != "Example & Co" || out.Link != "https://example.com" {
 		t.Fatalf("bad out: %+v", out)
 	}
-	if len(out.Items) != 2 || out.Items[0].Title != "One" {
+	if len(out.Items) != 2 || out.Items[0].Title != "One \u2018quoted\u2019" {
 		t.Fatalf("bad items: %+v", out.Items)
 	}
 }
