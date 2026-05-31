@@ -12,10 +12,12 @@ package poll
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,10 +44,39 @@ type Poller struct {
 func New(s *store.Store) *Poller {
 	return &Poller{
 		Store:        s,
-		Client:       &http.Client{Timeout: 30 * time.Second},
+		Client:       &http.Client{Timeout: 30 * time.Second, Transport: feedTransport()},
 		Parser:       gofeed.NewParser(),
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,
+	}
+}
+
+// feedTransport builds the HTTP transport used for feed fetches. It
+// deliberately forces HTTP/1.1 and disables connection keep-alive:
+//
+//   - HTTP/2: some CDNs (observed with Akamai-fronted feeds such as
+//     CBC) accept the connection but then reset Go's reused HTTP/2
+//     streams with INTERNAL_ERROR for requests originating from
+//     datacenter IPs — so HTTP/2 polls fail ~100% while a one-shot
+//     `curl` (HTTP/1.1, fresh connection) from the same host succeeds.
+//     Setting TLSNextProto to a non-nil empty map disables HTTP/2.
+//   - Keep-alive: feed polling makes one request per host per cycle and
+//     cycles are a minute apart, so pooled connections are never reused
+//     within their idle lifetime anyway. Closing each connection mirrors
+//     the per-invocation `curl` behaviour that these CDNs tolerate and
+//     avoids serving stale/poisoned connections on the next cycle.
+//
+// Proxy settings are taken from the environment (HTTP_PROXY / HTTPS_PROXY
+// / NO_PROXY), so a feed that is only reachable from a residential egress
+// can be routed through a proxy without code changes.
+func feedTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		DisableKeepAlives:     true,
+		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
 	}
 }
 

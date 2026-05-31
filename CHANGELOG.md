@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-05-31
+
+### Fixed
+
+- Feed fetches now use HTTP/1.1 with connection keep-alive disabled.
+  Some CDNs (observed with Akamai-fronted feeds such as CBC) accept the
+  TLS connection but then reset Go's reused **HTTP/2** streams with
+  `INTERNAL_ERROR` for requests originating from datacenter IPs — so
+  HTTP/2 polling failed ~100% from a VPS while a one-shot `curl`
+  (HTTP/1.1, fresh connection) from the same host succeeded every time.
+  Forcing HTTP/1.1 + fresh connections mirrors the per-invocation `curl`
+  behaviour these CDNs tolerate. The poll transport also now honours
+  `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, so a feed only reachable
+  from a residential egress can be routed through a proxy without code
+  changes. Keep-alive gives no benefit here anyway: polling makes one
+  request per host per cycle, a minute apart.
+
 ## [0.4.20] - 2026-05-31
 
 ### Fixed
