@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -650,30 +651,30 @@ func makeEntriesNonDir(dir, fh string) error {
 	return os.WriteFile(p+"/"+fh, nil, 0o644)
 }
 
-func TestFeedTransportForcesHTTP1AndNoKeepAlive(t *testing.T) {
-	tr := feedTransport()
-	// Non-nil TLSNextProto map disables HTTP/2 upgrade.
-	if tr.TLSNextProto == nil {
-		t.Fatal("TLSNextProto is nil: HTTP/2 not disabled")
+func TestPollUserAgent(t *testing.T) {
+	cases := []struct{ set, want string }{
+		{"", DefaultUserAgent},               // empty falls back to default
+		{"harborrs/9.9.9", "harborrs/9.9.9"}, // explicit override is sent verbatim
 	}
-	if len(tr.TLSNextProto) != 0 {
-		t.Fatalf("TLSNextProto should be empty, got %d entries", len(tr.TLSNextProto))
-	}
-	if !tr.DisableKeepAlives {
-		t.Fatal("DisableKeepAlives should be true")
-	}
-	if tr.Proxy == nil {
-		t.Fatal("Proxy should honour the environment (HTTP_PROXY/HTTPS_PROXY)")
-	}
-}
-
-func TestNewPollerUsesFeedTransport(t *testing.T) {
-	p := New(nil)
-	tr, ok := p.Client.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("Client.Transport is %T, want *http.Transport", p.Client.Transport)
-	}
-	if tr.TLSNextProto == nil || !tr.DisableKeepAlives {
-		t.Fatal("New() client not configured with feedTransport settings")
+	for _, c := range cases {
+		var got string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.Header.Get("User-Agent")
+			io.WriteString(w, sampleRSS)
+		}))
+		p, _, _ := newPoller(t)
+		p.UserAgent = c.set
+		if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+			t.Fatal(err)
+		}
+		srv.Close()
+		if got != c.want {
+			t.Fatalf("UserAgent set=%q: sent %q, want %q", c.set, got, c.want)
+		}
+		// Guard against the regression we just fixed: never advertise the
+		// disclosure URL that tripped CDN bot rules.
+		if strings.Contains(got, "github.com") {
+			t.Fatalf("User-Agent must not contain a github URL: %q", got)
+		}
 	}
 }

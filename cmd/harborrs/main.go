@@ -206,6 +206,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	poller := poll.New(st)
+	poller.UserAgent = "harborrs/" + harborrs.Version
 	feeds := func() []string {
 		o, err := op.Load()
 		if err != nil {
@@ -319,6 +320,7 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	p := poll.New(st)
+	p.UserAgent = "harborrs/" + harborrs.Version
 	total := 0
 	for _, f := range o.Feeds {
 		// poll-once must force a poll even if the feed is in a

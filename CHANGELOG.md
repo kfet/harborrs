@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-05-31
+
+### Fixed
+
+- **Feed fetches now send a `User-Agent` without a disclosure URL** —
+  `harborrs/<version>` instead of
+  `harborrs/0.1 (+https://github.com/kfet/harborrs)`. Some CDN bot rules
+  (observed with Akamai-fronted feeds such as CBC) **tarpit** any
+  User-Agent containing a `(+https://…github.com…)` string: the
+  connection is accepted but the response is stalled until the client
+  times out, even though the identical request with a bare product token
+  returns instantly. This was the real cause of CBC feeds never updating
+  from the server (≈100% poll failures). Verified from the affected host:
+  the URL-bearing UA failed 0/4 while `harborrs/<version>` succeeded
+  8/8 — over plain HTTP/2 with keep-alive.
+
+### Changed
+
+- Reverted the HTTP/1.1 + disabled-keep-alive feed transport introduced
+  in 0.4.21. It was a workaround for what turned out to be the
+  User-Agent issue above; with the UA fixed, the default transport
+  (HTTP/2, connection reuse) polls those feeds reliably, so the extra
+  configuration was unnecessary complexity. `HTTP_PROXY` / `HTTPS_PROXY`
+  / `NO_PROXY` are still honoured — that comes from Go's default
+  transport, so routing a feed through a residential-egress proxy needs
+  no code change.
+
 ## [0.4.21] - 2026-05-31
 
 ### Fixed

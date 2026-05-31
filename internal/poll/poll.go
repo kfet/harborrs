@@ -12,12 +12,10 @@ package poll
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"html"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,8 +25,15 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-// UserAgent is the HTTP User-Agent harborrs sends on every feed fetch.
-const UserAgent = "harborrs/0.1 (+https://github.com/kfet/harborrs)"
+// DefaultUserAgent is the fallback HTTP User-Agent for feed fetches when
+// a Poller's UserAgent field is unset. It deliberately carries NO
+// disclosure URL: some CDNs' bot rules (observed with Akamai-fronted
+// feeds such as CBC) tarpit any User-Agent containing a
+// "(+https://…github.com…)" string, stalling the response until the
+// client times out — even though the same request with a bare product
+// token succeeds. main wires the running build's version in via
+// Poller.UserAgent ("harborrs/<version>").
+const DefaultUserAgent = "harborrs"
 
 // Poller fetches feeds and writes results to a Store.
 type Poller struct {
@@ -38,45 +43,20 @@ type Poller struct {
 	Now    func() time.Time
 	// MaxBodyBytes caps how much body we read per feed (default 10MiB).
 	MaxBodyBytes int64
+	// UserAgent is sent on every feed fetch. Defaults to
+	// DefaultUserAgent; main overrides it with "harborrs/<version>".
+	UserAgent string
 }
 
 // New builds a Poller with sensible defaults. Store is required.
 func New(s *store.Store) *Poller {
 	return &Poller{
 		Store:        s,
-		Client:       &http.Client{Timeout: 30 * time.Second, Transport: feedTransport()},
+		Client:       &http.Client{Timeout: 30 * time.Second},
 		Parser:       gofeed.NewParser(),
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,
-	}
-}
-
-// feedTransport builds the HTTP transport used for feed fetches. It
-// deliberately forces HTTP/1.1 and disables connection keep-alive:
-//
-//   - HTTP/2: some CDNs (observed with Akamai-fronted feeds such as
-//     CBC) accept the connection but then reset Go's reused HTTP/2
-//     streams with INTERNAL_ERROR for requests originating from
-//     datacenter IPs — so HTTP/2 polls fail ~100% while a one-shot
-//     `curl` (HTTP/1.1, fresh connection) from the same host succeeds.
-//     Setting TLSNextProto to a non-nil empty map disables HTTP/2.
-//   - Keep-alive: feed polling makes one request per host per cycle and
-//     cycles are a minute apart, so pooled connections are never reused
-//     within their idle lifetime anyway. Closing each connection mirrors
-//     the per-invocation `curl` behaviour that these CDNs tolerate and
-//     avoids serving stale/poisoned connections on the next cycle.
-//
-// Proxy settings are taken from the environment (HTTP_PROXY / HTTPS_PROXY
-// / NO_PROXY), so a feed that is only reachable from a residential egress
-// can be routed through a proxy without code changes.
-func feedTransport() *http.Transport {
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		DisableKeepAlives:     true,
-		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
+		UserAgent:    DefaultUserAgent,
 	}
 }
 
@@ -108,7 +88,11 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	if err != nil {
 		return 0, p.recordErr(fh, &st, err)
 	}
-	req.Header.Set("User-Agent", UserAgent)
+	ua := p.UserAgent
+	if ua == "" {
+		ua = DefaultUserAgent
+	}
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8")
 	if st.ETag != "" {
 		req.Header.Set("If-None-Match", st.ETag)
