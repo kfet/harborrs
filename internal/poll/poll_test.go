@@ -297,6 +297,60 @@ func TestPollBadXML(t *testing.T) {
 	}
 }
 
+// TestPollSanitizesIllegalXMLControlChars reproduces a real-world feed
+// (answer.ai) that embeds a U+0008 byte: Go's encoding/xml rejects the
+// whole document, so before sanitization every item was dropped and the
+// feed silently stopped updating. After sanitization the stray byte is
+// stripped and the items parse normally.
+func TestPollSanitizesIllegalXMLControlChars(t *testing.T) {
+	p, _, _ := newPoller(t)
+	dirty := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\"><channel>" +
+		"<title>S\x08</title>" +
+		"<item><title>A\x08B</title><link>https://x.example/a</link>" +
+		"<guid>guid-a</guid><description>line1\tline2\x08\x0c</description></item>" +
+		"</channel></rss>"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, dirty)
+	}))
+	defer srv.Close()
+	added, err := p.Poll(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("poll failed on sanitizable feed: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("added=%d, want 1", added)
+	}
+	entries, _ := p.Store.ListEntries(store.FeedHash(srv.URL))
+	if len(entries) != 1 {
+		t.Fatalf("stored %d entries, want 1", len(entries))
+	}
+	if entries[0].Title != "AB" {
+		t.Fatalf("title=%q, want %q (control char stripped, surrounding text kept)", entries[0].Title, "AB")
+	}
+	if entries[0].Summary != "line1\tline2" {
+		t.Fatalf("summary=%q, want %q (tab kept, U+0008/U+000C stripped)", entries[0].Summary, "line1\tline2")
+	}
+}
+
+func TestSanitizeXML(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"clean passthrough", "<a>hi there</a>", "<a>hi there</a>"},
+		{"keeps tab/lf/cr", "a\tb\nc\rd", "a\tb\nc\rd"},
+		{"strips backspace", "a\x08b", "ab"},
+		{"strips assorted C0", "\x00\x01\x0b\x0c\x1fX", "X"},
+		{"empty", "", ""},
+		{"utf16 le bom untouched", "\xff\xfeh\x00i\x00", "\xff\xfeh\x00i\x00"},
+		{"utf16 be bom untouched", "\xfe\xff\x00h\x00i", "\xfe\xff\x00h\x00i"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sanitizeXML(c.in); got != c.want {
+				t.Fatalf("sanitizeXML(%q)=%q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 func TestPollBadURL(t *testing.T) {
 	p, _, _ := newPoller(t)
 	if _, err := p.Poll(context.Background(), "http://[::1]:badport"); err == nil {

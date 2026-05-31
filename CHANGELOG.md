@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.20] - 2026-05-31
+
+### Fixed
+
+- Poller now strips illegal XML 1.0 control characters (C0 controls
+  other than tab/LF/CR) from feed bodies before parsing. Go's
+  `encoding/xml` (under gofeed) aborts on the first such byte, so a
+  single stray `U+0008` anywhere in a feed would silently drop **every**
+  item and the feed would stop updating entirely (observed on
+  `answer.ai`, which embeds `U+0008` bytes — 6000+ consecutive parse
+  failures). Sanitisation is byte-level and encoding-safe for all
+  ASCII-superset encodings (UTF-8, ISO-8859-x, Windows-125x); UTF-16
+  bodies (detected by BOM) are left untouched. Clean feeds take a
+  zero-allocation fast path.
+
 ## [0.4.19] - 2026-05-28
 
 ### Changed

@@ -129,7 +129,7 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		return 0, p.recordErr(fh, &st, errors.New("body too large"))
 	}
 
-	parsed, err := p.Parser.ParseString(string(body))
+	parsed, err := p.Parser.ParseString(sanitizeXML(string(body)))
 	if err != nil {
 		return 0, p.recordErr(fh, &st, err)
 	}
@@ -225,4 +225,42 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// sanitizeXML removes byte values that are illegal in XML 1.0 — the C0
+// control characters other than tab (0x09), LF (0x0A) and CR (0x0D).
+// Go's encoding/xml (under gofeed) aborts on the first such byte, so a
+// single stray U+0008 anywhere in an upstream feed would otherwise drop
+// every item in it. We work at the byte level: in every ASCII-superset
+// encoding (UTF-8, ISO-8859-x, Windows-125x) these byte values never
+// appear inside a multi-byte sequence, so removing them cannot corrupt
+// valid text. A UTF-16 document (identified by its BOM) is left
+// untouched, since there low bytes are legitimate payload.
+func sanitizeXML(s string) string {
+	if len(s) >= 2 && ((s[0] == 0xFE && s[1] == 0xFF) || (s[0] == 0xFF && s[1] == 0xFE)) {
+		return s
+	}
+	// Fast path: most feeds are clean — scan before allocating.
+	bad := -1
+	for i := 0; i < len(s); i++ {
+		if illegalXMLByte(s[i]) {
+			bad = i
+			break
+		}
+	}
+	if bad < 0 {
+		return s
+	}
+	b := make([]byte, 0, len(s))
+	b = append(b, s[:bad]...)
+	for i := bad; i < len(s); i++ {
+		if !illegalXMLByte(s[i]) {
+			b = append(b, s[i])
+		}
+	}
+	return string(b)
+}
+
+func illegalXMLByte(c byte) bool {
+	return c < 0x20 && c != 0x09 && c != 0x0A && c != 0x0D
 }
