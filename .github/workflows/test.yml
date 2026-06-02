@@ -12,8 +12,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1.21 = declared floor in go.mod; 1.26 = latest stable.
-        go: ["1.21", "1.26"]
+        # 1.25 = declared floor in go.mod; 1.26 = latest stable.
+        go: ["1.25", "1.26"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
