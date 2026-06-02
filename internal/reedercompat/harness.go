@@ -52,7 +52,7 @@ type Harness struct {
 type NewHarness func(t *testing.T) Harness
 
 // ----- GReader spec constants (re-declared here so the suite has no
-// import dependency on the harborrs implementation under test) -----
+// import dependency on the harb implementation under test) -----
 
 const (
 	StreamReadingList = "user/-/state/com.google/reading-list"

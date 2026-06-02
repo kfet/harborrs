@@ -1,7 +1,7 @@
 // Package safedial provides an SSRF-hardened HTTP client/transport for
 // fetching user-supplied feed URLs.
 //
-// harborrs fetches arbitrary URLs the user (or a feed's redirect) points
+// harb fetches arbitrary URLs the user (or a feed's redirect) points
 // it at — during polling and in the add-feed preview. Without a guard, a
 // URL like http://169.254.169.254/ (cloud metadata) or http://10.0.0.5/
 // (an internal service) would let a feed reach into the host's private
@@ -14,7 +14,7 @@
 // is re-evaluated on every redirect hop — each hop opens a fresh
 // connection and re-dials.
 //
-// It is opt-out-able via the HARBORRS_ALLOW_PRIVATE_FETCH environment
+// It is opt-out-able via the HARB_ALLOW_PRIVATE_FETCH environment
 // variable, for self-hosters who legitimately poll feeds on localhost or
 // a private LAN.
 package safedial
@@ -32,9 +32,9 @@ import (
 
 // ErrBlocked is returned (wrapped) when a dial targets a non-public
 // address while the guard is active.
-var ErrBlocked = errors.New("safedial: refusing to connect to non-public address (set HARBORRS_ALLOW_PRIVATE_FETCH=1 to allow)")
+var ErrBlocked = errors.New("safedial: refusing to connect to non-public address (set HARB_ALLOW_PRIVATE_FETCH=1 to allow)")
 
-// Blocked reports whether ip falls in a range harborrs refuses to fetch
+// Blocked reports whether ip falls in a range harb refuses to fetch
 // from: loopback (127/8, ::1), private (RFC1918, ULA fc00::/7),
 // carrier-grade NAT (100.64/10), link-local (169.254/16 incl. the
 // 169.254.169.254 cloud-metadata endpoint, fe80::/10), the unspecified
@@ -57,9 +57,9 @@ func Blocked(ip net.IP) bool {
 }
 
 // AllowPrivate reports whether the SSRF guard is disabled via the
-// HARBORRS_ALLOW_PRIVATE_FETCH environment variable.
+// HARB_ALLOW_PRIVATE_FETCH environment variable.
 func AllowPrivate() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("HARBORRS_ALLOW_PRIVATE_FETCH"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("HARB_ALLOW_PRIVATE_FETCH"))) {
 	case "1", "true", "yes", "on":
 		return true
 	}

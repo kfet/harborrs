@@ -43,11 +43,11 @@ all:
 # contained, so `make -j` can fan them out.
 _all: build build-matrix fmt vet lint-frontend run-tests e2e
 
-# Build the harborrs binary into ./harborrs. Standalone target so a plain
+# Build the harb binary into ./harb. Standalone target so a plain
 # `go build` failure is caught by `make all` without needing the e2e
 # harness to run.
 build:
-	$(call RUN,build ./harborrs,go build -trimpath -ldflags='$(LDFLAGS)' -o harborrs ./cmd/harborrs)
+	$(call RUN,build ./harb,go build -trimpath -ldflags='$(LDFLAGS)' -o harb ./cmd/harb)
 
 # Cross-compile check across a matrix of targets. Compile-only, no
 # artefacts. CGO disabled to ensure portability. Pure-Go so each target
@@ -55,29 +55,29 @@ build:
 build-matrix: build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64
 
 build-linux-amd64:
-	$(call RUN,build linux/amd64,CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+	$(call RUN,build linux/amd64,CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harb)
 build-linux-arm64:
-	$(call RUN,build linux/arm64,CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+	$(call RUN,build linux/arm64,CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harb)
 build-linux-armv6:
-	$(call RUN,build linux/armv6,CGO_ENABLED=0 GOOS=linux  GOARCH=arm GOARM=6 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+	$(call RUN,build linux/armv6,CGO_ENABLED=0 GOOS=linux  GOARCH=arm GOARM=6 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harb)
 build-darwin-amd64:
-	$(call RUN,build darwin/amd64,CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+	$(call RUN,build darwin/amd64,CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harb)
 build-darwin-arm64:
-	$(call RUN,build darwin/arm64,CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harborrs)
+	$(call RUN,build darwin/arm64,CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags='$(LDFLAGS)' -o /dev/null ./cmd/harb)
 
 # Build real release artefacts locally: one tarball per OS/arch under
 # dist/, plus dist/checksums.txt. Same shape as the CI release workflow
-# — handy for verifying install.sh / `harborrs update` end-to-end
+# — handy for verifying install.sh / `harb update` end-to-end
 # without cutting a real release. Output is gitignored.
 release-local:
 	@rm -rf dist && mkdir -p dist
 	@for t in linux/amd64 linux/arm64 linux/armv6 darwin/amd64 darwin/arm64; do \
-		os=$${t%/*}; arch=$${t#*/}; name="harborrs-$(VERSION)-$$os-$$arch"; \
+		os=$${t%/*}; arch=$${t#*/}; name="harb-$(VERSION)-$$os-$$arch"; \
 		echo "→ $$name"; \
 		goarch=$$arch; goarm=; \
 		if [ "$$arch" = "armv6" ]; then goarch=arm; goarm=6; fi; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch GOARM=$$goarm go build -trimpath \
-			-ldflags='$(LDFLAGS)' -o dist/$$name/harborrs ./cmd/harborrs || exit $$?; \
+			-ldflags='$(LDFLAGS)' -o dist/$$name/harb ./cmd/harb || exit $$?; \
 		cp LICENSE README.md dist/$$name/ 2>/dev/null || true; \
 		tar -C dist -czf dist/$$name.tar.gz $$name; \
 		rm -rf dist/$$name; \
@@ -114,7 +114,7 @@ open_coverage:
 	go tool cover -html=coverage.out
 
 clean:
-	rm -f coverage.out coverage.tmp.out harborrs
+	rm -f coverage.out coverage.tmp.out harb
 	rm -rf dist
 
 # End-to-end smoke: builds the binary, exercises ClientLogin → subscription

@@ -1,4 +1,4 @@
-// Package store is the on-disk storage layer for harborrs.
+// Package store is the on-disk storage layer for harb.
 //
 // Layout under the data dir:
 //

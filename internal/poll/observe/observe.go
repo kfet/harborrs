@@ -1,16 +1,16 @@
 // Package observe records the outcome of every feed poll so an
 // out-of-process fixer can diagnose breakage and write resolver sidecars.
 //
-// It is pure observability — harborrs neither reacts to nor schedules
+// It is pure observability — harb neither reacts to nor schedules
 // anything from these records. The contract is one-directional:
 //
-//	harborrs  ──writes──▶  <data-dir>/observe/<feedHash>.ndjson   (outcomes)
+//	harb  ──writes──▶  <data-dir>/observe/<feedHash>.ndjson   (outcomes)
 //	                       <data-dir>/observe/<feedHash>.sample   (last bad body)
 //	fixer     ──reads───▶  the above, diagnoses, then
 //	          ──writes──▶  <data-dir>/resolvers/<feedHash>.json   (Specs)
 //
-// The two processes share only the filesystem. harborrs never imports the
-// fixer and the fixer never links harborrs.
+// The two processes share only the filesystem. harb never imports the
+// fixer and the fixer never links harb.
 package observe
 
 import (

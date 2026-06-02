@@ -21,7 +21,7 @@ import (
 func makeRelease(t *testing.T, version, body string) (string, []byte, []byte) {
 	t.Helper()
 	verNoV := strings.TrimPrefix(version, "v")
-	baseName := fmt.Sprintf("harborrs-%s-%s-%s", verNoV, runtime.GOOS, runtime.GOARCH)
+	baseName := fmt.Sprintf("harb-%s-%s-%s", verNoV, runtime.GOOS, runtime.GOARCH)
 	asset := baseName + ".tar.gz"
 	var buf strings.Builder
 	gw := gzip.NewWriter(&buf)
@@ -32,7 +32,7 @@ func makeRelease(t *testing.T, version, body string) (string, []byte, []byte) {
 	_ = tw.WriteHeader(&tar.Header{Name: baseName + "/LICENSE", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1})
 	_, _ = tw.Write([]byte("L"))
 	// The binary itself.
-	_ = tw.WriteHeader(&tar.Header{Name: baseName + "/harborrs", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body))})
+	_ = tw.WriteHeader(&tar.Header{Name: baseName + "/harb", Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(body))})
 	_, _ = tw.Write([]byte(body))
 	_ = tw.Close()
 	_ = gw.Close()
@@ -67,7 +67,7 @@ func (rt *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error)
 // the given test server.
 func clientFor(t *testing.T, srv *httptest.Server) (exe string, client *http.Client) {
 	t.Helper()
-	exe = filepath.Join(t.TempDir(), "harborrs")
+	exe = filepath.Join(t.TempDir(), "harb")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRun_ExplicitVersion(t *testing.T) {
 }
 
 func TestRun_ChecksumMismatch(t *testing.T) {
-	asset := fmt.Sprintf("harborrs-0.2.0-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	asset := fmt.Sprintf("harb-0.2.0-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	bad := []byte(fmt.Sprintf("deadbeef  %s\n", asset))
 	exe, client, _ := fixture(t, "v0.2.0", "x", bad)
 	err := runWith("0.1.0", "", exe, client, false, io.Discard)
@@ -194,7 +194,7 @@ func TestRun_ManagedPathRefused(t *testing.T) {
 	err := Run("0.1.0", Options{
 		Stdout:   io.Discard,
 		Stderr:   io.Discard,
-		ExecPath: func() (string, error) { return "/opt/homebrew/bin/harborrs", nil },
+		ExecPath: func() (string, error) { return "/opt/homebrew/bin/harb", nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "managed by a package manager") {
 		t.Fatalf("got %v", err)
@@ -303,7 +303,7 @@ func TestRun_TempDirError(t *testing.T) {
 		HTTPClient: client,
 		Stdout:     io.Discard,
 		Stderr:     io.Discard,
-		ExecPath:   func() (string, error) { return "/no/such/dir/harborrs", nil },
+		ExecPath:   func() (string, error) { return "/no/such/dir/harb", nil },
 	})
 	if err == nil || !strings.Contains(err.Error(), "tempdir") {
 		t.Fatalf("got %v", err)

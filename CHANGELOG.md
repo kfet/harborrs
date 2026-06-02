@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-02
+
+### Changed
+
+- **Renamed binary and environments to `harb`**:
+  - Binary name is now `harb` (renamed from `harborrs`).
+  - Environment variables: `HARB_DATA`, `HARB_ACCESS_LOG`, `HARB_ALLOW_PRIVATE_FETCH`, `HARB_REFRESH_INTERVAL` (renamed from `HARBORRS_*`).
+  - Session cookie is now `harb_session`.
+  - Frontend LocalStorage/JS references now use `harb.` prefix.
+  - Reader API `"product"` is now `"harb"`, and `"harborrsVersion"` is `"harbVersion"`.
+
 ## [0.5.0] - 2026-06-02
 
 ### Added

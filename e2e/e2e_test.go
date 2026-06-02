@@ -1,6 +1,6 @@
-// Package e2e is an end-to-end smoke test for harborrs.
+// Package e2e is an end-to-end smoke test for harb.
 //
-// It builds the harborrs binary, starts it against a temp data dir, spins
+// It builds the harb binary, starts it against a temp data dir, spins
 // up an httptest server returning a canned RSS feed, hits the Reader API
 // (ClientLogin → subscription/list → stream/contents → edit-tag → unread-
 // count) and the web UI, and asserts the expected end state.
@@ -94,10 +94,10 @@ func TestE2E(t *testing.T) {
 		t.Skip("set E2E=1 to run end-to-end smoke")
 	}
 
-	// 1. Build the harborrs binary.
+	// 1. Build the harb binary.
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "harborrs")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/harborrs")
+	bin := filepath.Join(tmp, "harb")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/harb")
 	build.Dir = repoRoot(t)
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
@@ -149,20 +149,20 @@ func TestE2E(t *testing.T) {
 	// 5. poll-once to fetch the feed. The canned RSS server is on
 	// loopback, so opt out of the SSRF guard for this fetch.
 	poll := exec.Command(bin, "poll-once", "-data", dataDir)
-	poll.Env = append(os.Environ(), "HARBORRS_ALLOW_PRIVATE_FETCH=1")
+	poll.Env = append(os.Environ(), "HARB_ALLOW_PRIVATE_FETCH=1")
 	poll.Stdout, poll.Stderr = os.Stdout, os.Stderr
 	if err := poll.Run(); err != nil {
 		t.Fatalf("poll-once: %v", err)
 	}
 
-	// 6. Start server. Run with HARBORRS_ACCESS_LOG=1 so the
+	// 6. Start server. Run with HARB_ACCESS_LOG=1 so the
 	// access-log middleware (off by default) is exercised end-to-end
 	// against the real binary; stderr is tee'd into a buffer so we
 	// can assert at the end that secrets did not leak into the log.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	srv := exec.CommandContext(ctx, bin, "serve", "-data", dataDir)
-	srv.Env = append(os.Environ(), "HARBORRS_ACCESS_LOG=1", "HARBORRS_ALLOW_PRIVATE_FETCH=1")
+	srv.Env = append(os.Environ(), "HARB_ACCESS_LOG=1", "HARB_ALLOW_PRIVATE_FETCH=1")
 	srv.Stdout = os.Stdout
 	var stderrLog bytes.Buffer
 	srv.Stderr = io.MultiWriter(os.Stderr, &stderrLog)
@@ -573,13 +573,13 @@ func TestE2E(t *testing.T) {
 	checkKbdContracts(t, uic, base, rssSrv.URL)
 
 	// 10. Access-log redaction end-to-end. The server was started with
-	//     HARBORRS_ACCESS_LOG=1, so stderr should now carry one access
+	//     HARB_ACCESS_LOG=1, so stderr should now carry one access
 	//     line per request. Shut down the server explicitly so the
 	//     stderr pipe is fully drained before we assert.
 	srv.Process.Signal(os.Interrupt)
 	srv.Wait()
 	logged := stderrLog.String()
-	if !strings.Contains(logged, "harborrs access log enabled") {
+	if !strings.Contains(logged, "harb access log enabled") {
 		t.Fatalf("expected access-log enabled banner in stderr, got: %s", logged)
 	}
 	if !strings.Contains(logged, "access method=") {
@@ -600,7 +600,7 @@ func TestE2E(t *testing.T) {
 	// per-run string, so we can only check by literal substring.
 	if u, _ := url.Parse(base); u != nil {
 		for _, c := range jar.Cookies(u) {
-			if c.Name == "harborrs_session" && c.Value != "" {
+			if c.Name == "harb_session" && c.Value != "" {
 				mustMiss = append(mustMiss, c.Value)
 			}
 		}

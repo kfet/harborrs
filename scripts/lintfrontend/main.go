@@ -94,7 +94,7 @@ func main() {
 }
 
 // checkHTML mirrors what internal/ui does at startup — gives the same
-// error a user would hit after `harborrs serve`.
+// error a user would hit after `harb serve`.
 func checkHTML(path string) error {
 	if _, err := template.New(filepath.Base(path)).
 		Funcs(template.FuncMap{}).

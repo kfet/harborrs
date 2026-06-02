@@ -1,10 +1,10 @@
 package reedercompat_test
 
 // TestReederCompat wires the Reeder / GReader conformance suite from
-// internal/reedercompat against the harborrs Server implementation.
+// internal/reedercompat against the harb Server implementation.
 //
 // The contracts live in internal/reedercompat as a deliberately narrow,
-// embedder-driven suite so that the harborrs server is exercised the
+// embedder-driven suite so that the harb server is exercised the
 // same way a future OSS conformance kit would exercise any GReader-
 // dialect server.
 

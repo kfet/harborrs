@@ -21,7 +21,7 @@ func builtinResolvers() []Resolver {
 
 // SidecarPath returns the on-disk path of a feed's resolver sidecar:
 // <dir>/resolvers/<feedHash>.json. The fixer process writes this file;
-// harborrs only reads it.
+// harb only reads it.
 func SidecarPath(dir, feedHash string) string {
 	return filepath.Join(dir, "resolvers", feedHash+".json")
 }

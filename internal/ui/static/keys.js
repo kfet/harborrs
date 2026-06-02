@@ -1,4 +1,4 @@
-// harborrs keyboard nav — minimal, no deps. Loaded from base.html.
+// harb keyboard nav — minimal, no deps. Loaded from base.html.
 //
 // Global (every authenticated page):
 //   ?      → toggle keyboard-help overlay
@@ -105,7 +105,7 @@
       const i = cycle.indexOf(t);
       const next = cycle[(i + 1) % cycle.length] || "auto";
       document.documentElement.setAttribute("data-theme", next);
-      try { localStorage.setItem("harborrs.theme", next); } catch (e) { /* ignore */ }
+      try { localStorage.setItem("harb.theme", next); } catch (e) { /* ignore */ }
       paint();
     });
   }
@@ -508,7 +508,7 @@
   "use strict";
   var groups = document.querySelectorAll(".feed-group");
   if (!groups.length) return;
-  var KEY = "harborrs.collapsedTags";
+  var KEY = "harb.collapsedTags";
   var collapsed = {};
   try {
     var raw = localStorage.getItem(KEY);

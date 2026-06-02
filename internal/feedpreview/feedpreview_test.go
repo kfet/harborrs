@@ -133,14 +133,14 @@ func TestPreviewReadBodyError(t *testing.T) {
 // guard wiring is verified by TestPreviewSSRFBlocksLoopback and the
 // internal/safedial tests.
 func TestMain(m *testing.M) {
-	os.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "1")
+	os.Setenv("HARB_ALLOW_PRIVATE_FETCH", "1")
 	os.Exit(m.Run())
 }
 
 // TestPreviewSSRFBlocksLoopback confirms the SSRF guard is wired into
 // the default Previewer.
 func TestPreviewSSRFBlocksLoopback(t *testing.T) {
-	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "")
+	t.Setenv("HARB_ALLOW_PRIVATE_FETCH", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, rss)
 	}))

@@ -707,8 +707,8 @@ func makeEntriesNonDir(dir, fh string) error {
 
 func TestPollUserAgent(t *testing.T) {
 	cases := []struct{ set, want string }{
-		{"", DefaultUserAgent},               // empty falls back to default
-		{"harborrs/9.9.9", "harborrs/9.9.9"}, // explicit override is sent verbatim
+		{"", DefaultUserAgent},       // empty falls back to default
+		{"harb/9.9.9", "harb/9.9.9"}, // explicit override is sent verbatim
 	}
 	for _, c := range cases {
 		var got string
@@ -958,7 +958,7 @@ func TestPollNilHooksUseDefaults(t *testing.T) {
 // guard itself is verified by TestPollSSRFBlocksLoopback (which clears
 // the override) and the internal/safedial tests.
 func TestMain(m *testing.M) {
-	os.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "1")
+	os.Setenv("HARB_ALLOW_PRIVATE_FETCH", "1")
 	os.Exit(m.Run())
 }
 
@@ -966,7 +966,7 @@ func TestMain(m *testing.M) {
 // default Poller: with the opt-out cleared, polling a loopback URL is
 // refused before any HTTP exchange.
 func TestPollSSRFBlocksLoopback(t *testing.T) {
-	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "")
+	t.Setenv("HARB_ALLOW_PRIVATE_FETCH", "")
 	p, _, _ := newPoller(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, sampleRSS)

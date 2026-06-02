@@ -44,13 +44,13 @@ func TestBlocked(t *testing.T) {
 
 func TestAllowPrivate(t *testing.T) {
 	for _, v := range []string{"1", "true", "TRUE", "yes", "on", " on "} {
-		t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", v)
+		t.Setenv("HARB_ALLOW_PRIVATE_FETCH", v)
 		if !AllowPrivate() {
 			t.Errorf("AllowPrivate() should be true for %q", v)
 		}
 	}
 	for _, v := range []string{"", "0", "false", "no", "nope"} {
-		t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", v)
+		t.Setenv("HARB_ALLOW_PRIVATE_FETCH", v)
 		if AllowPrivate() {
 			t.Errorf("AllowPrivate() should be false for %q", v)
 		}
@@ -58,7 +58,7 @@ func TestAllowPrivate(t *testing.T) {
 }
 
 func TestControl(t *testing.T) {
-	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "")
+	t.Setenv("HARB_ALLOW_PRIVATE_FETCH", "")
 	// Blocked addresses → error.
 	for _, addr := range []string{"127.0.0.1:80", "169.254.169.254:80", "10.0.0.1:443"} {
 		if err := control("tcp", addr, nil); err == nil {
@@ -76,7 +76,7 @@ func TestControl(t *testing.T) {
 		t.Error("control(noport) should error")
 	}
 	// Opt-out → always allowed, even loopback.
-	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "1")
+	t.Setenv("HARB_ALLOW_PRIVATE_FETCH", "1")
 	if err := control("tcp", "127.0.0.1:80", nil); err != nil {
 		t.Errorf("control with opt-out should allow loopback: %v", err)
 	}

@@ -49,7 +49,7 @@
 {{end}}
 {{else}}
 <ul class="feeds">
-<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./?unread=0{{if $.TagFilter}}&tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harborrs import</code>{{end}}</li>
+<li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./?unread=0{{if $.TagFilter}}&tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harb import</code>{{end}}</li>
 </ul>
 {{end}}
 </div>

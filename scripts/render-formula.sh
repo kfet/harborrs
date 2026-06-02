@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render packaging/homebrew/harborrs.rb.tmpl into a concrete Formula by
+# Render packaging/homebrew/harb.rb.tmpl into a concrete Formula by
 # substituting VERSION + per-platform SHA256s from dist/checksums.txt.
 #
 # Usage: scripts/render-formula.sh <VERSION> <CHECKSUMS_FILE> <OUT_FILE>
@@ -12,13 +12,13 @@ SUMS="${2:?checksums.txt required}"
 OUT="${3:?output path required}"
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-tmpl="${repo_root}/packaging/homebrew/harborrs.rb.tmpl"
+tmpl="${repo_root}/packaging/homebrew/harb.rb.tmpl"
 [ -f "$tmpl" ] || { echo "missing template: $tmpl" >&2; exit 1; }
 [ -f "$SUMS" ] || { echo "missing checksums: $SUMS" >&2; exit 1; }
 
 # Pull "<sha>  <file>" pairs and look up the sha for each known asset.
 lookup() {
-    local asset="harborrs-${VERSION}-$1.tar.gz"
+    local asset="harb-${VERSION}-$1.tar.gz"
     local sha
     sha=$(awk -v a="$asset" '$2==a {print $1}' "$SUMS")
     [ -n "$sha" ] || { echo "no checksum for $asset in $SUMS" >&2; exit 1; }
@@ -38,4 +38,4 @@ sed \
     -e "s/__SHA_LINUX_AMD64__/${SHA_LINUX_AMD64}/g" \
     "$tmpl" > "$OUT"
 
-echo "✓ rendered $OUT (harborrs $VERSION)"
+echo "✓ rendered $OUT (harb $VERSION)"

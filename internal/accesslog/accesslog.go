@@ -2,8 +2,8 @@
 // structured access-log line per request, redacting authentication
 // material by construction.
 //
-// Disabled by default. cmd/harborrs enables it for a process via the
-// environment variable HARBORRS_ACCESS_LOG=1; when disabled, New
+// Disabled by default. cmd/harb enables it for a process via the
+// environment variable HARB_ACCESS_LOG=1; when disabled, New
 // returns the underlying handler unchanged and adds zero per-request
 // overhead. Output goes to whatever io.Writer the caller passes
 // (typically os.Stderr, which systemd journal captures with its own
@@ -31,7 +31,7 @@
 //   - The path, user-agent, and remote address fields are all
 //     emitted through strconv.Quote so a client-controlled byte
 //     (e.g. a percent-encoded newline in the request path) cannot
-//     forge a second "access" line. harborrs route paths do not embed
+//     forge a second "access" line. harb route paths do not embed
 //     credentials, but feed URLs embedded in stream/contents paths may
 //     carry private query parameters, so embedded ?... suffixes are
 //     stripped before quoting. Log-injection by an attacker who can
@@ -60,12 +60,12 @@ import (
 	"time"
 )
 
-// EnabledFromEnv returns true iff HARBORRS_ACCESS_LOG=1 in the
+// EnabledFromEnv returns true iff HARB_ACCESS_LOG=1 in the
 // process environment. Any other value (including empty) means
 // disabled — matching the documented contract that access logging is
 // off by default and must be opted into.
 func EnabledFromEnv() bool {
-	return os.Getenv("HARBORRS_ACCESS_LOG") == "1"
+	return os.Getenv("HARB_ACCESS_LOG") == "1"
 }
 
 // New wraps h with access-log middleware. When enabled is false the

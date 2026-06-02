@@ -11,7 +11,7 @@ import (
 )
 
 // OPML is the parsed shape of a subscriptions.opml file. Only the fields
-// harborrs cares about are retained on parse; on write we emit a
+// harb cares about are retained on parse; on write we emit a
 // minimal-but-conformant document.
 type OPML struct {
 	Title string

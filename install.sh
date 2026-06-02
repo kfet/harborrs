@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install harborrs from a GitHub release.
+# Install harb from a GitHub release.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh
@@ -11,7 +11,7 @@
 #   PREFIX    install prefix; binary lands in $PREFIX/bin (default: /usr/local, or $HOME/.local if not writable)
 #   REPO      github owner/repo (default: kfet/harb)
 #
-# On macOS we recommend `brew install kfet/tap/harborrs` instead — it
+# On macOS we recommend `brew install kfet/tap/harb` instead — it
 # auto-updates with brew upgrade. This script is for Linux (Raspberry Pi etc.).
 set -eu
 
@@ -46,7 +46,7 @@ if [ "${VERSION}" = "latest" ]; then
     [ -n "${VERSION}" ] || die "could not resolve latest version"
 fi
 ver_no_v="${VERSION#v}"
-asset="harborrs-${ver_no_v}-${os}-${arch}.tar.gz"
+asset="harb-${ver_no_v}-${os}-${arch}.tar.gz"
 base="https://github.com/${REPO}/releases/download/${VERSION}"
 
 # --- prefix -------------------------------------------------------------
@@ -87,18 +87,18 @@ fi
 # --- extract + install --------------------------------------------------
 info "extracting"
 tar -C "${tmp}" -xzf "${tmp}/${asset}"
-src="${tmp}/harborrs-${ver_no_v}-${os}-${arch}/harborrs"
+src="${tmp}/harb-${ver_no_v}-${os}-${arch}/harb"
 [ -x "${src}" ] || die "binary not found in archive"
 
-info "installing to ${bindir}/harborrs"
-install -m 0755 "${src}" "${bindir}/harborrs.new"
-mv -f "${bindir}/harborrs.new" "${bindir}/harborrs"
+info "installing to ${bindir}/harb"
+install -m 0755 "${src}" "${bindir}/harb.new"
+mv -f "${bindir}/harb.new" "${bindir}/harb"
 
 # --- post-install -------------------------------------------------------
-printf '\n✓ harborrs %s installed to %s/harborrs\n' "${VERSION}" "${bindir}"
+printf '\n✓ harb %s installed to %s/harb\n' "${VERSION}" "${bindir}"
 case ":${PATH}:" in
     *":${bindir}:"*) ;;
     *) printf '  note: %s is not in your PATH yet. add it to your shell rc:\n        export PATH="%s:$PATH"\n' "${bindir}" "${bindir}" ;;
 esac
-printf '\nnext: harborrs init    # bootstrap config + password\n'
-printf '      harborrs serve   # start the server\n'
+printf '\nnext: harb init    # bootstrap config + password\n'
+printf '      harb serve   # start the server\n'

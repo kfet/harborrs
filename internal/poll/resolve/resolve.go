@@ -13,7 +13,7 @@
 //   - builtins, registered in this package and applied to every feed
 //     (e.g. strip-control-chars, the former poll.sanitizeXML);
 //   - a per-feed sidecar at <data-dir>/resolvers/<feedHash>.json holding
-//     a []Spec, written out-of-process by the fixer. harborrs only reads
+//     a []Spec, written out-of-process by the fixer. harb only reads
 //     it.
 //
 // Every applied resolver is a primitive selected from a fixed vocabulary

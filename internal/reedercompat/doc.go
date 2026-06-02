@@ -8,7 +8,7 @@
 // violations, not generic diffs, so a regression report tells you
 // which client-visible promise broke.
 //
-// The suite is intentionally decoupled from the rest of harborrs: it
+// The suite is intentionally decoupled from the rest of harb: it
 // drives the server through its public HTTP surface plus a small
 // Harness the embedder supplies to seed feeds and flip state. The
 // long-term intent is to lift this package out into a standalone

@@ -2,7 +2,7 @@
 # Keep this list small and well-justified.
 
 # Entry point — wiring, flag parsing, signal handling, no behaviour worth a test.
-github.com/kfet/harb/cmd/harborrs/main.go
+github.com/kfet/harb/cmd/harb/main.go
 
 # Frontend static-check helper — invoked via `make lint-frontend`,
 # not exercised by go test.

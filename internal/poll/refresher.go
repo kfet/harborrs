@@ -4,7 +4,7 @@
 // Refresher. Anything that wants fresh entries calls Trigger() — the API
 // middleware on `/reader/api/0/*` and `/ui/*` does this fire-and-forget
 // on every request, and a background ticker does it once per minute (or
-// whatever HARBORRS_REFRESH_INTERVAL says).
+// whatever HARB_REFRESH_INTERVAL says).
 //
 // Trigger is non-blocking: if no cycle is in flight it spawns one; if
 // one is already in flight, the call is a no-op. There is no queue:
@@ -207,10 +207,10 @@ func (r *Refresher) CyclesStarted() int64 { return r.cyclesStarted.Load() }
 // enough that a 1000-feed OPML doesn't keep the network saturated.
 const DefaultRefreshInterval = 1 * time.Minute
 
-// refreshIntervalFromEnv returns HARBORRS_REFRESH_INTERVAL parsed as a
+// refreshIntervalFromEnv returns HARB_REFRESH_INTERVAL parsed as a
 // Go duration, or DefaultRefreshInterval if unset/invalid.
 func refreshIntervalFromEnv() time.Duration {
-	v := strings.TrimSpace(os.Getenv("HARBORRS_REFRESH_INTERVAL"))
+	v := strings.TrimSpace(os.Getenv("HARB_REFRESH_INTERVAL"))
 	if v == "" {
 		return DefaultRefreshInterval
 	}

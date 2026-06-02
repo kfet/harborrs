@@ -99,8 +99,8 @@ func TestEnabledFromEnv(t *testing.T) {
 		{"1", true},
 	}
 	for _, tc := range cases {
-		t.Run("HARBORRS_ACCESS_LOG="+tc.val, func(t *testing.T) {
-			t.Setenv("HARBORRS_ACCESS_LOG", tc.val)
+		t.Run("HARB_ACCESS_LOG="+tc.val, func(t *testing.T) {
+			t.Setenv("HARB_ACCESS_LOG", tc.val)
 			if got := EnabledFromEnv(); got != tc.want {
 				t.Fatalf("EnabledFromEnv()=%v want %v", got, tc.want)
 			}
@@ -309,7 +309,7 @@ func TestAuthorizationCookieAndBodyNeverLogged(t *testing.T) {
 	r := httptest.NewRequest("POST", "/accounts/ClientLogin?T=PROD_API_TOKEN_DEADBEEFCAFE", body)
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Authorization", "GoogleLogin auth=PROD_API_TOKEN_DEADBEEFCAFE")
-	r.Header.Set("Cookie", "harborrs_session=PROD_SESSION_COOKIE_NEVER_LOG")
+	r.Header.Set("Cookie", "harb_session=PROD_SESSION_COOKIE_NEVER_LOG")
 	r.Header.Set("User-Agent", "Reeder/5.4")
 	r.RemoteAddr = "192.0.2.1:1234"
 	h.ServeHTTP(httptest.NewRecorder(), r)
@@ -476,7 +476,7 @@ func TestPathLogInjectionRefused(t *testing.T) {
 
 // TestRemoteAddrInjectionRefused: in normal operation r.RemoteAddr is
 // IP:port set by the HTTP server from the TCP connection, which a
-// client cannot influence. But if harborrs ever grows reverse-proxy
+// client cannot influence. But if harb ever grows reverse-proxy
 // support that overrides RemoteAddr from X-Forwarded-For, an attacker
 // could insert a newline. Defense in depth: quote the field.
 func TestRemoteAddrInjectionRefused(t *testing.T) {

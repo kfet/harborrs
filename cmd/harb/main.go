@@ -1,16 +1,16 @@
-// Command harborrs is the single-binary entry point.
+// Command harb is the single-binary entry point.
 //
 // Subcommands:
 //
-//	harborrs init [-data DIR] [-username NAME] [-password PASS]
+//	harb init [-data DIR] [-username NAME] [-password PASS]
 //	              [-listen ADDR] [-theme NAME] [-force]
-//	harborrs serve [-data DIR] [-config FILE]
-//	harborrs import [-data DIR] OPML
-//	harborrs poll-once [-data DIR]
-//	harborrs hashpass PASSWORD
-//	harborrs passwd [-data DIR] [-password NEW]
-//	harborrs update [-check] [-version vX.Y.Z]
-//	harborrs version
+//	harb serve [-data DIR] [-config FILE]
+//	harb import [-data DIR] OPML
+//	harb poll-once [-data DIR]
+//	harb hashpass PASSWORD
+//	harb passwd [-data DIR] [-password NEW]
+//	harb update [-check] [-version vX.Y.Z]
+//	harb version
 package main
 
 import (
@@ -47,13 +47,13 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
-		fmt.Fprintln(stderr, "\nfirst time? run `harborrs init` to bootstrap a config.")
+		fmt.Fprintln(stderr, "\nfirst time? run `harb init` to bootstrap a config.")
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "version":
-		fmt.Fprintf(stdout, "harborrs %s (commit %s, built %s)\n", harb.Version, harb.Commit, harb.BuildDate)
+		fmt.Fprintf(stdout, "harb %s (commit %s, built %s)\n", harb.Version, harb.Commit, harb.BuildDate)
 		return 0
 	case "init":
 		return cmdInit(rest, stdout, stderr)
@@ -78,38 +78,38 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-const usage = `harborrs — single-binary RSS server
+const usage = `harb — single-binary RSS server
 
 usage:
-  harborrs init      [-data DIR] [-username NAME] [-password PASS]
+  harb init      [-data DIR] [-username NAME] [-password PASS]
                      [-listen ADDR] [-theme NAME] [-force]
-  harborrs serve     [-data DIR] [-config FILE]
-  harborrs import    [-data DIR] OPMLFILE
-  harborrs poll-once [-data DIR]
-  harborrs hashpass  PASSWORD
-  harborrs passwd    [-data DIR] [-password NEW]
-  harborrs update    [-check] [-version vX.Y.Z]
-  harborrs version
+  harb serve     [-data DIR] [-config FILE]
+  harb import    [-data DIR] OPMLFILE
+  harb poll-once [-data DIR]
+  harb hashpass  PASSWORD
+  harb passwd    [-data DIR] [-password NEW]
+  harb update    [-check] [-version vX.Y.Z]
+  harb version
 
 bootstrap:
-  harborrs init                  # writes <data>/config.json, prints a generated password
-  harborrs serve                 # start serving on the configured address
+  harb init                  # writes <data>/config.json, prints a generated password
+  harb serve                 # start serving on the configured address
 
-data dir defaults to $HARBORRS_DATA, then $XDG_DATA_HOME/harborrs,
-then ~/.local/share/harborrs.`
+data dir defaults to $HARB_DATA, then $XDG_DATA_HOME/harb,
+then ~/.local/share/harb.`
 
 func defaultDataDir() string {
-	if v := os.Getenv("HARBORRS_DATA"); v != "" {
+	if v := os.Getenv("HARB_DATA"); v != "" {
 		return v
 	}
 	if v := os.Getenv("XDG_DATA_HOME"); v != "" {
-		return filepath.Join(v, "harborrs")
+		return filepath.Join(v, "harb")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "./harborrs-data"
+		return "./harb-data"
 	}
-	return filepath.Join(home, ".local", "share", "harborrs")
+	return filepath.Join(home, ".local", "share", "harb")
 }
 
 // commonFlags parses -data + -config and returns the resolved values.
@@ -161,7 +161,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	}
 	if cfg.Auth.PasswordHash == "" {
 		fmt.Fprintf(stderr, "no auth.password_hash in %s\n", cfgPath)
-		fmt.Fprintln(stderr, "run `harborrs init -data", data, "` to bootstrap, or set it manually with `harborrs hashpass <password>`.")
+		fmt.Fprintln(stderr, "run `harb init -data", data, "` to bootstrap, or set it manually with `harb hashpass <password>`.")
 		return 1
 	}
 	st, err := store.Open(data)
@@ -197,7 +197,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	installRootRedirects(mux)
 
 	// Optional access log. Off by default; opt-in via
-	// HARBORRS_ACCESS_LOG=1 in the unit-file environment. Output goes
+	// HARB_ACCESS_LOG=1 in the unit-file environment. Output goes
 	// to stderr so systemd journal picks it up. Redaction contract
 	// lives in internal/accesslog: Authorization/Cookie headers never
 	// read, bodies never inspected, query allow-listed.
@@ -207,10 +207,10 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	poller := poll.New(st)
-	poller.UserAgent = "harborrs/" + harb.Version
+	poller.UserAgent = "harb/" + harb.Version
 	// Record every poll outcome under <data-dir>/observe so an
 	// out-of-process fixer can diagnose breakage and write resolver
-	// sidecars. Pure observability — harborrs reacts to nothing here.
+	// sidecars. Pure observability — harb reacts to nothing here.
 	poller.Observer = observe.NewDiskObserver(st.Dir)
 	feeds := func() []string {
 		o, err := op.Load()
@@ -247,9 +247,9 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 			// Print the access-log enabled banner to the same stream
 			// the access log itself uses (stderr), so a human tailing
 			// the journal sees both together.
-			fmt.Fprintln(stderr, "harborrs access log enabled (HARBORRS_ACCESS_LOG=1)")
+			fmt.Fprintln(stderr, "harb access log enabled (HARB_ACCESS_LOG=1)")
 		}
-		fmt.Fprintf(stdout, "harborrs listening on %s\n", listenURL(cfg.Listen))
+		fmt.Fprintf(stdout, "harb listening on %s\n", listenURL(cfg.Listen))
 		errCh <- srv.ListenAndServe()
 	}()
 	select {
@@ -275,7 +275,7 @@ func cmdImport(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: harborrs import [-data DIR] OPMLFILE")
+		fmt.Fprintln(stderr, "usage: harb import [-data DIR] OPMLFILE")
 		return 2
 	}
 	src := fs.Arg(0)
@@ -325,7 +325,7 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	p := poll.New(st)
-	p.UserAgent = "harborrs/" + harb.Version
+	p.UserAgent = "harb/" + harb.Version
 	p.Observer = observe.NewDiskObserver(st.Dir)
 	total := 0
 	for _, f := range o.Feeds {
@@ -402,7 +402,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	if generated {
 		passwordLine = fmt.Sprintf("  password:   %s  (generated — save it now, it won't be shown again)", *pass)
 	}
-	fmt.Fprintf(stdout, `✓ harborrs initialised
+	fmt.Fprintf(stdout, `✓ harb initialised
   data dir:   %s
   config:     %s
   listen:     %s
@@ -410,8 +410,8 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 %s
 
 next steps:
-  harborrs import <your.opml>   # optional: import existing subscriptions
-  harborrs serve                # start the server
+  harb import <your.opml>   # optional: import existing subscriptions
+  harb serve                # start the server
 then point a FreshRSS-compatible client (or a browser) at http://localhost%s/
 `, *data, cfgPath, *listen, *user, passwordLine, *listen)
 	return 0
@@ -419,7 +419,7 @@ then point a FreshRSS-compatible client (or a browser) at http://localhost%s/
 
 func cmdHashpass(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
-		fmt.Fprintln(stderr, "usage: harborrs hashpass PASSWORD")
+		fmt.Fprintln(stderr, "usage: harb hashpass PASSWORD")
 		return 2
 	}
 	h, err := auth.HashPassword(args[0])
@@ -456,7 +456,7 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 
 // cmdPasswd changes the configured single-user password. It rewrites
 // only auth.password_hash in <data>/config.json (preserving every other
-// field) and prints a confirmation. The hot harborrs process (if any
+// field) and prints a confirmation. The hot harb process (if any
 // is running) won't pick up the change until restart — there is no
 // signal-reload mechanism in v0.2.
 //
@@ -481,7 +481,7 @@ func cmdPasswd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if cfg.Auth.PasswordHash == "" {
-		fmt.Fprintln(stderr, "passwd: no existing password to replace — run `harborrs init` first.")
+		fmt.Fprintln(stderr, "passwd: no existing password to replace — run `harb init` first.")
 		return 1
 	}
 	newp := *pass
@@ -507,7 +507,7 @@ func cmdPasswd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "✓ password updated in %s\n", cfgPath)
-	fmt.Fprintln(stdout, "  restart any running `harborrs serve` to pick up the change.")
+	fmt.Fprintln(stdout, "  restart any running `harb serve` to pick up the change.")
 	return 0
 }
 

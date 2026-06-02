@@ -154,7 +154,7 @@ func TestRefresherStartDefaultInterval(t *testing.T) {
 	defer cleanup()
 	// Override env to a tiny duration; the zero-interval path picks
 	// up refreshIntervalFromEnv.
-	t.Setenv("HARBORRS_REFRESH_INTERVAL", "5ms")
+	t.Setenv("HARB_REFRESH_INTERVAL", "5ms")
 	ctx, cancel := context.WithCancel(context.Background())
 	r.Start(ctx, 0)
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -169,19 +169,19 @@ func TestRefresherStartDefaultInterval(t *testing.T) {
 }
 
 func TestRefreshIntervalFromEnv(t *testing.T) {
-	t.Setenv("HARBORRS_REFRESH_INTERVAL", "")
+	t.Setenv("HARB_REFRESH_INTERVAL", "")
 	if got := refreshIntervalFromEnv(); got != DefaultRefreshInterval {
 		t.Fatalf("empty→%v", got)
 	}
-	t.Setenv("HARBORRS_REFRESH_INTERVAL", "not-a-duration")
+	t.Setenv("HARB_REFRESH_INTERVAL", "not-a-duration")
 	if got := refreshIntervalFromEnv(); got != DefaultRefreshInterval {
 		t.Fatalf("garbage→%v", got)
 	}
-	t.Setenv("HARBORRS_REFRESH_INTERVAL", "-5s")
+	t.Setenv("HARB_REFRESH_INTERVAL", "-5s")
 	if got := refreshIntervalFromEnv(); got != DefaultRefreshInterval {
 		t.Fatalf("negative→%v", got)
 	}
-	t.Setenv("HARBORRS_REFRESH_INTERVAL", "2s")
+	t.Setenv("HARB_REFRESH_INTERVAL", "2s")
 	if got := refreshIntervalFromEnv(); got != 2*time.Second {
 		t.Fatalf("2s→%v", got)
 	}

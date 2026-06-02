@@ -35,8 +35,8 @@ import (
 // "(+https://…github.com…)" string, stalling the response until the
 // client times out — even though the same request with a bare product
 // token succeeds. main wires the running build's version in via
-// Poller.UserAgent ("harborrs/<version>").
-const DefaultUserAgent = "harborrs"
+// Poller.UserAgent ("harb/<version>").
+const DefaultUserAgent = "harb"
 
 // Poller fetches feeds and writes results to a Store.
 type Poller struct {
@@ -47,7 +47,7 @@ type Poller struct {
 	// MaxBodyBytes caps how much body we read per feed (default 10MiB).
 	MaxBodyBytes int64
 	// UserAgent is sent on every feed fetch. Defaults to
-	// DefaultUserAgent; main overrides it with "harborrs/<version>".
+	// DefaultUserAgent; main overrides it with "harb/<version>".
 	UserAgent string
 	// Observer records the outcome of every poll for an out-of-process
 	// fixer to consume. Defaults to observe.Nop{} (no-op) — set to an
@@ -262,7 +262,7 @@ func (p *Poller) obs() observe.Observer {
 }
 
 // ResetCooldown clears any RetryAfter cooldown on a feed and persists.
-// Used by `harborrs poll-once` which must force a poll of every feed
+// Used by `harb poll-once` which must force a poll of every feed
 // regardless of cooldown state.
 func (p *Poller) ResetCooldown(feedURL string) error {
 	fh := store.FeedHash(feedURL)

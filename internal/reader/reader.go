@@ -24,7 +24,7 @@ import (
 )
 
 // OPMLProvider lets the Reader server fetch (and atomically replace) the
-// subscriptions OPML. The host (cmd/harborrs) supplies this so the Reader
+// subscriptions OPML. The host (cmd/harb) supplies this so the Reader
 // package stays decoupled from the file layout.
 type OPMLProvider interface {
 	Load() (*store.OPML, error)
@@ -44,8 +44,8 @@ type Server struct {
 	Now     func() time.Time
 	MaxPage int
 
-	// Version is the harborrs build version surfaced via /status and
-	// the `harborrsVersion` extension field on user-info responses.
+	// Version is the harb build version surfaced via /status and
+	// the `harbVersion` extension field on user-info responses.
 	// Empty when unset; main.go wires this to harb.Version.
 	Version   string
 	Commit    string
@@ -141,11 +141,11 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"userId":          "1",
-		"userName":        s.Auth.Cfg.Username,
-		"userEmail":       s.Auth.Cfg.Username,
-		"userProfileId":   "1",
-		"harborrsVersion": s.Version,
+		"userId":        "1",
+		"userName":      s.Auth.Cfg.Username,
+		"userEmail":     s.Auth.Cfg.Username,
+		"userProfileId": "1",
+		"harbVersion":   s.Version,
 	})
 }
 
@@ -157,7 +157,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"name":      "Harbour RSS",
-		"product":   "harborrs",
+		"product":   "harb",
 		"version":   s.Version,
 		"commit":    s.Commit,
 		"buildDate": s.BuildDate,

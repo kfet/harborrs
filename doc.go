@@ -1,5 +1,5 @@
 // Package harb is the root package for the Harbour RSS server (the
-// binary is named harborrs).
+// binary is named harb).
 //
 // See AGENTS.md for the project brief. Subpackages will appear here as
 // the implementation lands; this file exists to make `go build ./...`

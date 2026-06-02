@@ -767,7 +767,7 @@ func TestStaticJSContentType(t *testing.T) {
 		t.Fatalf("js: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
 	w = do(mux, req("GET", "/ui/static/keys.js", "", nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "harborrs keyboard nav") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "harb keyboard nav") {
 		t.Fatalf("keys.js: %d %s", w.Code, w.Body.String())
 	}
 }
@@ -1696,7 +1696,7 @@ func TestUIWorksUnderPrefixFullRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Mirror cmd/harborrs/main.go: GET / under the UI mux redirects
+	// Mirror cmd/harb/main.go: GET / under the UI mux redirects
 	// to a relative "ui/" so the front-door redirect also rides any
 	// external prefix.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

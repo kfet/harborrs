@@ -173,7 +173,7 @@ func (s *Store) sweepLocked() int {
 }
 
 // CookieName is the HTTP cookie name for the UI session.
-const CookieName = "harborrs_session"
+const CookieName = "harb_session"
 
 // TokenLifetime governs how long tokens are valid. v0.1: 30 days.
 const TokenLifetime = 30 * 24 * time.Hour

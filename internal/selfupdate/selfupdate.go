@@ -1,4 +1,4 @@
-// Package selfupdate implements `harborrs update`: download the latest
+// Package selfupdate implements `harb update`: download the latest
 // release matching the current GOOS/GOARCH from GitHub Releases, verify
 // its sha256 against checksums.txt, and atomically replace the running
 // binary.
@@ -111,17 +111,17 @@ func Run(currentVersion string, opts Options) error {
 		return nil
 	}
 	if opts.CheckOnly {
-		fmt.Fprintln(opts.Stdout, "update available. run `harborrs update` to install.")
+		fmt.Fprintln(opts.Stdout, "update available. run `harb update` to install.")
 		return nil
 	}
 
 	// 3. Download + verify.
 	verNoV := strings.TrimPrefix(target, "v")
-	asset := fmt.Sprintf("harborrs-%s-%s-%s.tar.gz", verNoV, runtime.GOOS, assetArch(runtime.GOARCH))
+	asset := fmt.Sprintf("harb-%s-%s-%s.tar.gz", verNoV, runtime.GOOS, assetArch(runtime.GOARCH))
 	base := fmt.Sprintf("https://github.com/%s/releases/download/%s", opts.Repo, target)
 	fmt.Fprintf(opts.Stdout, "downloading %s/%s\n", base, asset)
 
-	tmpDir, err := os.MkdirTemp(filepath.Dir(resolved), ".harborrs-update-*")
+	tmpDir, err := os.MkdirTemp(filepath.Dir(resolved), ".harb-update-*")
 	if err != nil {
 		return fmt.Errorf("tempdir: %w", err)
 	}
@@ -151,7 +151,7 @@ func Run(currentVersion string, opts Options) error {
 	fmt.Fprintln(opts.Stdout, "✓ checksum verified")
 
 	// 4. Extract binary.
-	newBin := filepath.Join(tmpDir, "harborrs.new")
+	newBin := filepath.Join(tmpDir, "harb.new")
 	if err := extractBinary(tarPath, newBin); err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
@@ -163,7 +163,7 @@ func Run(currentVersion string, opts Options) error {
 	if err := os.Rename(newBin, resolved); err != nil {
 		return fmt.Errorf("replace: %w", err)
 	}
-	fmt.Fprintf(opts.Stdout, "✓ harborrs updated: %s → %s at %s\n", cur, target, resolved)
+	fmt.Fprintf(opts.Stdout, "✓ harb updated: %s → %s at %s\n", cur, target, resolved)
 	return nil
 }
 
@@ -251,8 +251,8 @@ func sha256File(p string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// extractBinary pulls the "harborrs" file out of a release tarball
-// (which is laid out as "harborrs-<ver>-<os>-<arch>/harborrs") and
+// extractBinary pulls the "harb" file out of a release tarball
+// (which is laid out as "harb-<ver>-<os>-<arch>/harb") and
 // writes it to dst.
 func extractBinary(tarPath, dst string) error {
 	f, err := os.Open(tarPath)
@@ -274,7 +274,7 @@ func extractBinary(tarPath, dst string) error {
 		if err != nil {
 			return err
 		}
-		if path.Base(hdr.Name) != "harborrs" || hdr.Typeflag != tar.TypeReg {
+		if path.Base(hdr.Name) != "harb" || hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		out, err := os.Create(dst)
@@ -287,7 +287,7 @@ func extractBinary(tarPath, dst string) error {
 		}
 		return out.Close()
 	}
-	return errors.New("harborrs binary not found in archive")
+	return errors.New("harb binary not found in archive")
 }
 
 // assetArch maps runtime.GOARCH to the arch suffix used in release asset

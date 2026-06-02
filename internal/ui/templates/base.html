@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>{{block "title" .}}Harbour RSS{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script>(function(){try{var t=localStorage.getItem('harborrs.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
+<script>(function(){try{var t=localStorage.getItem('harb.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
 {{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}{{with $.StaticVer}}?v={{.}}{{end}}">{{end}}
 <script src="{{.Base}}static/htmx.min.js{{with .StaticVer}}?v={{.}}{{end}}"></script>

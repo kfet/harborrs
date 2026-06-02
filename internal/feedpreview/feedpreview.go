@@ -28,7 +28,7 @@ const MaxBytes = 5 * 1024 * 1024
 // Timeout is the wall-clock cap on a single Preview call.
 const Timeout = 15 * time.Second
 
-// Previewer is the concrete FeedPreviewer used by harborrs serve.
+// Previewer is the concrete FeedPreviewer used by harb serve.
 type Previewer struct {
 	Client *http.Client
 	Parser *gofeed.Parser
@@ -36,7 +36,7 @@ type Previewer struct {
 
 // New returns a Previewer with a sensible default client/parser pair.
 // The client refuses connections to private/loopback/link-local
-// addresses (SSRF guard); set HARBORRS_ALLOW_PRIVATE_FETCH=1 to allow
+// addresses (SSRF guard); set HARB_ALLOW_PRIVATE_FETCH=1 to allow
 // previewing feeds on a private network.
 func New() *Previewer {
 	return &Previewer{
@@ -55,7 +55,7 @@ func (p *Previewer) Preview(url string) (*ui.FeedPreview, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("User-Agent", "harborrs-feed-preview/1")
+	req.Header.Set("User-Agent", "harb-feed-preview/1")
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch: %w", err)

@@ -1,4 +1,4 @@
-// Package config holds the on-disk configuration for harborrs and the
+// Package config holds the on-disk configuration for harb and the
 // concrete OPMLProvider used by the UI and Reader API.
 package config
 

@@ -57,7 +57,7 @@ type Server struct {
 	// browsers to re-fetch CSS / JS without users having to hard-reload.
 	StaticVer string
 
-	// Version is the harborrs build version. Rendered unobtrusively in
+	// Version is the harb build version. Rendered unobtrusively in
 	// the base layout footer; empty hides the footer line.
 	Version string
 

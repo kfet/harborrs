@@ -159,8 +159,8 @@ func TestUserInfo(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"userName":"u"`) {
 		t.Fatalf("body=%s", w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"harborrsVersion":"9.9.9"`) {
-		t.Fatalf("missing harborrsVersion: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"harbVersion":"9.9.9"`) {
+		t.Fatalf("missing harbVersion: %s", w.Body.String())
 	}
 }
 
@@ -180,7 +180,7 @@ func TestStatus(t *testing.T) {
 	}
 	for k, want := range map[string]string{
 		"name":      "Harbour RSS",
-		"product":   "harborrs",
+		"product":   "harb",
 		"version":   "1.2.3",
 		"commit":    "abc1234",
 		"buildDate": "2026-01-02T03:04:05Z",
@@ -1366,7 +1366,7 @@ func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
 		t.Fatalf("longId -> hash %q", got)
 	}
 	// Legacy clients may POST back the signed-int64 decimal form,
-	// emitted by harborrs ≤ v0.4.12 via FormatInt. Round-trip parity.
+	// emitted by harb ≤ v0.4.12 via FormatInt. Round-trip parity.
 	if got := itemIDToHash("-5008060451871457170"); got != "ba7fcb8d8885006e" {
 		t.Fatalf("legacy signed longId -> hash %q", got)
 	}
