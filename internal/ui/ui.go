@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -958,35 +957,21 @@ func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed
 	return store.Entry{}, store.Feed{}, false, nil
 }
 
-// aTagOpenRe matches the opening `<a ...>` tag (case-insensitive).
-// The submatch is the attribute span between `<a` and `>`.
-var aTagOpenRe = regexp.MustCompile(`(?is)<a\b([^>]*)>`)
-
-// openLinksInNewTab rewrites every `<a>` opening tag in s so that
-// activating the link opens it in a new browser tab. Tags that already
-// carry a `target=` attribute are left untouched (the author's intent
-// wins). For all others, `target="_blank" rel="noopener noreferrer"`
-// is appended to the existing attribute list.
-func openLinksInNewTab(s string) string {
-	return aTagOpenRe.ReplaceAllStringFunc(s, func(m string) string {
-		// m is `<a` + attrs + `>`; pull attrs out by slice.
-		attrs := m[2 : len(m)-1]
-		if strings.Contains(strings.ToLower(attrs), "target=") {
-			return m
-		}
-		return "<a" + attrs + ` target="_blank" rel="noopener noreferrer">`
-	})
-}
-
 // entryBody resolves the displayable HTML body of e (Content, falling
-// back to Summary) and post-processes it for the web UI — currently
-// just rewriting `<a>` tags so links open in a new tab.
+// back to Summary) and sanitizes it for safe rendering in the web UI.
+//
+// Feed content is attacker-controlled, so it is run through
+// sanitizeHTML (an allow-list sanitizer built on golang.org/x/net/html)
+// before being marked template.HTML. sanitizeHTML also reproduces the
+// previous open-links-in-a-new-tab behaviour: every surviving <a> gets
+// target="_blank" rel="noopener noreferrer" unless the author already
+// set a target.
 func entryBody(e store.Entry) template.HTML {
 	body := e.Content
 	if body == "" {
 		body = e.Summary
 	}
-	return template.HTML(openLinksInNewTab(body))
+	return template.HTML(sanitizeHTML(body))
 }
 
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {

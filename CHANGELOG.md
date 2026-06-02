@@ -42,6 +42,20 @@ All notable changes to this project will be documented in this file.
   failing. Legacy state files without the field read as "never synced"
   until their next good poll. No migration required.
 
+### Security
+
+- **Feed HTML is now sanitized before rendering in the web UI**
+  (stored-XSS fix). Entry content/summary was previously injected into
+  the entry view verbatim as trusted HTML, so a malicious feed could run
+  JavaScript in the UI origin. Bodies now pass through an allow-list
+  sanitizer (built on `golang.org/x/net/html`, already a transitive
+  dependency — no new module): only safe elements/attributes survive,
+  `script`/`style`/`iframe`/`object`/`embed`/`svg`/form controls are
+  dropped with their contents, `on*` handlers and inline `style` are
+  stripped, and `javascript:`/`data:`/`vbscript:` URLs (including
+  whitespace/control-char-obfuscated variants) are neutralised. The
+  open-links-in-a-new-tab behaviour (`target="_blank"
+  rel="noopener noreferrer"`) is preserved.
 
 ## [0.4.22] - 2026-05-31
 

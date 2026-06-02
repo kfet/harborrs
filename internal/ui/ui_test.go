@@ -2534,8 +2534,8 @@ func TestLinksOpenInNewTab(t *testing.T) {
 	if !strings.Contains(body, `<a href="https://example.com/a" target="_blank" rel="noopener noreferrer">`) {
 		t.Fatalf("lowercase <a> not rewritten: %s", body)
 	}
-	if !strings.Contains(body, `<a HREF="https://example.com/b" target="_blank" rel="noopener noreferrer">`) {
-		t.Fatalf("uppercase <A> not rewritten: %s", body)
+	if !strings.Contains(body, `<a href="https://example.com/b" target="_blank" rel="noopener noreferrer">`) {
+		t.Fatalf("uppercase <A> not rewritten/normalised: %s", body)
 	}
 	// Tags with an existing target= must be left untouched (author
 	// intent wins) — and crucially must NOT have a second target= or
