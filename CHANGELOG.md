@@ -43,6 +43,16 @@ All notable changes to this project will be documented in this file.
   until their next good poll. No migration required.
 ### Fixed
 
+- **The web UI now reads entries from the in-memory index instead of
+  re-scanning disk on every request.** `unreadCounts`, the feed and
+  cross-feed (all/starred) lists, mark-all-read, and single-entry lookup
+  used `store.ListEntries` (a `ReadDir` + NDJSON re-parse per feed);
+  `findEntry` additionally scanned every entry of every feed. These now
+  use `store.IndexedEntries(feedHash)` and `store.EntryByHash(hash)`
+  (resolving the owning feed via `FeedHash`), matching the Reader API's
+  already-indexed read path. Behaviour is unchanged (same Published-
+  descending ordering); the per-request disk I/O is eliminated.
+
 - **Expired API tokens / sessions are now swept from the token store**,
   fixing unbounded growth. Every Reader-API `ClientLogin` persists a new
   opaque token to `tokens.json` and nothing ever evicted the old ones,

@@ -174,20 +174,6 @@ func TestHome(t *testing.T) {
 	}
 }
 
-func TestHomeListErr(t *testing.T) {
-	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
-	// Corrupt entries file → ListEntries fails.
-	fh := store.FeedHash("https://x/feed")
-	feedDir := filepath.Join(st.Dir, "entries", fh)
-	os.MkdirAll(feedDir, 0o755)
-	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("not json\n"), 0o644)
-	w := do(mux, req("GET", "/ui/", tok, nil))
-	if w.Code != 500 {
-		t.Fatalf("code=%d", w.Code)
-	}
-}
-
 func seed(t *testing.T, st *store.Store, op *memOPML, count int) string {
 	t.Helper()
 	u := "https://demo.example/feed"
@@ -257,21 +243,23 @@ func TestFeedAndEntry(t *testing.T) {
 func TestFeedAndEntryErrors(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := seed(t, st, op, 1)
-	// Corrupt entries file → ListEntries fails inside feed/entry/setread.
-	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
-	if err := os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// Missing id on the feed page → 400.
+	if w := do(mux, req("GET", "/ui/feed", tok, nil)); w.Code != 400 {
+		t.Fatalf("feed missing id: %d", w.Code)
 	}
-	for _, p := range []string{
-		"/ui/feed?id=" + u,
-		"/ui/entry?id=x",
-	} {
-		w := do(mux, req("GET", p, tok, nil))
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
+	// Unknown feed id → 404.
+	if w := do(mux, req("GET", "/ui/feed?id=https://nope/x", tok, nil)); w.Code != 404 {
+		t.Fatalf("feed unknown id: %d", w.Code)
 	}
-	// Load err for feed + entry.
+	// Missing id on the entry page → 400.
+	if w := do(mux, req("GET", "/ui/entry", tok, nil)); w.Code != 400 {
+		t.Fatalf("entry missing id: %d", w.Code)
+	}
+	// Unknown entry hash → 404.
+	if w := do(mux, req("GET", "/ui/entry?id=deadbeef", tok, nil)); w.Code != 404 {
+		t.Fatalf("entry unknown hash: %d", w.Code)
+	}
+	// Load err for feed + entry → 500.
 	op.loadErr = errBoom
 	for _, p := range []string{"/ui/feed?id=" + u, "/ui/entry?id=x"} {
 		w := do(mux, req("GET", p, tok, nil))
@@ -333,22 +321,6 @@ func TestSetFlagStoreError(t *testing.T) {
 	}
 	if w := do(mux, req("POST", "/ui/entry/star?id="+h+"&state=1", tok, nil)); w.Code != 500 {
 		t.Fatalf("star code=%d", w.Code)
-	}
-}
-
-func TestSetFlagListEntriesError(t *testing.T) {
-	_, mux, st, op, tok, _ := fixture(t)
-	u := seed(t, st, op, 1)
-	es, _ := st.ListEntries(store.FeedHash(u))
-	h := es[0].Hash
-	// Mark the entry, then corrupt the entries file. SetRead will succeed,
-	// but the subsequent ListEntries (to find the row) will fail.
-	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
-	if err := os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if w := do(mux, req("POST", "/ui/entry/read?id="+h+"&state=1", tok, nil)); w.Code != 500 {
-		t.Fatalf("code=%d", w.Code)
 	}
 }
 
@@ -485,20 +457,6 @@ func TestCrossFeedLoadErr(t *testing.T) {
 	}
 }
 
-func TestCrossFeedListErr(t *testing.T) {
-	_, mux, st, op, tok, _ := fixture(t)
-	u := seed(t, st, op, 1)
-	// Corrupt entries so ListEntries fails inside the cross-feed loop.
-	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
-	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644)
-	for _, p := range []string{"/ui/all", "/ui/starred"} {
-		w := do(mux, req("GET", p, tok, nil))
-		if w.Code != 500 {
-			t.Fatalf("%s code=%d", p, w.Code)
-		}
-	}
-}
-
 func TestMarkAllReadFeed(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
 	u := seed(t, st, op, 3)
@@ -554,22 +512,11 @@ func TestMarkAllReadBadInputs(t *testing.T) {
 
 func TestMarkAllReadErrors(t *testing.T) {
 	_, mux, st, op, tok, _ := fixture(t)
-	u := seed(t, st, op, 1)
+	seed(t, st, op, 1)
 	// Load err
 	op.loadErr = errBoom
 	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
 		t.Fatalf("load=%d", w.Code)
-	}
-	op.loadErr = nil
-	// ListEntries err (feed scope)
-	feedDir := filepath.Join(st.Dir, "entries", store.FeedHash(u))
-	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("garbage\n"), 0o644)
-	if w := do(mux, req("POST", "/ui/mark-all-read?scope=feed&id="+u, tok, nil)); w.Code != 500 {
-		t.Fatalf("feed list err=%d", w.Code)
-	}
-	// ListEntries err (all scope)
-	if w := do(mux, req("POST", "/ui/mark-all-read?scope=all", tok, nil)); w.Code != 500 {
-		t.Fatalf("all list err=%d", w.Code)
 	}
 }
 
@@ -1928,18 +1875,6 @@ func TestHomeBadgesAreScopeAware(t *testing.T) {
 	}
 }
 
-func TestHomeUnreadCountsErr(t *testing.T) {
-	_, mux, st, op, tok, _ := fixture(t)
-	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed"}}
-	fh := store.FeedHash("https://x/feed")
-	feedDir := filepath.Join(st.Dir, "entries", fh)
-	os.MkdirAll(feedDir, 0o755)
-	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte("nope\n"), 0o644)
-	if w := do(mux, req("GET", "/ui/", tok, nil)); w.Code != 500 {
-		t.Fatalf("code=%d", w.Code)
-	}
-}
-
 func TestFeedTagChip(t *testing.T) {
 	_, mux, _, op, tok, _ := fixture(t)
 	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
@@ -2592,5 +2527,20 @@ func TestLinksOpenInNewTab(t *testing.T) {
 	}
 	if !strings.Contains(w2.Body.String(), `target="_blank" rel="noopener noreferrer"`) {
 		t.Fatalf("panel/summary-fallback body not rewritten: %s", w2.Body.String())
+	}
+}
+
+// TestEntryFeedRemovedReturns404 covers findEntry's "entry is still
+// indexed but its owning feed was unsubscribed from the OPML" branch:
+// the entry must be invisible (404) rather than rendered orphaned.
+func TestEntryFeedRemovedReturns404(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	es := st.IndexedEntries(store.FeedHash(u))
+	h := es[0].Hash
+	// Unsubscribe the feed; the entry stays in the store index.
+	op.op.Feeds = nil
+	if w := do(mux, req("GET", "/ui/entry?id="+h, tok, nil)); w.Code != 404 {
+		t.Fatalf("orphaned entry should 404, got %d", w.Code)
 	}
 }

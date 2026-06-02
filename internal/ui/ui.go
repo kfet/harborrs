@@ -420,14 +420,11 @@ type tagCount struct {
 // A single tag is counted multiple times for a feed only if that feed's
 // Tags list contains duplicates — NormalizeTags prevents that, so this
 // is a strict O(unread * tags) pass.
-func (s *Server) unreadCounts(op *store.OPML) (perFeed map[string]int, buckets map[string]int, err error) {
+func (s *Server) unreadCounts(op *store.OPML) (perFeed map[string]int, buckets map[string]int) {
 	perFeed = map[string]int{}
 	buckets = map[string]int{}
 	for _, f := range op.Feeds {
-		es, lerr := s.Store.ListEntries(store.FeedHash(f.XMLURL))
-		if lerr != nil {
-			return nil, nil, lerr
-		}
+		es := s.Store.IndexedEntries(store.FeedHash(f.XMLURL))
 		count := 0
 		for _, e := range es {
 			if !s.Store.EntryState(e.Hash).Read {
@@ -443,7 +440,7 @@ func (s *Server) unreadCounts(op *store.OPML) (perFeed map[string]int, buckets m
 			buckets[t] += count
 		}
 	}
-	return perFeed, buckets, nil
+	return perFeed, buckets
 }
 
 // feedStates loads the per-feed conditional-GET state for every feed in
@@ -488,11 +485,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	unreadOnly := effectiveUnreadOnly(r)
 	writeUnreadCookie(w, r, s.Secure)
 	tagFilter := r.URL.Query().Get("tag") // "" → all; store.ReservedTagUntagged → untagged
-	perFeed, buckets, err := s.unreadCounts(op)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	perFeed, buckets := s.unreadCounts(op)
 	states, err := s.feedStates(op)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -676,11 +669,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	es, err := s.Store.ListEntries(store.FeedHash(urlS))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	es := s.Store.IndexedEntries(store.FeedHash(urlS))
 	unreadOnly := effectiveUnreadOnly(r)
 	writeUnreadCookie(w, r, s.Secure)
 	entries := make([]feedEntry, 0, len(es))
@@ -740,11 +729,7 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 	}
 	var all []entryWithFeed
 	for _, f := range op.Feeds {
-		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		es := s.Store.IndexedEntries(store.FeedHash(f.XMLURL))
 		for _, e := range es {
 			if keep(s.Store.EntryState(e.Hash)) {
 				all = append(all, entryWithFeed{entry: e, feedTitle: f.Title})
@@ -910,11 +895,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mark := func(feedURL string) error {
-		es, err := s.Store.ListEntries(store.FeedHash(feedURL))
-		if err != nil {
-			return err
-		}
-		for _, e := range es {
+		for _, e := range s.Store.IndexedEntries(store.FeedHash(feedURL)) {
 			if s.Store.EntryState(e.Hash).Read {
 				continue
 			}
@@ -951,24 +932,23 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// findEntry walks the OPML for the entry with the given hash. Returns
-// the entry, its owning feed, ok=true if found, and any I/O error from
-// ListEntries. The "owning feed" is the Feed in the current OPML; if the
-// entry's feed was removed from the OPML between fetch and now, this
-// returns ok=false (the entry is invisible to the UI by design).
-func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed, bool, error) {
+// findEntry resolves the entry with the given hash via the in-memory
+// index and pairs it with its owning feed in the current OPML. Returns
+// ok=true only when both the entry is indexed AND its feed is still
+// subscribed; if the entry's feed was removed from the OPML between
+// fetch and now, this returns ok=false (the entry is invisible to the
+// UI by design).
+func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed, bool) {
+	e, ok := s.Store.EntryByHash(hash)
+	if !ok {
+		return store.Entry{}, store.Feed{}, false
+	}
 	for _, f := range op.Feeds {
-		es, err := s.Store.ListEntries(store.FeedHash(f.XMLURL))
-		if err != nil {
-			return store.Entry{}, store.Feed{}, false, err
-		}
-		for _, e := range es {
-			if e.Hash == hash {
-				return e, f, true, nil
-			}
+		if store.FeedHash(f.XMLURL) == e.FeedHash {
+			return e, f, true
 		}
 	}
-	return store.Entry{}, store.Feed{}, false, nil
+	return store.Entry{}, store.Feed{}, false
 }
 
 // entryBody resolves the displayable HTML body of e (Content, falling
@@ -999,11 +979,7 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	e, f, ok, err := s.findEntry(op, hash)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	e, f, ok := s.findEntry(op, hash)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -1066,11 +1042,7 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	e, f, ok, err := s.findEntry(op, hash)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	e, f, ok := s.findEntry(op, hash)
 	if !ok {
 		http.NotFound(w, r)
 		return
