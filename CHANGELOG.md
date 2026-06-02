@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-06-02
+
+### Fixed
+
+- Update `.github/workflows/release.yml` to use new `harb` Homebrew tap formula path.
+
 ## [0.5.1] - 2026-06-02
 
 ### Changed
