@@ -43,6 +43,10 @@ All notable changes to this project will be documented in this file.
   until their next good poll. No migration required.
 ### Fixed
 
+- **The read/star toggle endpoints (`/ui/entry/read`, `/ui/entry/star`)
+  now require POST**, matching every other UI mutator. They previously
+  accepted any method, so a state change could be triggered by a GET.
+
 - **The web UI now reads entries from the in-memory index instead of
   re-scanning disk on every request.** `unreadCounts`, the feed and
   cross-feed (all/starred) lists, mark-all-read, and single-entry lookup

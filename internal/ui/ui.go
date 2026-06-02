@@ -1019,6 +1019,10 @@ func (s *Server) handleSetStarred(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	hash := r.URL.Query().Get("id")
 	state := r.URL.Query().Get("state")
 	if hash == "" {

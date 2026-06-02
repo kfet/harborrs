@@ -2544,3 +2544,16 @@ func TestEntryFeedRemovedReturns404(t *testing.T) {
 		t.Fatalf("orphaned entry should 404, got %d", w.Code)
 	}
 }
+
+// TestToggleFlagRequiresPost ensures the read/star toggle endpoints
+// reject non-POST methods like the other mutators.
+func TestToggleFlagRequiresPost(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 1)
+	h := st.IndexedEntries(store.FeedHash(u))[0].Hash
+	for _, p := range []string{"/ui/entry/read?id=" + h + "&state=1", "/ui/entry/star?id=" + h + "&state=1"} {
+		if w := do(mux, req("GET", p, tok, nil)); w.Code != 405 {
+			t.Fatalf("GET %s: want 405, got %d", p, w.Code)
+		}
+	}
+}
