@@ -43,6 +43,13 @@ All notable changes to this project will be documented in this file.
   until their next good poll. No migration required.
 ### Fixed
 
+- **Expired API tokens / sessions are now swept from the token store**,
+  fixing unbounded growth. Every Reader-API `ClientLogin` persists a new
+  opaque token to `tokens.json` and nothing ever evicted the old ones,
+  so the file grew without limit. `OpenStore` now prunes entries past
+  `TokenLifetime` (and rewrites the file if it dropped any), and each
+  token/session issue opportunistically sweeps before persisting.
+
 - **OPML mutations are now serialized through a single
   read-modify-write path**, fixing a lost-update race. The UI handlers
   (`feed/add`, `feed/remove`, `feed/tag`) did `Load → mutate → Save`

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeCfg(t *testing.T, user, pass string) Config {
@@ -277,5 +279,94 @@ func TestRevokeAllSessions(t *testing.T) {
 	}
 	if s.CheckSession(t1) || s.CheckSession(t2) {
 		t.Fatal("sessions should be gone")
+	}
+}
+
+// TestOpenStoreSweepsExpired verifies that tokens/sessions already past
+// TokenLifetime on disk are evicted at open and the file rewritten.
+func TestOpenStoreSweepsExpired(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	old := time.Now().UTC().Add(-2 * TokenLifetime)
+	fresh := time.Now().UTC()
+	disk := struct {
+		API      map[string]time.Time `json:"api"`
+		Sessions map[string]time.Time `json:"sessions"`
+	}{
+		API:      map[string]time.Time{"old-api": old, "fresh-api": fresh},
+		Sessions: map[string]time.Time{"old-sess": old, "fresh-sess": fresh},
+	}
+	data, _ := json.MarshalIndent(disk, "", "  ")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(path, makeCfg(t, "a", "p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CheckAPIToken("old-api") || s.CheckSession("old-sess") {
+		t.Fatal("expired entries should have been swept")
+	}
+	if !s.CheckAPIToken("fresh-api") || !s.CheckSession("fresh-sess") {
+		t.Fatal("fresh entries should survive the sweep")
+	}
+	// The on-disk file must have been rewritten without the expired
+	// entries (reopen and re-check).
+	s2, err := OpenStore(path, makeCfg(t, "a", "p"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s2.api["old-api"]; ok {
+		t.Fatal("expired api token still on disk")
+	}
+	if _, ok := s2.sessions["old-sess"]; ok {
+		t.Fatal("expired session still on disk")
+	}
+}
+
+// TestIssueSweepsExpired confirms the opportunistic sweep on issue
+// drops a token that has since expired.
+func TestIssueSweepsExpired(t *testing.T) {
+	dir := t.TempDir()
+	cfg := makeCfg(t, "a", "p")
+	s, err := OpenStore(filepath.Join(dir, "tokens.json"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plant an already-expired token directly.
+	s.api["stale"] = time.Now().UTC().Add(-2 * TokenLifetime)
+	s.sessions["stale-sess"] = time.Now().UTC().Add(-2 * TokenLifetime)
+	if _, err := s.IssueAPIToken("a", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.api["stale"]; ok {
+		t.Fatal("issuing an API token should have swept the stale one")
+	}
+	if _, err := s.IssueSession("a", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.sessions["stale-sess"]; ok {
+		t.Fatal("issuing a session should have swept the stale one")
+	}
+}
+
+// TestOpenStoreSweepPersistError surfaces a persist failure from the
+// open-time sweep.
+func TestOpenStoreSweepPersistError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	old := time.Now().UTC().Add(-2 * TokenLifetime)
+	disk := struct {
+		API map[string]time.Time `json:"api"`
+	}{API: map[string]time.Time{"old": old}}
+	data, _ := json.MarshalIndent(disk, "", "  ")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origJ := jsonMarshalIndent
+	t.Cleanup(func() { jsonMarshalIndent = origJ })
+	jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, errors.New("persist-boom") }
+	if _, err := OpenStore(path, makeCfg(t, "a", "p")); err == nil {
+		t.Fatal("expected persist error from open-time sweep")
 	}
 }

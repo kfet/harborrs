@@ -137,7 +137,39 @@ func OpenStore(path string, cfg Config) (*Store, error) {
 	if disk.Sessions != nil {
 		s.sessions = disk.Sessions
 	}
+	// Evict any tokens/sessions that were already past their lifetime
+	// when we loaded them, and rewrite the file if we dropped anything.
+	// Without this the token store grows without bound: every
+	// ClientLogin persists a fresh API token and nothing ever removed
+	// the expired ones.
+	if s.sweepLocked() > 0 {
+		if err := s.persistLocked(); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// sweepLocked deletes every API token and session whose age has reached
+// TokenLifetime. Caller must hold s.mu. Returns the number of entries
+// removed. Cheap (a single pass over two small maps) so it is safe to
+// run on every issue as well as at open.
+func (s *Store) sweepLocked() int {
+	now := s.now()
+	removed := 0
+	for tok, issued := range s.api {
+		if now.Sub(issued) >= TokenLifetime {
+			delete(s.api, tok)
+			removed++
+		}
+	}
+	for tok, issued := range s.sessions {
+		if now.Sub(issued) >= TokenLifetime {
+			delete(s.sessions, tok)
+			removed++
+		}
+	}
+	return removed
 }
 
 // CookieName is the HTTP cookie name for the UI session.
@@ -157,6 +189,7 @@ func (s *Store) IssueAPIToken(username, password string) (string, error) {
 		return "", err
 	}
 	s.mu.Lock()
+	s.sweepLocked()
 	s.api[tok] = s.now().UTC()
 	err = s.persistLocked()
 	s.mu.Unlock()
@@ -176,6 +209,7 @@ func (s *Store) IssueSession(username, password string) (string, error) {
 		return "", err
 	}
 	s.mu.Lock()
+	s.sweepLocked()
 	s.sessions[tok] = s.now().UTC()
 	err = s.persistLocked()
 	s.mu.Unlock()
