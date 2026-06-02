@@ -23,6 +23,7 @@ import (
 
 	"github.com/kfet/harborrs/internal/poll/observe"
 	"github.com/kfet/harborrs/internal/poll/resolve"
+	"github.com/kfet/harborrs/internal/safedial"
 	"github.com/kfet/harborrs/internal/store"
 	"github.com/mmcdole/gofeed"
 )
@@ -61,7 +62,7 @@ type Poller struct {
 func New(s *store.Store) *Poller {
 	return &Poller{
 		Store:        s,
-		Client:       &http.Client{Timeout: 30 * time.Second},
+		Client:       safedial.NewClient(30 * time.Second),
 		Parser:       gofeed.NewParser(),
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,

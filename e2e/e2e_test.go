@@ -146,8 +146,10 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("import: %v", err)
 	}
 
-	// 5. poll-once to fetch the feed.
+	// 5. poll-once to fetch the feed. The canned RSS server is on
+	// loopback, so opt out of the SSRF guard for this fetch.
 	poll := exec.Command(bin, "poll-once", "-data", dataDir)
+	poll.Env = append(os.Environ(), "HARBORRS_ALLOW_PRIVATE_FETCH=1")
 	poll.Stdout, poll.Stderr = os.Stdout, os.Stderr
 	if err := poll.Run(); err != nil {
 		t.Fatalf("poll-once: %v", err)
@@ -160,7 +162,7 @@ func TestE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	srv := exec.CommandContext(ctx, bin, "serve", "-data", dataDir)
-	srv.Env = append(os.Environ(), "HARBORRS_ACCESS_LOG=1")
+	srv.Env = append(os.Environ(), "HARBORRS_ACCESS_LOG=1", "HARBORRS_ALLOW_PRIVATE_FETCH=1")
 	srv.Stdout = os.Stdout
 	var stderrLog bytes.Buffer
 	srv.Stderr = io.MultiWriter(os.Stderr, &stderrLog)

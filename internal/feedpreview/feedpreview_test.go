@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -124,5 +125,29 @@ func TestPreviewReadBodyError(t *testing.T) {
 	_, err := p.Preview(srv.URL)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// TestMain opts the suite out of the SSRF guard: the preview tests use
+// loopback httptest servers, which the guard blocks by default. The
+// guard wiring is verified by TestPreviewSSRFBlocksLoopback and the
+// internal/safedial tests.
+func TestMain(m *testing.M) {
+	os.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "1")
+	os.Exit(m.Run())
+}
+
+// TestPreviewSSRFBlocksLoopback confirms the SSRF guard is wired into
+// the default Previewer.
+func TestPreviewSSRFBlocksLoopback(t *testing.T) {
+	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, rss)
+	}))
+	defer srv.Close()
+	if _, err := New().Preview(srv.URL); err == nil {
+		t.Fatal("expected SSRF guard to block loopback preview")
+	} else if !strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("expected non-public block error, got: %v", err)
 	}
 }

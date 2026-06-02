@@ -56,6 +56,18 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- **SSRF guard on all outbound feed fetches.** Polling
+  (`internal/poll`) and the add-feed preview (`internal/feedpreview`)
+  fetched arbitrary user/redirect-supplied URLs with no destination
+  filtering, so a feed pointing at `http://169.254.169.254/` (cloud
+  metadata) or an internal `http://10.x/` service could reach into the
+  host's private network. Outbound connections now refuse loopback,
+  private (RFC1918/ULA), carrier-grade-NAT, link-local and multicast
+  addresses. The check runs in the dialer's `Control` hook on the
+  *resolved* IP, so it also defeats DNS-rebinding and is re-applied on
+  every redirect hop. Opt out for legitimate private/localhost feeds
+  with `HARBORRS_ALLOW_PRIVATE_FETCH=1`. (New `internal/safedial`.)
+
 - **Feed HTML is now sanitized before rendering in the web UI**
   (stored-XSS fix). Entry content/summary was previously injected into
   the entry view verbatim as trusted HTML, so a malicious feed could run

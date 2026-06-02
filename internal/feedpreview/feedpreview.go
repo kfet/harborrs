@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kfet/harborrs/internal/safedial"
 	"github.com/kfet/harborrs/internal/ui"
 	"github.com/mmcdole/gofeed"
 )
@@ -34,9 +35,12 @@ type Previewer struct {
 }
 
 // New returns a Previewer with a sensible default client/parser pair.
+// The client refuses connections to private/loopback/link-local
+// addresses (SSRF guard); set HARBORRS_ALLOW_PRIVATE_FETCH=1 to allow
+// previewing feeds on a private network.
 func New() *Previewer {
 	return &Previewer{
-		Client: &http.Client{Timeout: Timeout},
+		Client: safedial.NewClient(Timeout),
 		Parser: gofeed.NewParser(),
 	}
 }

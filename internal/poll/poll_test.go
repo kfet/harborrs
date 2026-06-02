@@ -952,3 +952,29 @@ func TestPollNilHooksUseDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestMain opts the suite out of the SSRF guard: the test httptest
+// servers all bind to loopback, which the guard blocks by default. The
+// guard itself is verified by TestPollSSRFBlocksLoopback (which clears
+// the override) and the internal/safedial tests.
+func TestMain(m *testing.M) {
+	os.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "1")
+	os.Exit(m.Run())
+}
+
+// TestPollSSRFBlocksLoopback confirms the SSRF guard is wired into the
+// default Poller: with the opt-out cleared, polling a loopback URL is
+// refused before any HTTP exchange.
+func TestPollSSRFBlocksLoopback(t *testing.T) {
+	t.Setenv("HARBORRS_ALLOW_PRIVATE_FETCH", "")
+	p, _, _ := newPoller(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected SSRF guard to block loopback poll")
+	} else if !strings.Contains(err.Error(), "non-public") {
+		t.Fatalf("expected non-public block error, got: %v", err)
+	}
+}
