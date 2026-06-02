@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kfet/harborrs/internal/atomic"
+	"github.com/kfet/harb/internal/atomic"
 )
 
 // OPML is the parsed shape of a subscriptions.opml file. Only the fields

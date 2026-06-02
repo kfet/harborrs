@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/kfet/harborrs/internal/atomic"
-	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/atomic"
+	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/store"
 )
 
 // Config is the on-disk configuration loaded from `config.json` in the

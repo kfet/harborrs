@@ -35,18 +35,21 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **Project renamed to "Harbour RSS"; git repo slug shortened to
+- **Project renamed to "Harbour RSS"; repo and Go module renamed to
   `harb`.** The display name in the web UI (page titles, brand, footer)
   and README is now "Harbour RSS", and the Reader API `/status` document
   carries a new `name: "Harbour RSS"` field alongside the unchanged
   `product: "harborrs"` machine identifier. The GitHub repo moved to
-  `github.com/kfet/harb` (old URL redirects). Deliberately **unchanged**:
-  the Go module path `github.com/kfet/harborrs` (so `go install …` keeps
-  working via redirect), the `harborrs` binary/CLI, the `harborrs_session`
-  cookie, `HARBORRS_*` env vars, the data dir, and launchd/systemd labels
-  — renaming those would break live deployments. Slug-based references
-  (release-asset URLs, `install.sh` raw URLs and default `REPO`,
-  self-update `DefaultRepo`, CI badge) now point at `kfet/harb`.
+  `github.com/kfet/harb` (old URL redirects) and the **Go module path is
+  now `github.com/kfet/harb`** (root package renamed `harborrs` → `harb`).
+  Install with `go install github.com/kfet/harb/cmd/harborrs@latest`; the
+  old module path keeps resolving only for already-published tags.
+  Deliberately **unchanged**: the `harborrs` binary/CLI (still built from
+  `cmd/harborrs`), the `harborrs_session` cookie, `HARBORRS_*` env vars,
+  the data dir, and launchd/systemd labels — renaming those would break
+  live deployments. Slug-based references (release-asset URLs,
+  `install.sh` raw URLs and default `REPO`, self-update `DefaultRepo`, CI
+  badge) now point at `kfet/harb`.
 - **Homebrew tap repo renamed** `kfet/homebrew-harborrs` →
   `kfet/homebrew-tap`. The install incantation changes accordingly:
   `brew install kfet/tap/harborrs` (was `kfet/harborrs/harborrs`).

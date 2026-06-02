@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 // TestSanitizeHTMLHostile feeds the sanitizer a battery of XSS payloads

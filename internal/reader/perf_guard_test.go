@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 // TestPerfBudget is a CI regression guard for the Reader API hot path.

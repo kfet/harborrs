@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 // BenchmarkReederLikeSync replays the Reeder access-log shape observed

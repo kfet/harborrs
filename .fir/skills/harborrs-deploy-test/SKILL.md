@@ -30,7 +30,7 @@ this skill.
    VERSION=$(cat VERSION)-test
    COMMIT=$(git rev-parse --short=12 HEAD)
    BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-   LDFLAGS="-s -w -X github.com/kfet/harborrs.Version=$VERSION -X github.com/kfet/harborrs.Commit=$COMMIT -X github.com/kfet/harborrs.BuildDate=$BUILD_DATE"
+   LDFLAGS="-s -w -X github.com/kfet/harb.Version=$VERSION -X github.com/kfet/harb.Commit=$COMMIT -X github.com/kfet/harb.BuildDate=$BUILD_DATE"
    go build -trimpath -ldflags="$LDFLAGS" -o ~/.local/bin/harborrs-test ./cmd/harborrs
    ~/.local/bin/harborrs-test version
    ```

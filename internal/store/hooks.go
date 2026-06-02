@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/kfet/harborrs/internal/atomic"
+	"github.com/kfet/harb/internal/atomic"
 )
 
 // Hookable operations — overridden in tests to exercise error paths that

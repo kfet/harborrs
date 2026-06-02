@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/store"
 )
 
 // memOPML is an in-memory OPMLProvider. Failure modes can be injected via

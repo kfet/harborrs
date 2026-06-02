@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kfet/harborrs/internal/poll/observe"
-	"github.com/kfet/harborrs/internal/poll/resolve"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/poll/observe"
+	"github.com/kfet/harb/internal/poll/resolve"
+	"github.com/kfet/harb/internal/store"
 )
 
 const sampleRSS = `<?xml version="1.0" encoding="UTF-8"?>

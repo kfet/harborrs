@@ -27,17 +27,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kfet/harborrs"
-	"github.com/kfet/harborrs/internal/accesslog"
-	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/config"
-	"github.com/kfet/harborrs/internal/feedpreview"
-	"github.com/kfet/harborrs/internal/poll"
-	"github.com/kfet/harborrs/internal/poll/observe"
-	"github.com/kfet/harborrs/internal/reader"
-	"github.com/kfet/harborrs/internal/selfupdate"
-	"github.com/kfet/harborrs/internal/store"
-	uipkg "github.com/kfet/harborrs/internal/ui"
+	"github.com/kfet/harb"
+	"github.com/kfet/harb/internal/accesslog"
+	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/config"
+	"github.com/kfet/harb/internal/feedpreview"
+	"github.com/kfet/harb/internal/poll"
+	"github.com/kfet/harb/internal/poll/observe"
+	"github.com/kfet/harb/internal/reader"
+	"github.com/kfet/harb/internal/selfupdate"
+	"github.com/kfet/harb/internal/store"
+	uipkg "github.com/kfet/harb/internal/ui"
 )
 
 func main() {
@@ -53,7 +53,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "version":
-		fmt.Fprintf(stdout, "harborrs %s (commit %s, built %s)\n", harborrs.Version, harborrs.Commit, harborrs.BuildDate)
+		fmt.Fprintf(stdout, "harborrs %s (commit %s, built %s)\n", harb.Version, harb.Commit, harb.BuildDate)
 		return 0
 	case "init":
 		return cmdInit(rest, stdout, stderr)
@@ -177,9 +177,9 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	op := config.NewFileOPML(data)
 	mux := http.NewServeMux()
 	readSrv := reader.New(st, as, op)
-	readSrv.Version = harborrs.Version
-	readSrv.Commit = harborrs.Commit
-	readSrv.BuildDate = harborrs.BuildDate
+	readSrv.Version = harb.Version
+	readSrv.Commit = harb.Commit
+	readSrv.BuildDate = harb.BuildDate
 	readHandler := readSrv.Routes(mux)
 	uiSrv, err := uipkg.New(st, as, op, cfg.UI.Theme, data)
 	if err != nil {
@@ -187,8 +187,8 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	uiSrv.Secure = cfg.UI.Secure
-	uiSrv.StaticVer = harborrs.Commit
-	uiSrv.Version = harborrs.Version
+	uiSrv.StaticVer = harb.Commit
+	uiSrv.Version = harb.Version
 	uiSrv.ConfigPath = cfgPath
 	uiSrv.Previewer = feedpreview.New()
 	uiSrv.Routes(mux)
@@ -207,7 +207,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	poller := poll.New(st)
-	poller.UserAgent = "harborrs/" + harborrs.Version
+	poller.UserAgent = "harborrs/" + harb.Version
 	// Record every poll outcome under <data-dir>/observe so an
 	// out-of-process fixer can diagnose breakage and write resolver
 	// sidecars. Pure observability — harborrs reacts to nothing here.
@@ -325,7 +325,7 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	p := poll.New(st)
-	p.UserAgent = "harborrs/" + harborrs.Version
+	p.UserAgent = "harborrs/" + harb.Version
 	p.Observer = observe.NewDiskObserver(st.Dir)
 	total := 0
 	for _, f := range o.Feeds {
@@ -440,7 +440,7 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	err := selfupdate.Run(harborrs.Version, selfupdate.Options{
+	err := selfupdate.Run(harb.Version, selfupdate.Options{
 		Repo:      *repo,
 		Version:   *ver,
 		CheckOnly: *check,

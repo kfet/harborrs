@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 func TestLoadDefaults(t *testing.T) {

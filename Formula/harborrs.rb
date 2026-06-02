@@ -8,7 +8,7 @@ class Harborrs < Formula
   depends_on "go" => :build
 
   def install
-    ldflags = "-s -w -X github.com/kfet/harborrs.Version=#{version}"
+    ldflags = "-s -w -X github.com/kfet/harb.Version=#{version}"
     system "go", "build", "-trimpath", "-ldflags=#{ldflags}",
            "-o", bin/"harborrs", "./cmd/harborrs"
   end

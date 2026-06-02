@@ -1,4 +1,4 @@
-package harborrs
+package harb
 
 import "testing"
 

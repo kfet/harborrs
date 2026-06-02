@@ -1,4 +1,4 @@
-module github.com/kfet/harborrs
+module github.com/kfet/harb
 
 go 1.25.0
 

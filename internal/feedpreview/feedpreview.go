@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kfet/harborrs/internal/safedial"
-	"github.com/kfet/harborrs/internal/ui"
+	"github.com/kfet/harb/internal/safedial"
+	"github.com/kfet/harb/internal/ui"
 	"github.com/mmcdole/gofeed"
 )
 

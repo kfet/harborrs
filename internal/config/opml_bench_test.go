@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 // BenchmarkFileOPMLLoad measures the per-Load cost. Pre-rework

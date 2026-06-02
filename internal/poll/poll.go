@@ -21,10 +21,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kfet/harborrs/internal/poll/observe"
-	"github.com/kfet/harborrs/internal/poll/resolve"
-	"github.com/kfet/harborrs/internal/safedial"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/poll/observe"
+	"github.com/kfet/harb/internal/poll/resolve"
+	"github.com/kfet/harb/internal/safedial"
+	"github.com/kfet/harb/internal/store"
 	"github.com/mmcdole/gofeed"
 )
 

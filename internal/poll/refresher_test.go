@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/store"
 )
 
 // newRefresher builds a poller+refresher pointed at a single in-process

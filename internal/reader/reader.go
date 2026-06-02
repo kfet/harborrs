@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/store"
 )
 
 // OPMLProvider lets the Reader server fetch (and atomically replace) the
@@ -46,7 +46,7 @@ type Server struct {
 
 	// Version is the harborrs build version surfaced via /status and
 	// the `harborrsVersion` extension field on user-info responses.
-	// Empty when unset; main.go wires this to harborrs.Version.
+	// Empty when unset; main.go wires this to harb.Version.
 	Version   string
 	Commit    string
 	BuildDate string

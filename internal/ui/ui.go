@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kfet/harborrs/internal/auth"
-	"github.com/kfet/harborrs/internal/config"
-	"github.com/kfet/harborrs/internal/store"
+	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/config"
+	"github.com/kfet/harb/internal/store"
 )
 
 //go:embed templates/*.html

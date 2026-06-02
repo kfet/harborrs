@@ -27,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kfet/harborrs/internal/atomic"
+	"github.com/kfet/harb/internal/atomic"
 )
 
 // ErrInvalidCredentials is returned on a bad username/password pair.

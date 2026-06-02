@@ -2,45 +2,45 @@
 # Keep this list small and well-justified.
 
 # Entry point — wiring, flag parsing, signal handling, no behaviour worth a test.
-github.com/kfet/harborrs/cmd/harborrs/main.go
+github.com/kfet/harb/cmd/harborrs/main.go
 
 # Frontend static-check helper — invoked via `make lint-frontend`,
 # not exercised by go test.
-github.com/kfet/harborrs/scripts/lintfrontend/main.go
+github.com/kfet/harb/scripts/lintfrontend/main.go
 
 # End-to-end test package; exercised by `make e2e`, not unit tests.
-^github.com/kfet/harborrs/e2e/
+^github.com/kfet/harb/e2e/
 
 # Reeder / GReader conformance suite — embedder-driven contract tests
 # whose code is mostly assertion plumbing (t.Fatal branches on JSON
 # unmarshal etc). The behaviour each contract pins is exercised in the
 # packages it drives; the suite itself is test-support code.
-^github.com/kfet/harborrs/internal/reedercompat/
+^github.com/kfet/harb/internal/reedercompat/
 
 # Self-update: deep filesystem I/O error branches (chmod after create,
 # rename atop running exe, io.Copy mid-stream, tar.Next post-header).
 # Happy path + all classified errors (network, checksum, missing entry,
 # bad gzip, managed paths) are covered; contriving the remaining
 # kernel-level errors adds noise without informing the behaviour.
-github.com/kfet/harborrs/internal/selfupdate/selfupdate.go
+github.com/kfet/harb/internal/selfupdate/selfupdate.go
 
 # Store Open folds logs immediately after migrateStateLog has opened/scanned
 # the same files; these error returns are only reachable by a filesystem race
 # between migration and folding. The direct foldLog error path is exercised.
 # buildIndex's top-level ReadDir error is similarly race-only (entries/
 # was just walked by migrateEntryHashes).
-github.com/kfet/harborrs/internal/store/store.go:130\.71,132\.3
-github.com/kfet/harborrs/internal/store/store.go:133\.74,135\.3
-github.com/kfet/harborrs/internal/store/store.go:137\.39,139\.3
-github.com/kfet/harborrs/internal/store/store.go:152\.3,152\.13
-github.com/kfet/harborrs/internal/store/store.go:230\.3,230\.13
+github.com/kfet/harb/internal/store/store.go:130\.71,132\.3
+github.com/kfet/harb/internal/store/store.go:133\.74,135\.3
+github.com/kfet/harb/internal/store/store.go:137\.39,139\.3
+github.com/kfet/harb/internal/store/store.go:152\.3,152\.13
+github.com/kfet/harb/internal/store/store.go:230\.3,230\.13
 
 # FileOPML lazy init uses double-checked locking. The second nil-check
 # inside the write-locked section is the race-loser branch — only
 # reachable when two goroutines call Load concurrently on a fresh
 # FileOPML and one wins the upgrade. Behaviour-equivalent to the
 # winner's path; not worth a deterministic-race test rig.
-github.com/kfet/harborrs/internal/config/config.go:103\.18,105\.3
+github.com/kfet/harb/internal/config/config.go:103\.18,105\.3
 
 # Reader ETag helpers: opmlFingerprint degrades to an empty string on
 # OPML.Marshal failure, which is a defensive return for an encoding bug
@@ -49,7 +49,7 @@ github.com/kfet/harborrs/internal/config/config.go:103\.18,105\.3
 # so the handler skips ETag handling and serves a normal 200 — i.e. the
 # fallback is a correctness no-op, not a behaviour to assert. applyETag
 # has the same degrade-to-no-op branch on empty etag.
-github.com/kfet/harborrs/internal/reader/reader.go:975\.16,979\.3
-github.com/kfet/harborrs/internal/reader/reader.go:988\.14,990\.3
-github.com/kfet/harborrs/internal/reader/reader.go:1000\.14,1002\.3
-github.com/kfet/harborrs/internal/reader/reader.go:1012\.16,1014\.3
+github.com/kfet/harb/internal/reader/reader.go:975\.16,979\.3
+github.com/kfet/harb/internal/reader/reader.go:988\.14,990\.3
+github.com/kfet/harb/internal/reader/reader.go:1000\.14,1002\.3
+github.com/kfet/harb/internal/reader/reader.go:1012\.16,1014\.3

@@ -1,16 +1,16 @@
 # Harbour RSS
 
 [![CI](https://github.com/kfet/harb/actions/workflows/test.yml/badge.svg)](https://github.com/kfet/harb/actions/workflows/test.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/kfet/harborrs.svg)](https://pkg.go.dev/github.com/kfet/harborrs)
-[![Go Report Card](https://goreportcard.com/badge/github.com/kfet/harborrs)](https://goreportcard.com/report/github.com/kfet/harborrs)
+[![Go Reference](https://pkg.go.dev/badge/github.com/kfet/harb.svg)](https://pkg.go.dev/github.com/kfet/harb)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kfet/harb)](https://goreportcard.com/report/github.com/kfet/harb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small, single-binary self-hosted RSS server with a Google-Reader-
 compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
-> The project is **Harbour RSS**; the binary, Go module
-> (`github.com/kfet/harborrs`) and config keys keep the `harborrs`
-> name. The git repo lives at `github.com/kfet/harb`.
+> The project is **Harbour RSS** and lives at `github.com/kfet/harb`
+> (Go module `github.com/kfet/harb`). The binary, CLI, and config keys
+> keep the `harborrs` name.
 
 ## What it does
 
@@ -70,7 +70,7 @@ update -check` reports without installing.
 **From source:**
 
 ```sh
-go install github.com/kfet/harborrs/cmd/harborrs@latest
+go install github.com/kfet/harb/cmd/harborrs@latest
 ```
 
 ## Quick start
