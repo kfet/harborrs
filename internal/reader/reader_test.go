@@ -48,6 +48,28 @@ func (m *memOPML) Save(o *store.OPML) error {
 	return nil
 }
 
+// Update mirrors config.FileOPML.Update — it holds the mock's lock
+// across the whole load→mutate→save cycle so concurrent mutators are
+// serialized (exercised by the lost-update concurrency test).
+func (m *memOPML) Update(fn func(*store.OPML) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.loadErr != nil {
+		return m.loadErr
+	}
+	cp := m.opml
+	cp.Feeds = append([]store.Feed{}, m.opml.Feeds...)
+	if err := fn(&cp); err != nil {
+		return err
+	}
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+	m.opml = cp
+	m.opml.Feeds = append([]store.Feed{}, cp.Feeds...)
+	return nil
+}
+
 var testPwHash = mustHashPw()
 
 func mustHashPw() string {

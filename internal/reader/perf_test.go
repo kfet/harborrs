@@ -112,6 +112,14 @@ type memOPMLBench struct {
 
 func (m *memOPMLBench) Load() (*store.OPML, error) { c := m.opml; return &c, nil }
 func (m *memOPMLBench) Save(o *store.OPML) error   { m.opml = *o; return nil }
+func (m *memOPMLBench) Update(fn func(*store.OPML) error) error {
+	c := m.opml
+	if err := fn(&c); err != nil {
+		return err
+	}
+	m.opml = c
+	return nil
+}
 
 // BenchmarkListVsIndexed contrasts the disk-backed ListEntries path
 // (what the Reader handlers used pre-index) against the new in-memory

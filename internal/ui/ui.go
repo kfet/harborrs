@@ -9,6 +9,7 @@ package ui
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -33,6 +34,11 @@ var embeddedStatic embed.FS
 type OPMLProvider interface {
 	Load() (*store.OPML, error)
 	Save(*store.OPML) error
+	// Update performs a serialized read-modify-write: it holds the
+	// provider's lock across load→mutate→save so concurrent UI/Reader
+	// mutations can't lose each other's edits. All OPML mutators go
+	// through this.
+	Update(func(*store.OPML) error) error
 }
 
 // Server is the htmx UI HTTP surface. Construct via New and mount with
@@ -770,6 +776,12 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 	})
 }
 
+// errAbortOPMLUpdate is a sentinel returned from an OPML.Update closure
+// to abort the read-modify-write without persisting (e.g. the target
+// feed was not found). The handler signals the user-facing outcome
+// out-of-band, so this error is never rendered.
+var errAbortOPMLUpdate = errors.New("ui: abort opml update")
+
 // handleFeedAdd subscribes to a new feed.
 func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -790,13 +802,10 @@ func (s *Server) handleFeedAdd(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = u
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Add(store.Feed{XMLURL: u, Title: title, Tags: tags})
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.OPML.Update(func(op *store.OPML) error {
+		op.Add(store.Feed{XMLURL: u, Title: title, Tags: tags})
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -822,25 +831,33 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url and add/remove", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	f := op.Find(u)
-	if f == nil {
+	var feedTags, allTags []string
+	notFound := false
+	err := s.OPML.Update(func(op *store.OPML) error {
+		f := op.Find(u)
+		if f == nil {
+			notFound = true
+			return errAbortOPMLUpdate
+		}
+		if add != "" {
+			for _, t := range parseTagInput(add) {
+				f.AddTag(t)
+			}
+		}
+		if rem != "" {
+			f.RemoveTag(rem)
+		}
+		// Capture render inputs while we still hold the lock, from the
+		// post-mutation state that is about to be persisted.
+		feedTags = append([]string(nil), f.Tags...)
+		allTags = op.AllTags()
+		return nil
+	})
+	if notFound {
 		http.NotFound(w, r)
 		return
 	}
-	if add != "" {
-		for _, t := range parseTagInput(add) {
-			f.AddTag(t)
-		}
-	}
-	if rem != "" {
-		f.RemoveTag(rem)
-	}
-	if err := s.OPML.Save(op); err != nil {
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -850,7 +867,7 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		ScopeID  string
 		FeedTags []string
 		AllTags  []string
-	}{u, f.Tags, op.AllTags()})
+	}{u, feedTags, allTags})
 }
 
 // handleFeedRemove unsubscribes.
@@ -868,13 +885,10 @@ func (s *Server) handleFeedRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Remove(u)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.OPML.Update(func(op *store.OPML) error {
+		op.Remove(u)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

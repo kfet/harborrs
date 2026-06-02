@@ -17,7 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kfet/harborrs/internal/auth"
@@ -30,6 +29,10 @@ import (
 type OPMLProvider interface {
 	Load() (*store.OPML, error)
 	Save(*store.OPML) error
+	// Update performs a serialized read-modify-write across load→mutate
+	// →save, holding the provider's lock so UI and Reader mutations
+	// can't clobber each other. All OPML mutators route through this.
+	Update(func(*store.OPML) error) error
 }
 
 // Server is the Reader API HTTP surface. Construct via New and mount with
@@ -47,9 +50,13 @@ type Server struct {
 	Version   string
 	Commit    string
 	BuildDate string
-
-	mu sync.Mutex // guards subscription mutations
 }
+
+// errAbortUpdate is a sentinel returned from an OPML.Update closure to
+// abort the read-modify-write without persisting. The handler that set
+// it communicates the user-facing reason out-of-band (e.g. a 400), so
+// the sentinel itself is never surfaced.
+var errAbortUpdate = errors.New("reader: abort opml update")
 
 // New returns a Server with sensible defaults. All three fields are
 // required.
@@ -207,13 +214,6 @@ func (s *Server) handleSubscriptionList(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	streamID := r.FormValue("s")
 	url := strings.TrimPrefix(streamID, "feed/")
 	if url == "" {
@@ -231,36 +231,44 @@ func (s *Server) handleSubscriptionEdit(w http.ResponseWriter, r *http.Request) 
 		}
 		return out
 	}
-	switch ac {
-	case "subscribe":
-		title := r.FormValue("t")
-		if title == "" {
-			title = url
+	var badReq string
+	err := s.OPML.Update(func(op *store.OPML) error {
+		switch ac {
+		case "subscribe":
+			title := r.FormValue("t")
+			if title == "" {
+				title = url
+			}
+			tags := stripLabels(r.Form["a"])
+			op.Add(store.Feed{XMLURL: url, Title: title, Tags: tags})
+		case "unsubscribe":
+			op.Remove(url)
+		case "edit":
+			f := op.Find(url)
+			if f == nil {
+				badReq = "not found"
+				return errAbortUpdate
+			}
+			if t := r.FormValue("t"); t != "" {
+				f.Title = t
+			}
+			for _, t := range stripLabels(r.Form["a"]) {
+				f.AddTag(t)
+			}
+			for _, t := range stripLabels(r.Form["r"]) {
+				f.RemoveTag(t)
+			}
+		default:
+			badReq = "bad ac"
+			return errAbortUpdate
 		}
-		tags := stripLabels(r.Form["a"])
-		op.Add(store.Feed{XMLURL: url, Title: title, Tags: tags})
-	case "unsubscribe":
-		op.Remove(url)
-	case "edit":
-		f := op.Find(url)
-		if f == nil {
-			http.Error(w, "not found", http.StatusBadRequest)
-			return
-		}
-		if t := r.FormValue("t"); t != "" {
-			f.Title = t
-		}
-		for _, t := range stripLabels(r.Form["a"]) {
-			f.AddTag(t)
-		}
-		for _, t := range stripLabels(r.Form["r"]) {
-			f.RemoveTag(t)
-		}
-	default:
-		http.Error(w, "bad ac", http.StatusBadRequest)
+		return nil
+	})
+	if badReq != "" {
+		http.Error(w, badReq, http.StatusBadRequest)
 		return
 	}
-	if err := s.OPML.Save(op); err != nil {
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -273,15 +281,10 @@ func (s *Server) handleQuickAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing quickadd", http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.Add(store.Feed{XMLURL: url, Title: url})
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.OPML.Update(func(op *store.OPML) error {
+		op.Add(store.Feed{XMLURL: url, Title: url})
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -321,8 +324,6 @@ func (s *Server) handleTagList(w http.ResponseWriter, r *http.Request) {
 // `dest=user/-/label/<new>`. Missing or malformed params → 400; an
 // unknown source tag is a no-op + 200 (idempotent rename semantics).
 func (s *Server) handleRenameTag(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	oldName := strings.TrimPrefix(r.FormValue("s"), "user/-/label/")
 	newName := strings.TrimPrefix(r.FormValue("dest"), "user/-/label/")
 	if oldName == "" || newName == "" {
@@ -333,13 +334,10 @@ func (s *Server) handleRenameTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reserved tag name", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.RenameTag(oldName, newName)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.OPML.Update(func(op *store.OPML) error {
+		op.RenameTag(oldName, newName)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -349,20 +347,15 @@ func (s *Server) handleRenameTag(w http.ResponseWriter, r *http.Request) {
 // handleDisableTag implements `/reader/api/0/disable-tag`: drops the
 // given tag from every feed. The feeds themselves remain subscribed.
 func (s *Server) handleDisableTag(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	name := strings.TrimPrefix(r.FormValue("s"), "user/-/label/")
 	if name == "" {
 		http.Error(w, "missing s", http.StatusBadRequest)
 		return
 	}
-	op, err := s.OPML.Load()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	op.DisableTag(name)
-	if err := s.OPML.Save(op); err != nil {
+	if err := s.OPML.Update(func(op *store.OPML) error {
+		op.DisableTag(name)
+		return nil
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

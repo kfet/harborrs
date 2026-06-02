@@ -139,6 +139,36 @@ func (f *FileOPML) Save(o *store.OPML) error {
 	return nil
 }
 
+// Update performs a serialized read-modify-write on the OPML. It holds
+// the FileOPML lock across the entire load→mutate→save cycle, so
+// concurrent mutators (from the UI and Reader API, which share one
+// *FileOPML) can no longer interleave and clobber each other's edits.
+//
+// fn receives a private deep copy of the current in-memory OPML and may
+// mutate it freely. If fn returns an error, nothing is persisted and
+// the in-memory state is left untouched. On success the mutated OPML is
+// atomic-written to disk and becomes the new in-memory state.
+//
+// All OPML mutations in-process must go through Update; using Load then
+// Save separately reintroduces the lost-update race this method exists
+// to close.
+func (f *FileOPML) Update(fn func(*store.OPML) error) error {
+	if err := f.ensureLoaded(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	work := cloneOPML(f.cur)
+	if err := fn(work); err != nil {
+		return err
+	}
+	if err := work.WriteOPML(f.Path); err != nil {
+		return err
+	}
+	f.cur = cloneOPML(work)
+	return nil
+}
+
 // cloneOPML returns a deep copy with independent Feeds and Feed.Tags
 // slices so callers can mutate the returned value without aliasing the
 // in-memory state. Callers must pass a non-nil *store.OPML.

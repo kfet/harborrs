@@ -1,8 +1,11 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/kfet/harborrs/internal/store"
@@ -243,5 +246,95 @@ func TestLoadExplicitEmpties(t *testing.T) {
 	}
 	if c.Listen == "" || c.UI.Theme == "" {
 		t.Fatalf("defaults not re-applied: %+v", c)
+	}
+}
+
+// TestFileOPMLUpdateSerializes verifies Update performs an atomic
+// read-modify-write: many concurrent Add operations must not lose
+// updates the way separate Load→mutate→Save calls would.
+func TestFileOPMLUpdateSerializes(t *testing.T) {
+	dir := t.TempDir()
+	f := NewFileOPML(dir)
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			err := f.Update(func(op *store.OPML) error {
+				op.Add(store.Feed{XMLURL: fmt.Sprintf("u%d", i), Title: "t"})
+				return nil
+			})
+			if err != nil {
+				t.Errorf("update %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	got, err := f.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Feeds) != n {
+		t.Fatalf("lost updates: want %d feeds, got %d", n, len(got.Feeds))
+	}
+}
+
+// TestFileOPMLUpdateAbort confirms that returning an error from the
+// closure leaves the on-disk and in-memory state untouched.
+func TestFileOPMLUpdateAbort(t *testing.T) {
+	dir := t.TempDir()
+	f := NewFileOPML(dir)
+	if err := f.Save(&store.OPML{Feeds: []store.Feed{{XMLURL: "keep", Title: "K"}}}); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("boom")
+	err := f.Update(func(op *store.OPML) error {
+		op.Add(store.Feed{XMLURL: "transient"})
+		return sentinel
+	})
+	if err != sentinel {
+		t.Fatalf("want sentinel, got %v", err)
+	}
+	got, _ := f.Load()
+	if len(got.Feeds) != 1 || got.Feeds[0].XMLURL != "keep" {
+		t.Fatalf("aborted update persisted: %+v", got.Feeds)
+	}
+}
+
+// TestFileOPMLUpdateLoadError surfaces ensureLoaded errors (a directory
+// where the OPML file is expected).
+func TestFileOPMLUpdateLoadError(t *testing.T) {
+	dir := t.TempDir()
+	f := &FileOPML{Path: filepath.Join(dir, "sub.opml")}
+	if err := os.MkdirAll(f.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Update(func(*store.OPML) error { return nil }); err == nil {
+		t.Fatal("expected load error from Update")
+	}
+}
+
+// TestFileOPMLUpdateWriteError surfaces persistence errors from Update.
+func TestFileOPMLUpdateWriteError(t *testing.T) {
+	dir := t.TempDir()
+	f := NewFileOPML(dir)
+	if err := f.Save(&store.OPML{Feeds: []store.Feed{{XMLURL: "good", Title: "G"}}}); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(f.Path)
+	if err := os.MkdirAll(f.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := f.Update(func(op *store.OPML) error {
+		op.Add(store.Feed{XMLURL: "bad"})
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected write error from Update")
+	}
+	got, _ := f.Load()
+	if len(got.Feeds) != 1 || got.Feeds[0].XMLURL != "good" {
+		t.Fatalf("failed Update corrupted state: %+v", got.Feeds)
 	}
 }

@@ -46,6 +46,16 @@ func (m *memOPML) Save(o *store.OPML) error {
 	m.opml.Feeds = append([]store.Feed{}, o.Feeds...)
 	return nil
 }
+func (m *memOPML) Update(fn func(*store.OPML) error) error {
+	cur, err := m.Load()
+	if err != nil {
+		return err
+	}
+	if err := fn(cur); err != nil {
+		return err
+	}
+	return m.Save(cur)
+}
 
 func TestReederCompat(t *testing.T) {
 	reedercompat.Run(t, func(t *testing.T) reedercompat.Harness {

@@ -41,6 +41,18 @@ All notable changes to this project will be documented in this file.
   the most recent poll *attempt* and keeps advancing even while a feed is
   failing. Legacy state files without the field read as "never synced"
   until their next good poll. No migration required.
+### Fixed
+
+- **OPML mutations are now serialized through a single
+  read-modify-write path**, fixing a lost-update race. The UI handlers
+  (`feed/add`, `feed/remove`, `feed/tag`) did `Load → mutate → Save`
+  with no lock while the Reader API used its own mutex over the *same*
+  `config.FileOPML`, so concurrent edits from the two front doors (or
+  two UI tabs) could clobber each other. `FileOPML` now exposes
+  `Update(func(*store.OPML) error)` that holds its lock across the whole
+  load→mutate→save cycle, and every OPML mutator in both the `ui` and
+  `reader` packages routes through it. The reader's now-redundant
+  per-server mutex was removed.
 
 ### Security
 

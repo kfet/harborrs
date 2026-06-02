@@ -41,6 +41,18 @@ func (m *memOPML) Save(o *store.OPML) error {
 	return nil
 }
 
+// Update mirrors config.FileOPML.Update: load a copy, mutate, save.
+func (m *memOPML) Update(fn func(*store.OPML) error) error {
+	cur, err := m.Load()
+	if err != nil {
+		return err
+	}
+	if err := fn(cur); err != nil {
+		return err
+	}
+	return m.Save(cur)
+}
+
 // Compile-time check our memOPML satisfies the reader's interface too —
 // keeps the two packages aligned.
 var _ reader.OPMLProvider = (*memOPML)(nil)
