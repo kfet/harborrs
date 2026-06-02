@@ -1,16 +1,21 @@
 package poll
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kfet/harborrs/internal/poll/observe"
+	"github.com/kfet/harborrs/internal/poll/resolve"
 	"github.com/kfet/harborrs/internal/store"
 )
 
@@ -330,25 +335,6 @@ func TestPollSanitizesIllegalXMLControlChars(t *testing.T) {
 	}
 	if entries[0].Summary != "line1\tline2" {
 		t.Fatalf("summary=%q, want %q (tab kept, U+0008/U+000C stripped)", entries[0].Summary, "line1\tline2")
-	}
-}
-
-func TestSanitizeXML(t *testing.T) {
-	cases := []struct{ name, in, want string }{
-		{"clean passthrough", "<a>hi there</a>", "<a>hi there</a>"},
-		{"keeps tab/lf/cr", "a\tb\nc\rd", "a\tb\nc\rd"},
-		{"strips backspace", "a\x08b", "ab"},
-		{"strips assorted C0", "\x00\x01\x0b\x0c\x1fX", "X"},
-		{"empty", "", ""},
-		{"utf16 le bom untouched", "\xff\xfeh\x00i\x00", "\xff\xfeh\x00i\x00"},
-		{"utf16 be bom untouched", "\xfe\xff\x00h\x00i", "\xfe\xff\x00h\x00i"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := sanitizeXML(c.in); got != c.want {
-				t.Fatalf("sanitizeXML(%q)=%q, want %q", c.in, got, c.want)
-			}
-		})
 	}
 }
 
@@ -676,5 +662,225 @@ func TestPollUserAgent(t *testing.T) {
 		if strings.Contains(got, "github.com") {
 			t.Fatalf("User-Agent must not contain a github URL: %q", got)
 		}
+	}
+}
+
+// --- resolver sidecar + observability integration ----------------------
+
+func writeSidecar(t *testing.T, dir, feedURL string, specs []resolve.Spec) {
+	t.Helper()
+	fh := store.FeedHash(feedURL)
+	path := resolve.SidecarPath(dir, fh)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readObservations(t *testing.T, dir, feedURL string) []observe.Observation {
+	t.Helper()
+	fh := store.FeedHash(feedURL)
+	f, err := os.Open(filepath.Join(dir, "observe", fh+".ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var out []observe.Observation
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var ev observe.Observation
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+// TestPollSidecarShapesRequestAndRecordsSuccess proves a sidecar Spec can
+// override the outgoing User-Agent (the CDN-tarpit class of breakage) and
+// that the poll outcome is observed with the applied resolver chain.
+func TestPollSidecarShapesRequestAndRecordsSuccess(t *testing.T) {
+	p, _, dir := newPoller(t)
+	p.Observer = observe.NewDiskObserver(dir)
+
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+
+	writeSidecar(t, dir, srv.URL, []resolve.Spec{
+		{Name: "set-header", Params: map[string]string{"key": "User-Agent", "value": "sidecar-ua/9"}, Source: "agent", Note: "CDN tarpit"},
+	})
+
+	added, err := p.Poll(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 2 {
+		t.Fatalf("added=%d", added)
+	}
+	if gotUA != "sidecar-ua/9" {
+		t.Fatalf("sidecar did not shape UA: got %q", gotUA)
+	}
+	evs := readObservations(t, dir, srv.URL)
+	last := evs[len(evs)-1]
+	if last.Outcome != observe.Success || last.NewEntries != 2 {
+		t.Fatalf("observation=%+v", last)
+	}
+	if len(last.Resolvers) != 2 || last.Resolvers[1] != "set-header" {
+		t.Fatalf("resolvers=%v", last.Resolvers)
+	}
+}
+
+// TestPollSidecarRecodeFixesBrokenFeed proves a response-transforming
+// sidecar Spec can repair a body the parser would otherwise reject —
+// here a windows-1252 high byte in an element value.
+func TestPollSidecarRecodeFixesBrokenFeed(t *testing.T) {
+	p, _, dir := newPoller(t)
+	p.Observer = observe.NewDiskObserver(dir)
+
+	// 0x92 (CP1252 right-quote) inside the title; declared UTF-8, so it is
+	// invalid UTF-8 and parsing yields a mangled title without recode.
+	broken := "<?xml version=\"1.0\" encoding=\"UTF-8\"?><rss version=\"2.0\"><channel><title>T</title>" +
+		"<item><title>it\x92s</title><link>https://x/a</link><guid>g</guid></item></channel></rss>"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, broken)
+	}))
+	defer srv.Close()
+
+	writeSidecar(t, dir, srv.URL, []resolve.Spec{
+		{Name: "recode-charset", Params: map[string]string{"from": "windows-1252"}, Source: "agent"},
+	})
+
+	added, err := p.Poll(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("added=%d", added)
+	}
+}
+
+// TestPollParseErrorWritesSample proves a parse failure records a
+// ParseError observation and saves the raw body sample for the fixer.
+func TestPollParseErrorWritesSample(t *testing.T) {
+	p, _, dir := newPoller(t)
+	p.Observer = observe.NewDiskObserver(dir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, "<html>not a feed</html>")
+	}))
+	defer srv.Close()
+
+	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
+		t.Fatal("want parse error")
+	}
+	evs := readObservations(t, dir, srv.URL)
+	last := evs[len(evs)-1]
+	if last.Outcome != observe.ParseError || !last.Sample {
+		t.Fatalf("observation=%+v", last)
+	}
+	fh := store.FeedHash(srv.URL)
+	sample, err := os.ReadFile(filepath.Join(dir, "observe", fh+".sample"))
+	if err != nil {
+		t.Fatalf("sample not written: %v", err)
+	}
+	if !strings.Contains(string(sample), "not a feed") {
+		t.Fatalf("sample=%q", sample)
+	}
+}
+
+// hookResolver is a test double implementing resolve.Resolver, used with an
+// injected Poller.Resolve to drive the ShapeRequest / Transform error paths
+// that no real primitive can trigger.
+type hookResolver struct {
+	shapeErr, transErr error
+}
+
+func (h hookResolver) Name() string                  { return "hook" }
+func (h hookResolver) Applies(resolve.FeedMeta) bool { return true }
+func (h hookResolver) ShapeRequest(*http.Request) error {
+	return h.shapeErr
+}
+func (h hookResolver) Transform(b []byte, _ resolve.FeedMeta) ([]byte, error) {
+	return b, h.transErr
+}
+
+func TestPollShapeRequestError(t *testing.T) {
+	p, _, dir := newPoller(t)
+	p.Observer = observe.NewDiskObserver(dir)
+	boom := errors.New("shape boom")
+	p.Resolve = func(string, string) (resolve.Chain, error) {
+		return resolve.NewChain(hookResolver{shapeErr: boom}), nil
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+
+	if _, err := p.Poll(context.Background(), srv.URL); err != boom {
+		t.Fatalf("err=%v, want shape boom", err)
+	}
+	evs := readObservations(t, dir, srv.URL)
+	if last := evs[len(evs)-1]; last.Outcome != observe.FetchError {
+		t.Fatalf("outcome=%v, want fetch-error", last.Outcome)
+	}
+	st, _ := p.Store.LoadFeedState(store.FeedHash(srv.URL))
+	if st.ErrorCount != 1 {
+		t.Fatalf("error count=%d", st.ErrorCount)
+	}
+}
+
+func TestPollTransformError(t *testing.T) {
+	p, _, dir := newPoller(t)
+	p.Observer = observe.NewDiskObserver(dir)
+	boom := errors.New("transform boom")
+	p.Resolve = func(string, string) (resolve.Chain, error) {
+		return resolve.NewChain(hookResolver{transErr: boom}), nil
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+
+	if _, err := p.Poll(context.Background(), srv.URL); err != boom {
+		t.Fatalf("err=%v, want transform boom", err)
+	}
+	evs := readObservations(t, dir, srv.URL)
+	last := evs[len(evs)-1]
+	if last.Outcome != observe.ParseError || !last.Sample {
+		t.Fatalf("observation=%+v", last)
+	}
+	fh := store.FeedHash(srv.URL)
+	if _, err := os.Stat(filepath.Join(dir, "observe", fh+".sample")); err != nil {
+		t.Fatalf("sample not written: %v", err)
+	}
+}
+
+// TestPollNilHooksUseDefaults covers the obs() and Resolve nil-guards: a
+// Poller whose Observer and Resolve are nil must poll without panicking,
+// falling back to observe.Nop and resolve.Load respectively.
+func TestPollNilHooksUseDefaults(t *testing.T) {
+	p, _, _ := newPoller(t)
+	p.Observer = nil
+	p.Resolve = nil
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
 	}
 }

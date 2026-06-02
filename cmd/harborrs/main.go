@@ -33,6 +33,7 @@ import (
 	"github.com/kfet/harborrs/internal/config"
 	"github.com/kfet/harborrs/internal/feedpreview"
 	"github.com/kfet/harborrs/internal/poll"
+	"github.com/kfet/harborrs/internal/poll/observe"
 	"github.com/kfet/harborrs/internal/reader"
 	"github.com/kfet/harborrs/internal/selfupdate"
 	"github.com/kfet/harborrs/internal/store"
@@ -207,6 +208,10 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 
 	poller := poll.New(st)
 	poller.UserAgent = "harborrs/" + harborrs.Version
+	// Record every poll outcome under <data-dir>/observe so an
+	// out-of-process fixer can diagnose breakage and write resolver
+	// sidecars. Pure observability — harborrs reacts to nothing here.
+	poller.Observer = observe.NewDiskObserver(st.Dir)
 	feeds := func() []string {
 		o, err := op.Load()
 		if err != nil {
@@ -321,6 +326,7 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 	}
 	p := poll.New(st)
 	p.UserAgent = "harborrs/" + harborrs.Version
+	p.Observer = observe.NewDiskObserver(st.Dir)
 	total := 0
 	for _, f := range o.Feeds {
 		// poll-once must force a poll even if the feed is in a

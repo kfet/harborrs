@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kfet/harborrs/internal/poll/observe"
+	"github.com/kfet/harborrs/internal/poll/resolve"
 	"github.com/kfet/harborrs/internal/store"
 	"github.com/mmcdole/gofeed"
 )
@@ -46,6 +48,13 @@ type Poller struct {
 	// UserAgent is sent on every feed fetch. Defaults to
 	// DefaultUserAgent; main overrides it with "harborrs/<version>".
 	UserAgent string
+	// Observer records the outcome of every poll for an out-of-process
+	// fixer to consume. Defaults to observe.Nop{} (no-op) — set to an
+	// observe.DiskObserver to persist outcomes under <data-dir>/observe.
+	Observer observe.Observer
+	// Resolve loads the per-feed resolver chain (builtins + sidecar).
+	// Defaults to resolve.Load; overridable in tests to inject a chain.
+	Resolve func(dir, feedHash string) (resolve.Chain, error)
 }
 
 // New builds a Poller with sensible defaults. Store is required.
@@ -57,6 +66,8 @@ func New(s *store.Store) *Poller {
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,
 		UserAgent:    DefaultUserAgent,
+		Observer:     observe.Nop{},
+		Resolve:      resolve.Load,
 	}
 }
 
@@ -80,9 +91,20 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	}
 	now := p.Now().UTC()
 	if !st.RetryAfter.IsZero() && now.Before(st.RetryAfter) {
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.Cooldown})
 		return 0, ErrCooldown
 	}
 	st.LastFetched = now
+
+	// Build the per-feed resolver chain (builtins + sidecar). A sidecar
+	// error is non-fatal: the returned chain is always usable, so we
+	// proceed with whatever built and let the breakage surface in
+	// observations rather than failing the poll.
+	loadChain := p.Resolve
+	if loadChain == nil {
+		loadChain = resolve.Load
+	}
+	chain, _ := loadChain(p.Store.Dir, fh)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
@@ -100,9 +122,16 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	if st.LastModified != "" {
 		req.Header.Set("If-Modified-Since", st.LastModified)
 	}
+	// Request-shaping resolvers run after defaults so a sidecar can
+	// override the User-Agent or add headers a feed's CDN demands.
+	if err := chain.ShapeRequest(req, resolve.FeedMeta{URL: feedURL}); err != nil {
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.FetchError, Err: err.Error(), Resolvers: chain.Names()})
+		return 0, p.recordErr(fh, &st, err)
+	}
 
 	resp, err := p.Client.Do(req)
 	if err != nil {
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.FetchError, Err: err.Error(), Resolvers: chain.Names()})
 		return 0, p.recordErr(fh, &st, err)
 	}
 	defer resp.Body.Close()
@@ -113,6 +142,7 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		st.ErrorCount = 0
 		st.LastError = ""
 		st.RetryAfter = time.Time{}
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.NotModified, Status: resp.StatusCode})
 		return 0, p.Store.SaveFeedState(fh, st)
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		// fall through
@@ -128,24 +158,43 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		err := fmt.Errorf("http %d", resp.StatusCode)
 		st.LastError = err.Error()
 		st.RetryAfter = now.Add(d)
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.HTTPError, Status: resp.StatusCode, Err: err.Error()})
 		if saveErr := p.Store.SaveFeedState(fh, st); saveErr != nil {
 			return 0, saveErr
 		}
 		return 0, err
 	default:
-		return 0, p.recordErr(fh, &st, fmt.Errorf("http %d", resp.StatusCode))
+		err := fmt.Errorf("http %d", resp.StatusCode)
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.HTTPError, Status: resp.StatusCode, Err: err.Error()})
+		return 0, p.recordErr(fh, &st, err)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, p.MaxBodyBytes+1))
 	if err != nil {
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.FetchError, Status: resp.StatusCode, Err: err.Error()})
 		return 0, p.recordErr(fh, &st, err)
 	}
 	if int64(len(body)) > p.MaxBodyBytes {
-		return 0, p.recordErr(fh, &st, errors.New("body too large"))
+		err := errors.New("body too large")
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.TooLarge, Status: resp.StatusCode, Bytes: len(body)})
+		return 0, p.recordErr(fh, &st, err)
 	}
 
-	parsed, err := p.Parser.ParseString(sanitizeXML(string(body)))
+	ct := resp.Header.Get("Content-Type")
+	meta := resolve.FeedMeta{URL: feedURL, ContentType: ct, Status: resp.StatusCode}
+	transformed, terr := chain.Transform(body, meta)
+	if terr != nil {
+		p.obs().Sample(fh, body)
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.ParseError, Status: resp.StatusCode, ContentType: ct, Bytes: len(body), Err: terr.Error(), Resolvers: chain.Names(), Sample: true})
+		return 0, p.recordErr(fh, &st, terr)
+	}
+
+	parsed, err := p.Parser.ParseString(string(transformed))
 	if err != nil {
+		// Save the raw (pre-transform) body: it is what the fixer needs to
+		// diagnose, and what a new resolver Spec must learn to repair.
+		p.obs().Sample(fh, body)
+		p.obs().Observe(fh, observe.Observation{Outcome: observe.ParseError, Status: resp.StatusCode, ContentType: ct, Bytes: len(body), Err: err.Error(), Resolvers: chain.Names(), Sample: true})
 		return 0, p.recordErr(fh, &st, err)
 	}
 
@@ -188,7 +237,24 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	if err := p.Store.SaveFeedState(fh, st); err != nil {
 		return len(added), err
 	}
+	p.obs().Observe(fh, observe.Observation{
+		Outcome:     observe.Success,
+		Status:      resp.StatusCode,
+		ContentType: ct,
+		Bytes:       len(body),
+		NewEntries:  len(added),
+		Resolvers:   chain.Names(),
+	})
 	return len(added), nil
+}
+
+// obs returns the configured Observer, or a no-op if unset. Keeps every
+// call site free of nil checks.
+func (p *Poller) obs() observe.Observer {
+	if p.Observer == nil {
+		return observe.Nop{}
+	}
+	return p.Observer
 }
 
 // ResetCooldown clears any RetryAfter cooldown on a feed and persists.
@@ -240,42 +306,4 @@ func parseRetryAfter(v string, now time.Time) time.Duration {
 		}
 	}
 	return 0
-}
-
-// sanitizeXML removes byte values that are illegal in XML 1.0 — the C0
-// control characters other than tab (0x09), LF (0x0A) and CR (0x0D).
-// Go's encoding/xml (under gofeed) aborts on the first such byte, so a
-// single stray U+0008 anywhere in an upstream feed would otherwise drop
-// every item in it. We work at the byte level: in every ASCII-superset
-// encoding (UTF-8, ISO-8859-x, Windows-125x) these byte values never
-// appear inside a multi-byte sequence, so removing them cannot corrupt
-// valid text. A UTF-16 document (identified by its BOM) is left
-// untouched, since there low bytes are legitimate payload.
-func sanitizeXML(s string) string {
-	if len(s) >= 2 && ((s[0] == 0xFE && s[1] == 0xFF) || (s[0] == 0xFF && s[1] == 0xFE)) {
-		return s
-	}
-	// Fast path: most feeds are clean — scan before allocating.
-	bad := -1
-	for i := 0; i < len(s); i++ {
-		if illegalXMLByte(s[i]) {
-			bad = i
-			break
-		}
-	}
-	if bad < 0 {
-		return s
-	}
-	b := make([]byte, 0, len(s))
-	b = append(b, s[:bad]...)
-	for i := bad; i < len(s); i++ {
-		if !illegalXMLByte(s[i]) {
-			b = append(b, s[i])
-		}
-	}
-	return string(b)
-}
-
-func illegalXMLByte(c byte) bool {
-	return c < 0x20 && c != 0x09 && c != 0x0A && c != 0x0D
 }

@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-feed resolver chain + poll observability** (`internal/poll/resolve`,
+  `internal/poll/observe`). Feed-specific breakage workarounds are now data,
+  not hardcoded branches in the poll hot path: an ordered chain of small,
+  named, parameterised resolvers with two hooks — `ShapeRequest` (mutate the
+  outgoing request, e.g. set a header a CDN demands) and `Transform` (repair
+  the response body before gofeed parses it). Resolvers come from in-tree
+  builtins applied to every feed (currently `strip-control-chars`, the former
+  `poll.sanitizeXML`) plus an optional per-feed sidecar at
+  `<data-dir>/resolvers/<feedHash>.json` (a `[]Spec`) written out-of-process
+  by a fixer; harborrs only reads it. Available primitives: `strip-control-chars`,
+  `set-header`, `recode-charset` (latin1/windows-1252→UTF-8), `regex-replace`.
+  A bad or unknown sidecar spec is skipped, never aborting a poll. Separately,
+  every poll outcome is recorded as NDJSON under `<data-dir>/observe/` (with the
+  last failing body saved as a `.sample`) so an out-of-process fixer can diagnose
+  breakage and emit resolver sidecars. This is pure observability — harborrs
+  reacts to nothing it records.
+
+
 ## [0.4.22] - 2026-05-31
 
 ### Fixed
