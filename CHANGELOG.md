@@ -22,6 +22,25 @@ All notable changes to this project will be documented in this file.
   last failing body saved as a `.sample`) so an out-of-process fixer can diagnose
   breakage and emit resolver sidecars. This is pure observability — harborrs
   reacts to nothing it records.
+- **Web UI surfaces feed sync failures.** The home page (`/ui/`) now
+  shows when feeds are failing to poll. A failing feed (one whose most
+  recent poll left a non-zero consecutive error count) gets a ⚠ badge on
+  its row whose tooltip carries the consecutive-error count, the last
+  error message, and when the feed last synced successfully. A summary
+  banner at the top of the page counts the failing feeds and links to
+  each — it appears even under the default "unread only" filter (a feed
+  can be broken yet have zero unread) and respects the active tag filter.
+  Styled with the existing theme CSS variables; overridable like every
+  other template.
+
+### Changed
+
+- **`state/<feed-hash>.json` now records `last_success`** — the time of
+  the most recent *successful* sync (a 2xx with entries applied, or a
+  304 not-modified). This is distinct from `last_fetched`, which records
+  the most recent poll *attempt* and keeps advancing even while a feed is
+  failing. Legacy state files without the field read as "never synced"
+  until their next good poll. No migration required.
 
 
 ## [0.4.22] - 2026-05-31

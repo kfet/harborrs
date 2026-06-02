@@ -11,6 +11,15 @@
 
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 
+{{if .Failing}}
+<div class="sync-fail" role="alert">
+<p class="sync-fail-head">⚠ {{len .Failing}} feed{{if ne (len .Failing) 1}}s{{end}} failing to sync</p>
+<ul class="sync-fail-list">
+{{range .Failing}}<li><a href="feed?id={{.URL}}">{{.Title}}</a></li>{{end}}
+</ul>
+</div>
+{{end}}
+
 <div class="home-grid">
 <aside class="tags">
 <ul class="taglist">
@@ -29,8 +38,9 @@
 <h2 class="feed-group-head"><button type="button" class="feed-group-toggle" aria-expanded="true" aria-controls="grp-{{.Slug}}"><span class="caret" aria-hidden="true">▾</span> {{.Label}}</button> <span class="count">{{.Unread}}</span></h2>
 <ul class="feeds" id="grp-{{.Slug}}">
 {{range .Feeds}}
-<li>
+<li{{if .Failing}} class="feed-failing"{{end}}>
 <a href="feed?id={{.URL}}">{{.Title}}</a>
+{{if .Failing}}<span class="sync-warn" title="sync failing — {{.ErrorCount}} consecutive error{{if ne .ErrorCount 1}}s{{end}}; last succeeded {{.LastSuccessFmt}}{{with .LastError}} — {{.}}{{end}}" aria-label="sync failing">⚠</span>{{end}}
 <span class="count">{{.Unread}}</span>
 </li>
 {{end}}

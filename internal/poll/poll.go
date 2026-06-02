@@ -138,9 +138,11 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 
 	switch {
 	case resp.StatusCode == http.StatusNotModified:
-		// 304 — clear error state; no scheduling side-effect.
+		// 304 — reachable + unchanged is a healthy sync; record it as a
+		// success and clear error state. No scheduling side-effect.
 		st.ErrorCount = 0
 		st.LastError = ""
+		st.LastSuccess = now
 		st.RetryAfter = time.Time{}
 		p.obs().Observe(fh, observe.Observation{Outcome: observe.NotModified, Status: resp.StatusCode})
 		return 0, p.Store.SaveFeedState(fh, st)
@@ -233,6 +235,7 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	st.LastModified = resp.Header.Get("Last-Modified")
 	st.ErrorCount = 0
 	st.LastError = ""
+	st.LastSuccess = now
 	st.RetryAfter = time.Time{}
 	if err := p.Store.SaveFeedState(fh, st); err != nil {
 		return len(added), err

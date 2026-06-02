@@ -158,6 +158,74 @@ func TestPollNotModified(t *testing.T) {
 	}
 }
 
+// TestPollLastSuccessTracking pins the LastSuccess field that the web UI
+// surfaces as "last succeeded": it advances on a 2xx sync and on a 304
+// not-modified (both are healthy), but stays pinned across an error
+// while LastFetched (the attempt time) keeps moving.
+func TestPollLastSuccessTracking(t *testing.T) {
+	p, _, _ := newPoller(t)
+	var mode string // "ok" | "304" | "err"
+	first := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch mode {
+		case "ok":
+			if first {
+				first = false
+				w.Header().Set("ETag", `"v1"`)
+			}
+			io.WriteString(w, sampleRSS)
+		case "304":
+			w.WriteHeader(http.StatusNotModified)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	fh := store.FeedHash(srv.URL)
+
+	// 1) Successful 2xx sync records LastSuccess.
+	t1 := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	p.Now = func() time.Time { return t1 }
+	mode = "ok"
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := p.Store.LoadFeedState(fh)
+	if !st.LastSuccess.Equal(t1) {
+		t.Fatalf("LastSuccess=%v want %v after 2xx", st.LastSuccess, t1)
+	}
+
+	// 2) A 304 is a healthy sync — LastSuccess advances.
+	t2 := t1.Add(time.Hour)
+	p.Now = func() time.Time { return t2 }
+	mode = "304"
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = p.Store.LoadFeedState(fh)
+	if !st.LastSuccess.Equal(t2) {
+		t.Fatalf("LastSuccess=%v want %v after 304", st.LastSuccess, t2)
+	}
+
+	// 3) An error must NOT advance LastSuccess, but LastFetched moves.
+	t3 := t2.Add(time.Hour)
+	p.Now = func() time.Time { return t3 }
+	mode = "err"
+	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected error")
+	}
+	st, _ = p.Store.LoadFeedState(fh)
+	if !st.LastSuccess.Equal(t2) {
+		t.Fatalf("LastSuccess=%v want it pinned at %v after error", st.LastSuccess, t2)
+	}
+	if !st.LastFetched.Equal(t3) {
+		t.Fatalf("LastFetched=%v want %v (attempt time advances on error)", st.LastFetched, t3)
+	}
+	if st.ErrorCount != 1 {
+		t.Fatalf("ErrorCount=%d want 1", st.ErrorCount)
+	}
+}
+
 func TestPollServerError(t *testing.T) {
 	p, _, _ := newPoller(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -53,7 +53,7 @@ Filesystem-only, single-user. Layout under the config / state dir
 
 ```
 subscriptions.opml          # source of truth for feeds + tags
-state/<feed-hash>.json      # etag, last-modified, last-fetched, error count
+state/<feed-hash>.json      # etag, last-modified, last-fetched, last-success, error count
 entries/<feed-hash>/
   current.ndjson            # hot file: last ~30 days
   2024-Q3.ndjson            # immutable archives, rolled over on poll

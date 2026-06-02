@@ -1259,6 +1259,173 @@ func TestHomeUnreadFilterAllCaughtUp(t *testing.T) {
 	}
 }
 
+// saveFeedErr seeds a per-feed state file marking the feed as failing.
+func saveFeedErr(t *testing.T, st *store.Store, url string, count int, lastErr string, lastSuccess time.Time) {
+	t.Helper()
+	fh := store.FeedHash(url)
+	if err := st.SaveFeedState(fh, store.FeedState{
+		URL:         url,
+		ErrorCount:  count,
+		LastError:   lastErr,
+		LastSuccess: lastSuccess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHomeSyncFailureBanner covers the failing-feed surfacing on the
+// home page: the top-of-page banner counts failing feeds, the per-row
+// ⚠ badge carries the error detail in its tooltip, and a failing feed
+// with zero unread still appears in the banner even under the default
+// unread-only filter.
+func TestHomeSyncFailureBanner(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://x/broken", Title: "Broken"},
+		{XMLURL: "https://x/healthy", Title: "Healthy"},
+	}
+	// Broken feed: 3 consecutive errors, never succeeded, 0 unread.
+	saveFeedErr(t, st, "https://x/broken", 3, "dial tcp: connection refused", time.Time{})
+
+	// Default view is unread-only; Broken has no unread entries but must
+	// still surface in the banner.
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if !strings.Contains(body, "1 feed failing to sync") {
+		t.Fatalf("expected singular failing banner: %s", body)
+	}
+	if !strings.Contains(body, "sync-fail") {
+		t.Fatalf("expected sync-fail banner block: %s", body)
+	}
+	// Banner lists the failing feed. In the default unread-only view the
+	// Broken row itself is hidden (0 unread), so "Broken" only appears
+	// inside the banner.
+	bannerStart := strings.Index(body, "sync-fail-list")
+	if bannerStart < 0 {
+		t.Fatalf("missing banner list: %s", body)
+	}
+	bannerEnd := strings.Index(body[bannerStart:], "</ul>") + bannerStart
+	banner := body[bannerStart:bannerEnd]
+	if !strings.Contains(banner, ">Broken<") {
+		t.Fatalf("banner should link to broken feed: %s", banner)
+	}
+	// Healthy feed never appears in the failing banner list.
+	if strings.Contains(banner, "Healthy") {
+		t.Fatalf("Healthy should not be in failing banner: %s", banner)
+	}
+
+	// With unread=0 the Broken feed row is visible and carries the ⚠
+	// badge with the error detail + "never" last-success in the tooltip.
+	w = do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	body = w.Body.String()
+	if !strings.Contains(body, "sync-warn") {
+		t.Fatalf("expected per-row sync-warn badge: %s", body)
+	}
+	if !strings.Contains(body, "connection refused") {
+		t.Fatalf("expected last error in tooltip: %s", body)
+	}
+	if !strings.Contains(body, "last succeeded never") {
+		t.Fatalf("expected 'never' last-success: %s", body)
+	}
+	if !strings.Contains(body, "feed-failing") {
+		t.Fatalf("expected failing row class: %s", body)
+	}
+}
+
+// TestHomeSyncFailurePlural pins the plural wording and that a feed with
+// a real last-success time renders the relative timestamp.
+func TestHomeSyncFailurePlural(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://x/a", Title: "AAA"},
+		{XMLURL: "https://x/b", Title: "BBB"},
+	}
+	saveFeedErr(t, st, "https://x/a", 1, "http 500", time.Now().Add(-2*time.Hour))
+	saveFeedErr(t, st, "https://x/b", 5, "parse error", time.Time{})
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "2 feeds failing to sync") {
+		t.Fatalf("expected plural failing banner: %s", body)
+	}
+	// Feed a succeeded ~2h ago → relative "2h" in its tooltip.
+	if !strings.Contains(body, "last succeeded 2h") {
+		t.Fatalf("expected relative last-success: %s", body)
+	}
+	// Singular vs plural error-count wording.
+	if !strings.Contains(body, "1 consecutive error;") {
+		t.Fatalf("expected singular error count for feed a: %s", body)
+	}
+	if !strings.Contains(body, "5 consecutive errors;") {
+		t.Fatalf("expected plural error count for feed b: %s", body)
+	}
+}
+
+// TestHomeSyncFailureTagScoped checks the banner respects the active tag
+// filter: a failing feed outside the filtered tag is not counted.
+func TestHomeSyncFailureTagScoped(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://x/news", Title: "News", Tags: []string{"news"}},
+		{XMLURL: "https://x/tech", Title: "Tech", Tags: []string{"tech"}},
+	}
+	saveFeedErr(t, st, "https://x/news", 2, "boom", time.Time{})
+	saveFeedErr(t, st, "https://x/tech", 4, "kaboom", time.Time{})
+	// Filter to tech: only the tech feed's failure counts.
+	w := do(mux, req("GET", "/ui/?unread=0&tag=tech", tok, nil))
+	body := w.Body.String()
+	if !strings.Contains(body, "1 feed failing to sync") {
+		t.Fatalf("expected scoped failing count of 1: %s", body)
+	}
+	if strings.Contains(body, "News") {
+		t.Fatalf("news feed should be out of scope under tag=tech: %s", body)
+	}
+}
+
+// TestHomeNoFailureBanner confirms a healthy fleet renders no banner.
+func TestHomeNoFailureBanner(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/ok", Title: "OK"}}
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	if strings.Contains(w.Body.String(), "sync-fail") {
+		t.Fatalf("healthy fleet should render no failure banner: %s", w.Body.String())
+	}
+}
+
+// TestHomeFeedStatesError drives the LoadFeedState error branch in
+// handleHome by corrupting a feed's state file (valid entries, bad
+// state JSON).
+func TestHomeFeedStatesError(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}
+	stateDir := filepath.Join(st.Dir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fh := store.FeedHash("https://x/feed")
+	if err := os.WriteFile(filepath.Join(stateDir, fh+".json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	if w.Code != 500 {
+		t.Fatalf("expected 500 on bad state JSON, got %d", w.Code)
+	}
+}
+
+// TestFormatLastSuccess pins the small wrapper: zero → "never", else the
+// relative formatter.
+func TestFormatLastSuccess(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	if got := formatLastSuccess(time.Time{}, now); got != "never" {
+		t.Fatalf("zero=%q want never", got)
+	}
+	if got := formatLastSuccess(now.Add(-3*time.Hour), now); got != "3h" {
+		t.Fatalf("3h=%q", got)
+	}
+}
+
 // ---- relative-URL invariants -----------------------------------------
 //
 // These tests pin down the deployment-prefix-agnostic property: every
@@ -1293,6 +1460,9 @@ func TestNoAbsolutePathsInRenderedHTML(t *testing.T) {
 	srv.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 	u := seed(t, st, op, 2)
 	es, _ := st.ListEntries(store.FeedHash(u))
+	// Mark the feed as failing so the home page renders the sync-failure
+	// banner — its feed link must also be a relative reference.
+	saveFeedErr(t, st, u, 2, "boom", time.Time{})
 
 	for _, p := range []string{
 		"/ui/login",

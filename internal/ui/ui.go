@@ -371,6 +371,20 @@ type homeFeed struct {
 	URL    string
 	Unread int
 	Tags   []string
+
+	// Failing is true when the feed's most recent poll left it with a
+	// non-zero consecutive error count. ErrorCount / LastError /
+	// LastSuccessFmt carry the detail rendered in the row's tooltip.
+	Failing        bool
+	ErrorCount     int
+	LastError      string
+	LastSuccessFmt string // formatPublished(LastSuccess) or "never"
+}
+
+// failingFeed is one row in the home-page sync-failure banner.
+type failingFeed struct {
+	Title string
+	URL   string
 }
 
 // feedGroup is one tag-bucket rendered on the home page. A single feed
@@ -427,6 +441,33 @@ func (s *Server) unreadCounts(op *store.OPML) (perFeed map[string]int, buckets m
 	return perFeed, buckets, nil
 }
 
+// feedStates loads the per-feed conditional-GET state for every feed in
+// op, keyed by feed XML URL. Used by the home page to flag feeds whose
+// most recent poll failed. A missing state file folds to the zero value
+// (no error), so a never-polled feed reads as healthy.
+func (s *Server) feedStates(op *store.OPML) (map[string]store.FeedState, error) {
+	out := make(map[string]store.FeedState, len(op.Feeds))
+	for _, f := range op.Feeds {
+		fs, err := s.Store.LoadFeedState(store.FeedHash(f.XMLURL))
+		if err != nil {
+			return nil, err
+		}
+		out[f.XMLURL] = fs
+	}
+	return out, nil
+}
+
+// formatLastSuccess renders a feed's last successful sync time for the
+// failure tooltip. Zero (never synced, or legacy state predating the
+// field) renders as "never"; otherwise it reuses the relative formatter
+// used on entry rows.
+func formatLastSuccess(t, now time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return formatPublished(t, now)
+}
+
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	// Only the exact /ui/ path is the home; reject everything else under
 	// /ui/ that isn't handled explicitly.
@@ -447,7 +488,13 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	states, err := s.feedStates(op)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	feeds := make([]homeFeed, 0, len(op.Feeds))
+	var failing []failingFeed
 	withUnread := 0
 	scopedTotal := 0
 	for _, f := range op.Feeds {
@@ -466,10 +513,24 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		if count > 0 {
 			withUnread++
 		}
+		fs := states[f.XMLURL]
+		failingNow := fs.ErrorCount > 0
+		// Failing feeds surface in the banner regardless of the
+		// unread-only filter — a feed can be 0-unread yet broken.
+		if failingNow {
+			failing = append(failing, failingFeed{Title: f.Title, URL: f.XMLURL})
+		}
 		if unreadOnly && count == 0 {
 			continue
 		}
-		feeds = append(feeds, homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count, Tags: f.Tags})
+		hf := homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count, Tags: f.Tags}
+		if failingNow {
+			hf.Failing = true
+			hf.ErrorCount = fs.ErrorCount
+			hf.LastError = fs.LastError
+			hf.LastSuccessFmt = formatLastSuccess(fs.LastSuccess, time.Now())
+		}
+		feeds = append(feeds, hf)
 	}
 	pinned := []tagCount{
 		{Name: "", Label: "All", Unread: buckets[""]},
@@ -485,7 +546,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		Sidebar    []tagCount // pinned rows (All / Untagged)
 		TagFilter  string
 		Groups     []feedGroup
-	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, tagFilter, groups}
+		Failing    []failingFeed
+	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, tagFilter, groups, failing}
 	s.render(w, "home", data)
 }
 

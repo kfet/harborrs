@@ -37,6 +37,16 @@ type Entry struct {
 // the Refresher / Poll skip the feed until time.Now() >= RetryAfter.
 // Zero RetryAfter means no cooldown.
 //
+// LastFetched records the time of the most recent poll *attempt*,
+// success or failure. LastSuccess records the most recent *successful*
+// sync (a 2xx with entries applied, or a 304 not-modified — both mean
+// the feed is reachable and healthy). The two diverge once a feed
+// starts failing: LastFetched keeps advancing each cycle while
+// LastSuccess stays pinned to the last good poll, which is what the web
+// UI surfaces as "last succeeded". Zero LastSuccess means the feed has
+// never synced successfully (e.g. a legacy state file written before
+// the field existed, until its next good poll).
+//
 // Legacy on-disk state files may still carry next_fetch / interval_s
 // fields written by v0.4.17 and earlier. Those tags are not declared
 // here, so encoding/json silently ignores them on Load; the next
@@ -46,6 +56,7 @@ type FeedState struct {
 	ETag         string    `json:"etag,omitempty"`
 	LastModified string    `json:"last_modified,omitempty"`
 	LastFetched  time.Time `json:"last_fetched,omitempty"`
+	LastSuccess  time.Time `json:"last_success,omitempty"`
 	RetryAfter   time.Time `json:"retry_after,omitempty"`
 	ErrorCount   int       `json:"error_count,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`

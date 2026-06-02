@@ -26,7 +26,9 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
   `category` attributes round-trip; pre-existing folder-style OPML
   imports as one tag per folder name.
 - Serves an embedded htmx web UI on the same port — login, home, per-
-  feed list, single-entry view, read / star toggles via hx-post.
+  feed list, single-entry view, read / star toggles via hx-post. The
+  home page flags feeds that are failing to sync, with the last error
+  and last-successful-sync time.
 - Themeable via CSS-variable presets (`light`, `dark`, `sepia`) and
   user overrides at `<data-dir>/overrides/templates/*.html` and
   `<data-dir>/overrides/theme.css`.
