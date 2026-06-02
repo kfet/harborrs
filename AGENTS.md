@@ -114,7 +114,9 @@ a `tokens.json` file (small, easy to inspect).
 - **Stdlib-mostly.** The only acceptable third-party dependency right
   now is `github.com/mmcdole/gofeed` for feed parsing. **All other
   dependencies require an aside-advisor escalation first.**
-- **Go 1.22+.**
+- **Go 1.25+.** (Raised from 1.22 when `golang.org/x/net` was bumped to
+  v0.55.0 to clear html-parser CVEs under the feed HTML sanitizer; that
+  release's go directive is 1.25.)
 - **No global state.** No `init()` registries. Constructor returns a
   `*Server` value; HTTP handlers are methods on it.
 - **Tests run real polling against real local HTTP servers** spun up

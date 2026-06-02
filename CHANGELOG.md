@@ -77,6 +77,18 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- **Dependency bump: `golang.org/x/net` v0.4.0 → v0.55.0** (and its
+  required `golang.org/x/text` → v0.37.0) to clear a batch of
+  `golang.org/x/net/html` CVEs that `govulncheck` flagged as reachable
+  from both the feed parser (gofeed) and the new HTML sanitizer —
+  notably GO-2026-5030 (duplicate-attribute XSS in `x/net/html`),
+  GO-2025-3595, GO-2024-3333 and GO-2023-1988. Shipping an XSS
+  sanitizer on a known-vulnerable html parser would have been
+  self-defeating, so this is bundled with the sanitizer fix. **The
+  minimum Go version is now 1.25** (x/net v0.55.0's go directive); the
+  remaining `govulncheck` findings are Go-stdlib issues fixed in
+  go1.26.3, i.e. a build-toolchain update, not a module change.
+
 - **SSRF guard on all outbound feed fetches.** Polling
   (`internal/poll`) and the add-feed preview (`internal/feedpreview`)
   fetched arbitrary user/redirect-supplied URLs with no destination
