@@ -33,7 +33,7 @@ jobs:
       # ---- Homebrew tap update --------------------------------------------
       # Renders Formula/harborrs.rb from packaging/homebrew/harborrs.rb.tmpl
       # using the just-built checksums, then commits + pushes it to
-      # github.com/kfet/homebrew-harborrs. Requires a repo secret
+      # github.com/kfet/homebrew-tap. Requires a repo secret
       # HOMEBREW_TAP_TOKEN — a fine-grained PAT (or app token) with
       # `contents:write` on that tap repo.
       - name: Render Homebrew formula
@@ -44,7 +44,7 @@ jobs:
             dist/checksums.txt \
             tap/Formula/harborrs.rb
           cat tap/Formula/harborrs.rb
-      - name: Push to homebrew-harborrs tap
+      - name: Push to homebrew-tap tap
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -55,7 +55,7 @@ jobs:
           ver="${GITHUB_REF_NAME#v}"
           tmp=$(mktemp -d)
           git clone --depth 1 \
-            "https://x-access-token:${TAP_TOKEN}@github.com/kfet/homebrew-harborrs.git" \
+            "https://x-access-token:${TAP_TOKEN}@github.com/kfet/homebrew-tap.git" \
             "$tmp/tap"
           mkdir -p "$tmp/tap/Formula"
           cp tap/Formula/harborrs.rb "$tmp/tap/Formula/harborrs.rb"

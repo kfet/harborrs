@@ -2014,7 +2014,7 @@ func TestFooterShowsVersion(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("login code=%d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), `<footer class="site-footer">harborrs <span class="version">1.2.3</span></footer>`) {
+	if !strings.Contains(w.Body.String(), `<footer class="site-footer">Harbour RSS <span class="version">1.2.3</span></footer>`) {
 		t.Fatalf("login footer missing version: %s", w.Body.String())
 	}
 	// Authed page — same footer.

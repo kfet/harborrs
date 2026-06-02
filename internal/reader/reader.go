@@ -156,6 +156,7 @@ func (s *Server) handleUserInfo(w http.ResponseWriter, r *http.Request) {
 // payload out of any namespace collision with the Reader API.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
+		"name":      "Harbour RSS",
 		"product":   "harborrs",
 		"version":   s.Version,
 		"commit":    s.Commit,

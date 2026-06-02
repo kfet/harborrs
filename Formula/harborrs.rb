@@ -1,9 +1,9 @@
 class Harborrs < Formula
   desc "Self-hosted single-binary RSS server (Google Reader API + htmx UI)"
-  homepage "https://github.com/kfet/harborrs"
-  url "https://github.com/kfet/harborrs.git", tag: "v0.1.0"
+  homepage "https://github.com/kfet/harb"
+  url "https://github.com/kfet/harb.git", tag: "v0.1.0"
   license "MIT"
-  head "https://github.com/kfet/harborrs.git", branch: "main"
+  head "https://github.com/kfet/harb.git", branch: "main"
 
   depends_on "go" => :build
 

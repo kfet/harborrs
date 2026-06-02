@@ -2,7 +2,7 @@
 <html lang="en" data-theme="{{.Theme}}" data-ui-base="{{.Base}}">
 <head>
 <meta charset="utf-8">
-<title>{{block "title" .}}harborrs{{end}}</title>
+<title>{{block "title" .}}Harbour RSS{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script>(function(){try{var t=localStorage.getItem('harborrs.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
@@ -12,7 +12,7 @@
 </head>
 <body>
 <header>
-<a href="{{.Base}}" class="brand">harborrs</a>
+<a href="{{.Base}}" class="brand">Harbour RSS</a>
 {{if .User}}
 <nav class="nav">
 <a href="{{.Base}}">feeds</a>
@@ -27,7 +27,7 @@
 {{end}}
 </header>
 <main{{if .MainClass}} class="{{.MainClass}}"{{end}}>{{block "content" .}}{{end}}</main>
-{{if .Version}}<footer class="site-footer">harborrs <span class="version">{{.Version}}</span></footer>{{end}}
+{{if .Version}}<footer class="site-footer">Harbour RSS <span class="version">{{.Version}}</span></footer>{{end}}
 {{if .User}}
 <div id="kbd-backdrop" hidden></div>
 <div id="kbd-help" hidden role="dialog" aria-label="keyboard shortcuts">

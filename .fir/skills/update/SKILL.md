@@ -82,7 +82,7 @@ can't write (e.g. `/usr/local/bin` on a locked-down box), fall back to
 **(b) Brew (typical macOS):**
 
 ```bash
-ssh <host> 'brew update && brew upgrade kfet/harborrs/harborrs'
+ssh <host> 'brew update && brew upgrade kfet/tap/harborrs'
 ssh <host> "launchctl kickstart -k gui/\$UID/dev.<user>.harborrs"
 ```
 
@@ -93,7 +93,7 @@ lags, the tap index is stale — re-run `brew update`. Persistent miss
 **(c) install.sh re-run (Linux, hotfix):**
 
 ```bash
-ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh'
+ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'
 ssh <host> 'systemctl --user restart harborrs'
 ```
 

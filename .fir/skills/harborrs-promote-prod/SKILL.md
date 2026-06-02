@@ -11,7 +11,7 @@ already be running green on `dev.kfet.harborrs.test`.
 
 ## Layout
 
-- Prod binary:  `/opt/homebrew/bin/harborrs` (Homebrew, tap `kfet/harborrs`)
+- Prod binary:  `/opt/homebrew/bin/harborrs` (Homebrew, tap `kfet/tap`)
 - Prod data:    `~/.local/share/harborrs/`
 - LaunchAgent:  `dev.kfet.harborrs` listens on `:8088`
 - Funnel:       `https://kfetairm1.tail77d32.ts.net/rss` → `127.0.0.1:8088`
@@ -24,8 +24,8 @@ already be running green on `dev.kfet.harborrs.test`.
    the user if uncertain.
 2. **Release is published** — `git tag` for the target version exists
    on `origin`, GitHub Release page has the binary tarballs, and the
-   Homebrew formula in `kfet/harborrs` tap was updated.
-   Check: `brew update && brew info kfet/harborrs/harborrs | head -3`
+   Homebrew formula in `kfet/tap` tap was updated.
+   Check: `brew update && brew info kfet/tap/harborrs | head -3`
    should show the new version available.
 
 ## Recipe
@@ -41,12 +41,12 @@ already be running green on `dev.kfet.harborrs.test`.
 
    ```bash
    brew update
-   brew upgrade kfet/harborrs/harborrs
+   brew upgrade kfet/tap/harborrs
    ```
 
    If brew reports already up-to-date but the tap formula hasn't
    refreshed yet, wait a minute and retry — the formula PR in the
-   `homebrew-harborrs` repo is usually opened automatically by the
+   `homebrew-tap` repo is usually opened automatically by the
    release workflow and merged within a few minutes.
 
 3. **Restart the launchd unit** so the new binary is live:
@@ -76,7 +76,7 @@ is wrong:
 
 ```bash
 brew unlink harborrs
-brew install kfet/harborrs/harborrs@<old-version>  # if a versioned formula exists
+brew install kfet/tap/harborrs@<old-version>  # if a versioned formula exists
 # or: download the previous tarball from GitHub Releases and place it
 # at /opt/homebrew/Cellar/harborrs/<old>/bin/harborrs, then re-link.
 launchctl kickstart -k gui/$(id -u)/dev.kfet.harborrs

@@ -28,7 +28,7 @@ real subscriptions DB.
      `https://<host>.<tailnet>.ts.net/<prefix>/`.
 3. **Install method**:
    - **Linux**: `install.sh` from a tagged release (default).
-   - **macOS**: `brew install kfet/harborrs/harborrs` (default).
+   - **macOS**: `brew install kfet/tap/harborrs` (default).
 4. **Data dir** — default `~/.local/share/harborrs` (Linux) or
    `~/Library/Application Support/harborrs` (macOS); we set
    `HARBORRS_DATA` explicitly in the unit to remove ambiguity. Use the
@@ -43,7 +43,7 @@ real subscriptions DB.
 **Linux (typical: Pi, racknerd box):**
 
 ```bash
-ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh'
+ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'
 ssh <host> 'harborrs version'
 ```
 
@@ -54,7 +54,7 @@ path you expect the unit to ExecStart.
 **macOS:**
 
 ```bash
-ssh <host> 'brew tap kfet/harborrs && brew install kfet/harborrs/harborrs'
+ssh <host> 'brew tap kfet/tap && brew install kfet/tap/harborrs'
 ssh <host> 'harborrs version'
 ```
 
@@ -331,5 +331,5 @@ upgrade flow. Quick reference:
 
 - **In-place selfupdate**: `ssh <host> 'harborrs update'` (writes the
   new binary alongside the running one), then restart the supervisor.
-- **Brew (macOS)**: `brew upgrade kfet/harborrs/harborrs && launchctl kickstart -k gui/$UID/<label>`.
-- **install.sh re-run**: `ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh'`, then `systemctl --user restart harborrs`.
+- **Brew (macOS)**: `brew upgrade kfet/tap/harborrs && launchctl kickstart -k gui/$UID/<label>`.
+- **install.sh re-run**: `ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'`, then `systemctl --user restart harborrs`.

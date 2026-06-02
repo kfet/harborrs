@@ -1,12 +1,16 @@
-# harborrs
+# Harbour RSS
 
-[![CI](https://github.com/kfet/harborrs/actions/workflows/test.yml/badge.svg)](https://github.com/kfet/harborrs/actions/workflows/test.yml)
+[![CI](https://github.com/kfet/harb/actions/workflows/test.yml/badge.svg)](https://github.com/kfet/harb/actions/workflows/test.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/kfet/harborrs.svg)](https://pkg.go.dev/github.com/kfet/harborrs)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kfet/harborrs)](https://goreportcard.com/report/github.com/kfet/harborrs)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A small, single-binary self-hosted RSS server with a Google-Reader-
 compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
+
+> The project is **Harbour RSS**; the binary, Go module
+> (`github.com/kfet/harborrs`) and config keys keep the `harborrs`
+> name. The git repo lives at `github.com/kfet/harb`.
 
 ## What it does
 
@@ -40,8 +44,8 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 **macOS (and Linux with Homebrew):**
 
 ```sh
-brew tap kfet/harborrs
-brew install kfet/harborrs/harborrs
+brew tap kfet/tap
+brew install kfet/tap/harborrs
 ```
 
 Updates come via `brew upgrade`.
@@ -49,7 +53,7 @@ Updates come via `brew upgrade`.
 **Raspberry Pi & other Linux:**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh
 ```
 
 Drops the binary in `/usr/local/bin` (or `~/.local/bin` if that isn't

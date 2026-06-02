@@ -34,11 +34,11 @@ import (
 )
 
 // DefaultRepo is the github "owner/name" we update from.
-const DefaultRepo = "kfet/harborrs"
+const DefaultRepo = "kfet/harb"
 
 // Options configures a single update run.
 type Options struct {
-	Repo       string // owner/repo (default kfet/harborrs)
+	Repo       string // owner/repo (default kfet/harb)
 	Version    string // explicit tag like "v0.2.0"; "" → latest
 	CheckOnly  bool   // resolve + report, do not download or replace
 	HTTPClient *http.Client

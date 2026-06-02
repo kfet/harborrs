@@ -35,6 +35,25 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Project renamed to "Harbour RSS"; git repo slug shortened to
+  `harb`.** The display name in the web UI (page titles, brand, footer)
+  and README is now "Harbour RSS", and the Reader API `/status` document
+  carries a new `name: "Harbour RSS"` field alongside the unchanged
+  `product: "harborrs"` machine identifier. The GitHub repo moved to
+  `github.com/kfet/harb` (old URL redirects). Deliberately **unchanged**:
+  the Go module path `github.com/kfet/harborrs` (so `go install …` keeps
+  working via redirect), the `harborrs` binary/CLI, the `harborrs_session`
+  cookie, `HARBORRS_*` env vars, the data dir, and launchd/systemd labels
+  — renaming those would break live deployments. Slug-based references
+  (release-asset URLs, `install.sh` raw URLs and default `REPO`,
+  self-update `DefaultRepo`, CI badge) now point at `kfet/harb`.
+- **Homebrew tap repo renamed** `kfet/homebrew-harborrs` →
+  `kfet/homebrew-tap`. The install incantation changes accordingly:
+  `brew install kfet/tap/harborrs` (was `kfet/harborrs/harborrs`).
+  GitHub redirects the old repo URL, and the release workflow's
+  fine-grained `HOMEBREW_TAP_TOKEN` is unaffected (it targets the repo
+  by ID). The release workflow now pushes the rendered formula to the
+  new repo.
 - **`state/<feed-hash>.json` now records `last_success`** — the time of
   the most recent *successful* sync (a 2xx with entries applied, or a
   304 not-modified). This is distinct from `last_fetched`, which records

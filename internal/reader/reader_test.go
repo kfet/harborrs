@@ -179,6 +179,7 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
 	}
 	for k, want := range map[string]string{
+		"name":      "Harbour RSS",
 		"product":   "harborrs",
 		"version":   "1.2.3",
 		"commit":    "abc1234",

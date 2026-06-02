@@ -2,20 +2,20 @@
 # Install harborrs from a GitHub release.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | VERSION=v0.1.0 sh
-#   curl -fsSL https://raw.githubusercontent.com/kfet/harborrs/main/install.sh | PREFIX=$HOME/.local sh
+#   curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | VERSION=v0.1.0 sh
+#   curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | PREFIX=$HOME/.local sh
 #
 # Env:
 #   VERSION   release tag to install (default: latest)
 #   PREFIX    install prefix; binary lands in $PREFIX/bin (default: /usr/local, or $HOME/.local if not writable)
-#   REPO      github owner/repo (default: kfet/harborrs)
+#   REPO      github owner/repo (default: kfet/harb)
 #
-# On macOS we recommend `brew install kfet/harborrs/harborrs` instead — it
+# On macOS we recommend `brew install kfet/tap/harborrs` instead — it
 # auto-updates with brew upgrade. This script is for Linux (Raspberry Pi etc.).
 set -eu
 
-REPO="${REPO:-kfet/harborrs}"
+REPO="${REPO:-kfet/harb}"
 VERSION="${VERSION:-latest}"
 
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }

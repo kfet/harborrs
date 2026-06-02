@@ -49,7 +49,7 @@ github.com/kfet/harborrs/internal/config/config.go:103\.18,105\.3
 # so the handler skips ETag handling and serves a normal 200 — i.e. the
 # fallback is a correctness no-op, not a behaviour to assert. applyETag
 # has the same degrade-to-no-op branch on empty etag.
-github.com/kfet/harborrs/internal/reader/reader.go:974\.16,978\.3
-github.com/kfet/harborrs/internal/reader/reader.go:987\.14,989\.3
-github.com/kfet/harborrs/internal/reader/reader.go:999\.14,1001\.3
-github.com/kfet/harborrs/internal/reader/reader.go:1011\.16,1013\.3
+github.com/kfet/harborrs/internal/reader/reader.go:975\.16,979\.3
+github.com/kfet/harborrs/internal/reader/reader.go:988\.14,990\.3
+github.com/kfet/harborrs/internal/reader/reader.go:1000\.14,1002\.3
+github.com/kfet/harborrs/internal/reader/reader.go:1012\.16,1014\.3
