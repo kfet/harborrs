@@ -6,7 +6,7 @@
 <article id="entry-detail-{{.Entry.Hash}}" class="entry-full {{if .State.Read}}read{{end}}{{if .State.Starred}} starred{{end}}">
 <h1>{{.Entry.Title}}</h1>
 <p class="meta">
-{{with .Entry.Author}}{{.}} · {{end}}{{.Entry.Published.Format "2006-01-02 15:04"}} · <a href="{{.Entry.Link}}" target="_blank" rel="noopener noreferrer">source ↗</a>{{if .FeedURL}} · <a href="feed?id={{.FeedURL}}">{{.FeedTitle}}</a>{{end}}
+{{with .Entry.Author}}{{.}} · {{end}}{{.Entry.Published.Format "2006-01-02 15:04"}}{{if .SourceLink}} · <a href="{{.SourceLink}}" target="_blank" rel="noopener noreferrer">source ↗</a>{{end}}{{if .FeedURL}} · <a href="feed?id={{.FeedURL}}">{{.FeedTitle}}</a>{{end}}
 </p>
 <div class="actions">
 <button class="readbtn icon" aria-label="{{if .State.Read}}mark unread{{else}}mark read{{end}}" title="{{if .State.Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Entry.Hash}}&state={{if .State.Read}}0{{else}}1{{end}}&view=detail" hx-target="#entry-detail-{{.Entry.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .State.Read}}○{{else}}●{{end}}</span></button>

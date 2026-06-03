@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"html/template"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -168,11 +169,30 @@ func safeURL(v string) bool {
 	}
 	scheme := strings.ToLower(cleaned[:colon])
 	switch scheme {
-	case "http", "https", "mailto":
+	case "http", "https", "mailto", "magnet":
 		return true
 	default:
 		return false
 	}
+}
+
+// LinkURL returns v as a template.URL when it is a scheme we trust to
+// render as a user-followable href (the same policy safeURL applies to
+// body links), or "" otherwise.
+//
+// It exists because html/template's built-in URL filter only trusts
+// http/https/mailto and rewrites anything else — notably magnet: links
+// from torrent feeds like showRSS — to the "#ZgotmplZ" placeholder,
+// silently breaking the "source" link. Templates that render a feed
+// item's Link must pass it through LinkURL and emit a template.URL so
+// our wider allow-list (which includes magnet:) is what governs, then
+// guard with {{if}} so an unsafe link is omitted rather than rendered
+// as a dead "#ZgotmplZ" anchor.
+func LinkURL(v string) template.URL {
+	if v == "" || !safeURL(v) {
+		return ""
+	}
+	return template.URL(v)
 }
 
 // droppedSubtree are elements whose tag AND contents are removed — they

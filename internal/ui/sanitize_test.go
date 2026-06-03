@@ -207,3 +207,45 @@ func TestEntryBodySanitizes(t *testing.T) {
 		t.Fatalf("onerror leaked via summary fallback")
 	}
 }
+
+// TestSanitizeHTMLMagnetLink covers torrent feeds (e.g. showRSS) whose
+// item bodies link to magnet: URIs. The body sanitizer must keep the
+// magnet href; previously it allowed only http/https/mailto and silently
+// stripped the link.
+func TestSanitizeHTMLMagnetLink(t *testing.T) {
+	in := `<a href="magnet:?xt=urn:btih:24FFFE3CE9A05888DC422C65FD4D7DD17284885E">grab</a>`
+	got := sanitizeHTML(in)
+	if !strings.Contains(got, "magnet:?xt=urn:btih:24FFFE") {
+		t.Fatalf("magnet href should survive sanitization, got: %s", got)
+	}
+}
+
+// TestLinkURL covers the "source" link policy: trusted schemes (now
+// including magnet:) pass through as a template.URL, while unsafe schemes
+// and empties yield "" so the template omits the anchor instead of
+// emitting html/template's #ZgotmplZ placeholder.
+func TestLinkURL(t *testing.T) {
+	keep := []string{
+		"https://example.com/post",
+		"http://example.com/post",
+		"mailto:a@b.com",
+		"magnet:?xt=urn:btih:ABCDEF",
+		"/relative/path",
+	}
+	for _, v := range keep {
+		if LinkURL(v) == "" {
+			t.Errorf("LinkURL(%q) should be kept, got empty", v)
+		}
+	}
+	drop := []string{
+		"",
+		"javascript:alert(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"vbscript:msgbox(1)",
+	}
+	for _, v := range drop {
+		if LinkURL(v) != "" {
+			t.Errorf("LinkURL(%q) should be dropped, got %q", v, LinkURL(v))
+		}
+	}
+}

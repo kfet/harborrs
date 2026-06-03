@@ -990,24 +990,26 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	// right pane swaps in the entry view without a full page load.
 	if r.URL.Query().Get("panel") == "1" {
 		data := struct {
-			Entry     store.Entry
-			Body      template.HTML
-			State     store.EntryState
-			FeedURL   string
-			FeedTitle string
-		}{e, body, s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+			Entry      store.Entry
+			Body       template.HTML
+			SourceLink template.URL
+			State      store.EntryState
+			FeedURL    string
+			FeedTitle  string
+		}{e, body, LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		return
 	}
 	data := struct {
 		baseData
-		Entry     store.Entry
-		Body      template.HTML
-		State     store.EntryState
-		FeedURL   string
-		FeedTitle string
-	}{s.base(r), e, body, s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+		Entry      store.Entry
+		Body       template.HTML
+		SourceLink template.URL
+		State      store.EntryState
+		FeedURL    string
+		FeedTitle  string
+	}{s.base(r), e, body, LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 	s.render(w, "entry", data)
 }
 
@@ -1056,12 +1058,13 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.Query().Get("view") == "detail" {
 		data := struct {
-			Entry     store.Entry
-			Body      template.HTML
-			State     store.EntryState
-			FeedURL   string
-			FeedTitle string
-		}{e, entryBody(e), st, f.XMLURL, f.Title}
+			Entry      store.Entry
+			Body       template.HTML
+			SourceLink template.URL
+			State      store.EntryState
+			FeedURL    string
+			FeedTitle  string
+		}{e, entryBody(e), LinkURL(e.Link), st, f.XMLURL, f.Title}
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		// Out-of-band patch for the matching list row, so the
 		// split-panel keeps the list and the open entry in sync when
