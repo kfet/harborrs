@@ -23,7 +23,7 @@ jobs:
           cache: false
       - name: Build release artefacts
         run: make release-local VERSION="${GITHUB_REF_NAME#v}"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.tar.gz
