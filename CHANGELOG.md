@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-03
+
 ### Added
 
 - **Passkey (WebAuthn) login for the web UI.** You can now sign in with
