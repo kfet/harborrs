@@ -986,8 +986,9 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	body := entryBody(e)
 	// panel=1 — render just the entry-detail fragment, no chrome.
-	// Used by the split-panel layout's hx-get on entry rows so the
-	// right pane swaps in the entry view without a full page load.
+	// Used by the split-panel layout (keys.js openEntry issues an
+	// htmx.ajax GET with panel=1) so the right pane swaps in the entry
+	// view without a full page load.
 	if r.URL.Query().Get("panel") == "1" {
 		data := struct {
 			Entry      store.Entry

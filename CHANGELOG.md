@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-06-03
+
+### Fixed
+
+- **Tapping an article on mobile (narrow screens) now opens it.** Entry-row
+  title links used an htmx media-query trigger
+  (`hx-trigger="click[matchMedia('(min-width: 64em)')...]"`) intended to
+  swap into the split-panel on wide screens and fall through to native
+  navigation on narrow ones. But htmx calls `preventDefault()` on `<a href>`
+  clicks *before* evaluating the trigger filter, so on mobile the native
+  navigation was cancelled *and* no request fired — the tap was dead. The
+  open decision (panel swap vs full-page nav) now lives in `keys.js`
+  (`openEntry`); the row is a plain `<a class="entry-link" href>` that also
+  works with JavaScript disabled. Modifier-clicks (cmd/ctrl/shift/middle)
+  keep opening in a new tab on desktop.
+
 ## [0.5.3] - 2026-06-03
 
 ### Fixed

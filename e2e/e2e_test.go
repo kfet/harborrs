@@ -511,9 +511,11 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("ui feed: %d %s", resp.StatusCode, body)
 	}
 	// Split-panel layout must be wired in: list pane, right pane, and
-	// hx-get on rows pointing at the panel fragment. Without these the
-	// "split-panel on wide screens" feature has silently regressed.
-	for _, marker := range []string{`class="split"`, `id="detail-pane"`, `panel=1`, `hx-target="#detail-pane"`} {
+	// plain entry-link rows (keys.js upgrades the click to a panel swap
+	// on wide screens). Without these the "split-panel on wide screens"
+	// feature has silently regressed. (The panel fetch URL is built in
+	// JS — see openEntry — so panel=1 no longer appears in the markup.)
+	for _, marker := range []string{`class="split"`, `id="detail-pane"`, `class="entry-link"`} {
 		if !strings.Contains(string(body), marker) {
 			t.Fatalf("ui feed: missing split-panel marker %q", marker)
 		}
@@ -521,7 +523,7 @@ func TestE2E(t *testing.T) {
 	// And the entry panel fragment endpoint must actually return just
 	// the entry-detail markup (no <html>/<header> chrome).
 	entryHash := ""
-	if m := regexp.MustCompile(`entry\?id=([a-f0-9]+)&panel=1`).FindStringSubmatch(string(body)); len(m) == 2 {
+	if m := regexp.MustCompile(`entry\?id=([a-f0-9]+)"`).FindStringSubmatch(string(body)); len(m) == 2 {
 		entryHash = m[1]
 	}
 	if entryHash == "" {

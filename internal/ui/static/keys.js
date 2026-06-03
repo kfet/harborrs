@@ -214,6 +214,24 @@
     // on entry-list pages (not the home feed-list) and only when the
     // viewport is wide enough that the split-panel is visible.
     const wideScreen = () => window.matchMedia("(min-width: 64em)").matches;
+    // Open an entry row's title link. On wide screens we swap the entry
+    // detail into the split-panel via htmx.ajax; on narrow screens we
+    // follow the native href (full-page nav). This decision MUST live in
+    // JS, not in an hx-trigger media-query filter on the anchor: htmx
+    // calls preventDefault() on <a href> clicks *before* it evaluates
+    // the trigger filter, so a filtered-out click on mobile cancelled
+    // the native navigation AND fired no request — the tap was dead and
+    // there was no way to open an article on mobile at all.
+    const openEntry = (a) => {
+      if (!a) return;
+      const href = a.getAttribute("href");
+      if (href && wideScreen() && window.htmx) {
+        const sep = href.indexOf("?") >= 0 ? "&" : "?";
+        try { htmx.ajax("GET", href + sep + "panel=1", "#detail-pane"); return; }
+        catch (_) { /* fall through to full-page nav */ }
+      }
+      window.location.href = a.href;
+    };
     let previewTimer = null;
     const schedulePreview = () => {
       if (!isEntryList) return;
@@ -224,13 +242,14 @@
         if (idx < 0) return;
         const cur = rows()[idx];
         if (!cur) return;
-        const a = cur.querySelector("a[hx-get]");
+        const a = cur.querySelector("a.entry-link");
         if (!a || !window.htmx) return;
-        const url = a.getAttribute("hx-get");
+        const href = a.getAttribute("href");
         // htmx.ajax resolves the URL relative to the document, which
-        // matches what hx-get on the anchor would do on a click. The
+        // matches what a native click on the anchor would do. The
         // promise rejection on aborted requests is harmless here.
-        try { htmx.ajax("GET", url, "#detail-pane"); } catch (_) { /* */ }
+        const sep = href.indexOf("?") >= 0 ? "&" : "?";
+        try { htmx.ajax("GET", href + sep + "panel=1", "#detail-pane"); } catch (_) { /* */ }
       }, 140);
     };
     const focusRow = (i) => {
@@ -261,12 +280,12 @@
         }
       }
     };
-    // Mouse click on a row → treat it as the new keyboard focus, so
+    // Mouse/tap click on a row → treat it as the new keyboard focus, so
     // subsequent j/k navigation continues from the clicked row. Event
-    // delegation on the list lets the row's <a> / icon-buttons keep
-    // their own click handlers; we just track which row was hit.
-    // Don't fire schedulePreview here — clicking the <a> already
-    // triggers the htmx swap into #detail-pane.
+    // delegation on the list lets the row's icon-buttons keep their own
+    // click handlers; we track which row was hit and, for the title
+    // link, drive the open ourselves (panel swap vs full-nav) — see
+    // openEntry for why this can't be an hx-trigger media filter.
     list.addEventListener("click", function (e) {
       const li = e.target.closest("li");
       if (!li || li.classList.contains("empty") || !list.contains(li)) return;
@@ -276,6 +295,14 @@
       all.forEach((r, j) => r.classList.toggle("kb-focus", j === i));
       idx = i;
       focusedHash = rowHash(li);
+      const link = e.target.closest("a.entry-link");
+      if (link && list.contains(link)) {
+        // Honour modifier-clicks (cmd/ctrl/shift, middle-click) so
+        // "open in new tab/window" keeps working on desktop.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        openEntry(link);
+      }
     });
     const clickInRow = (sel) => {
       if (idx < 0) return;
@@ -297,13 +324,17 @@
         case "k": case "ArrowUp":   focusRow(idx - 1); e.preventDefault(); break;
         case "Enter":
           if (idx >= 0) {
-            const a = rows()[idx].querySelector("a");
-            // a.click() respects the hx-trigger media-query filter on
-            // entry rows: wide screens swap into #detail-pane via
-            // htmx, narrow screens follow the native href. Setting
-            // window.location.href directly would bypass htmx and
-            // always full-nav, defeating the split-panel.
-            if (a) { a.click(); e.preventDefault(); }
+            const row = rows()[idx];
+            const link = row.querySelector("a.entry-link");
+            if (link) {
+              // Entry rows: openEntry picks panel-swap (wide) vs
+              // full-page nav (narrow) itself.
+              openEntry(link); e.preventDefault();
+            } else {
+              // Home feed-list rows: just follow the feed link.
+              const a = row.querySelector("a");
+              if (a) { a.click(); e.preventDefault(); }
+            }
           }
           break;
         case "g":

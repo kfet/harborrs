@@ -2365,19 +2365,25 @@ func TestSplitLayoutMarkup(t *testing.T) {
 			t.Fatalf("%s: detail-pane missing aria-live: %s", p, body)
 		}
 	}
-	// Entry rows on a populated feed must carry the hx-get + media-
-	// query trigger so wide screens swap into the pane and narrow
-	// screens fall back to native navigation.
+	// Entry rows on a populated feed carry a plain title link
+	// (class="entry-link") pointing at the full entry page. keys.js
+	// upgrades the click to a split-panel swap on wide screens and
+	// leaves the native href intact on narrow screens — see openEntry
+	// in keys.js for why this is JS-driven and not an hx-trigger media
+	// filter (htmx preventDefaults <a href> before the filter runs,
+	// which killed mobile taps entirely).
 	w := do(mux, req("GET", "/ui/feed?id="+u, tok, nil))
 	body := w.Body.String()
-	if !strings.Contains(body, `hx-target="#detail-pane"`) {
-		t.Fatalf("missing hx-target on row: %s", body)
+	if !strings.Contains(body, `class="entry-link"`) {
+		t.Fatalf("missing entry-link class on row: %s", body)
 	}
-	if !strings.Contains(body, `panel=1`) {
-		t.Fatalf("missing panel=1 hx-get on row: %s", body)
+	if !strings.Contains(body, `<a href="entry?id=`) {
+		t.Fatalf("missing native entry href on row: %s", body)
 	}
-	if !strings.Contains(body, "matchMedia") {
-		t.Fatalf("missing matchMedia trigger filter on row: %s", body)
+	// The row must NOT carry an hx-trigger media filter — that was the
+	// mobile-dead-tap regression we removed.
+	if strings.Contains(body, "matchMedia") || strings.Contains(body, "hx-trigger") {
+		t.Fatalf("entry row should not carry an htmx media-query trigger: %s", body)
 	}
 }
 
