@@ -231,6 +231,12 @@ func TestLinkURL(t *testing.T) {
 		"mailto:a@b.com",
 		"magnet:?xt=urn:btih:ABCDEF",
 		"/relative/path",
+		// Arbitrary navigable schemes are inert (handler dispatch, no
+		// script in our origin) and must survive the deny-list.
+		"tel:+15551234",
+		"ed2k://|file|x|0|HASH|/",
+		"feed:https://example.com/rss",
+		"xmpp:user@example.com",
 	}
 	for _, v := range keep {
 		if LinkURL(v) == "" {
@@ -242,6 +248,9 @@ func TestLinkURL(t *testing.T) {
 		"javascript:alert(1)",
 		"data:text/html,<script>alert(1)</script>",
 		"vbscript:msgbox(1)",
+		"blob:https://example.com/uuid",
+		"JaVaScRiPt:alert(1)",
+		"java\tscript:alert(1)",
 	}
 	for _, v := range drop {
 		if LinkURL(v) != "" {

@@ -140,13 +140,25 @@ func openLinkAttrs(attrs []html.Attribute) []html.Attribute {
 	)
 }
 
-// safeURL reports whether a URL-valued attribute is safe to keep. It
-// permits relative references, scheme-relative ("//host/…") and the
-// http/https/mailto schemes; everything else (javascript:, data:,
-// vbscript:, file:, …) is rejected. The scheme test is robust against
-// the classic obfuscations — leading/embedded whitespace and control
-// characters ("java\tscript:") and mixed case — because browsers strip
-// those before resolving the scheme, so we must too.
+// safeURL reports whether a URL-valued attribute is safe to keep.
+//
+// The threat in an href/src sink is not "exotic scheme" but *active
+// content*: schemes the browser interprets as script or as a document
+// in the page's context. That set is small and has been stable for
+// ~15 years — javascript:, data:, vbscript: — and no browser has since
+// added a new auto-rendering scheme. Every other scheme is *navigable*:
+// the browser dispatches the string to an external/OS handler (mailto:,
+// tel:, magnet:, ed2k:, feed:, xmpp:, custom protocols) and no script
+// runs in our origin. Allow-listing the navigable set means every such
+// scheme breaks until someone adds it (the magnet: bug); the safer-AND-
+// broader cut is to deny the script/document schemes and permit the
+// rest.
+//
+// Relative references, scheme-relative ("//host/…") and fragment/query/
+// path colons are kept. The scheme test is robust against the classic
+// obfuscations — leading/embedded whitespace and control characters
+// ("java\tscript:") and mixed case — because browsers strip those
+// before resolving the scheme, so we must too.
 func safeURL(v string) bool {
 	// Strip all ASCII whitespace and C0 control chars anywhere up to
 	// the first ':' the same way a browser's URL parser tolerates them.
@@ -167,13 +179,21 @@ func safeURL(v string) bool {
 	if i := strings.IndexAny(cleaned, "/?#"); i >= 0 && i < colon {
 		return true
 	}
-	scheme := strings.ToLower(cleaned[:colon])
-	switch scheme {
-	case "http", "https", "mailto", "magnet":
-		return true
-	default:
-		return false
-	}
+	// Deny-list: only the script/document schemes are unsafe in an
+	// href/src context. Everything else is navigable and inert.
+	return !dangerousScheme[strings.ToLower(cleaned[:colon])]
+}
+
+// dangerousScheme is the set of URL schemes that execute script or load
+// attacker-authored markup as a document when navigated/rendered, and so
+// must never survive sanitization of attacker-controlled feed HTML.
+// blob: is included defensively: a feed cannot mint a live blob URL, but
+// denying it costs nothing.
+var dangerousScheme = map[string]bool{
+	"javascript": true,
+	"data":       true,
+	"vbscript":   true,
+	"blob":       true,
 }
 
 // LinkURL returns v as a template.URL when it is a scheme we trust to
@@ -185,9 +205,9 @@ func safeURL(v string) bool {
 // from torrent feeds like showRSS — to the "#ZgotmplZ" placeholder,
 // silently breaking the "source" link. Templates that render a feed
 // item's Link must pass it through LinkURL and emit a template.URL so
-// our wider allow-list (which includes magnet:) is what governs, then
-// guard with {{if}} so an unsafe link is omitted rather than rendered
-// as a dead "#ZgotmplZ" anchor.
+// our wider scheme policy (safeURL: deny only script/document schemes)
+// is what governs, then guard with {{if}} so an unsafe link is omitted
+// rather than rendered as a dead "#ZgotmplZ" anchor.
 func LinkURL(v string) template.URL {
 	if v == "" || !safeURL(v) {
 		return ""
