@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-06-03
+
+### Fixed
+
+- **Magnet (and other navigable-scheme) links in feeds are no longer dropped.**
+  Torrent feeds like showRSS use `magnet:` URIs for item links. The entry
+  "source ↗" link rendered through `html/template`'s URL filter, which
+  rewrote any non-`http(s)`/`mailto` scheme to `#ZgotmplZ`, and the body
+  sanitizer's scheme allow-list stripped the same links from item content.
+  The link sanitizer now uses a deny-list keyed on the active-content
+  schemes (`javascript:`, `data:`, `vbscript:`, `blob:`) and permits all
+  navigable schemes (`magnet:`, `tel:`, `ed2k:`, `feed:`, `xmpp:`, …).
+
 ## [0.5.2] - 2026-06-02
 
 ### Fixed
