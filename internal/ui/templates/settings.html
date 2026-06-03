@@ -19,5 +19,30 @@
 <p class="hint">All existing browser sessions (including this one) are
 signed out after a successful change. Reader API tokens stay valid
 until the client re-authenticates with the new password.</p>
+
+{{if .Passkey}}
+<h2>passkeys</h2>
+<p class="hint">Sign in with Touch ID, Windows Hello, a phone, or a
+security key instead of your password. Your password still works as a
+fallback and for RSS-client (Reader API) login.</p>
+{{if .Passkeys}}
+<ul class="passkey-list">
+{{range .Passkeys}}
+<li>
+<span class="passkey-name">{{.Label}}</span>
+<span class="passkey-added">added {{.AddedAt}}</span>
+<form method="POST" action="settings/passkey/remove" class="passkey-remove">
+<input type="hidden" name="id" value="{{.ID}}">
+<button type="submit">remove</button>
+</form>
+</li>
+{{end}}
+</ul>
+{{else}}
+<p class="hint">No passkeys registered yet.</p>
+{{end}}
+<button type="button" id="passkey-register-btn" class="passkey-btn">add a passkey</button>
+<p class="err" id="passkey-error" hidden></p>
+{{end}}
 </section>
 {{end}}

@@ -10,5 +10,12 @@
 <label>password <input type="password" name="password" autocomplete="current-password"></label>
 <button type="submit">sign in</button>
 </form>
+{{if .Passkey}}
+<div class="passkey-login">
+<div class="or-sep"><span>or</span></div>
+<button type="button" id="passkey-login-btn" class="passkey-btn">sign in with a passkey</button>
+<p class="err" id="passkey-error" hidden></p>
+</div>
+{{end}}
 </section>
 {{end}}

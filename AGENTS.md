@@ -111,9 +111,11 @@ a `tokens.json` file (small, easy to inspect).
 
 ## Constraints
 
-- **Stdlib-mostly.** The only acceptable third-party dependency right
-  now is `github.com/mmcdole/gofeed` for feed parsing. **All other
-  dependencies require an aside-advisor escalation first.**
+- **Stdlib-mostly.** The acceptable third-party dependencies right now
+  are `github.com/mmcdole/gofeed` for feed parsing and
+  `github.com/kfet/pinopass` for WebAuthn/passkey verification (itself
+  stdlib-only, zero transitive deps). **All other dependencies require
+  an aside-advisor escalation first.**
 - **Go 1.25+.** (Raised from 1.22 when `golang.org/x/net` was bumped to
   v0.55.0 to clear html-parser CVEs under the feed HTML sanitizer; that
   release's go directive is 1.25.)

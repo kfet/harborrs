@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Passkey (WebAuthn) login for the web UI.** You can now sign in with
+  Touch ID, Windows Hello, a phone, or a security key instead of (or as
+  well as) the password. Verification is done by the stdlib-only
+  `github.com/kfet/pinopass` library — ES256/P-256, attestation `none`,
+  no third-party transitive dependencies. Passkeys are an *alternative*
+  to the password for web-UI login only; the password stays as the
+  Reader-API path and the recovery path.
+  - Enabled via a new `webauthn` config block (`rp_id`, `origin`,
+    optional `rp_name`); passkeys are off unless both `rp_id` and
+    `origin` are set. WebAuthn requires a secure context (https or
+    localhost) in the browser.
+  - Registered credentials live in `credentials.json` in the data dir
+    (multiple credentials supported — e.g. laptop + phone). Manage them
+    on the settings page; remove individually.
+  - New routes under `/ui/webauthn/{register,login}/{begin,finish}` and
+    `/ui/settings/passkey/remove`; a small `passkey.js` shim drives the
+    browser ceremonies (path-prefix-aware, like `keys.js`).
+
 ## [0.5.4] - 2026-06-03
 
 ### Fixed

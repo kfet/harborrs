@@ -32,6 +32,7 @@ import (
 	"github.com/kfet/harb/internal/auth"
 	"github.com/kfet/harb/internal/config"
 	"github.com/kfet/harb/internal/feedpreview"
+	"github.com/kfet/harb/internal/passkey"
 	"github.com/kfet/harb/internal/poll"
 	"github.com/kfet/harb/internal/poll/observe"
 	"github.com/kfet/harb/internal/reader"
@@ -191,6 +192,16 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	uiSrv.Version = harb.Version
 	uiSrv.ConfigPath = cfgPath
 	uiSrv.Previewer = feedpreview.New()
+	// Passkey (WebAuthn) login, enabled only when configured with an RP
+	// ID + origin. Credentials live alongside tokens.json in the data dir.
+	if cfg.WebAuthn.Enabled() {
+		creds, err := passkey.OpenCredentialStore(filepath.Join(data, "credentials.json"))
+		if err != nil {
+			fmt.Fprintln(stderr, "passkey:", err)
+			return 1
+		}
+		uiSrv.Passkey = passkey.New(cfg.WebAuthn, cfg.Auth.Username, creds)
+	}
 	uiSrv.Routes(mux)
 	// Root + /ui redirects. Extracted so the test in main_test.go can
 	// exercise the exact handler wiring used at runtime.

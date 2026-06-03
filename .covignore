@@ -40,7 +40,28 @@ github.com/kfet/harb/internal/store/store.go:230\.3,230\.13
 # reachable when two goroutines call Load concurrently on a fresh
 # FileOPML and one wins the upgrade. Behaviour-equivalent to the
 # winner's path; not worth a deterministic-race test rig.
-github.com/kfet/harb/internal/config/config.go:103\.18,105\.3
+github.com/kfet/harb/internal/config/config.go:105\.18,107\.3
+
+# Passkey: defensive error returns unreachable in practice.
+# - newHandle: crypto/rand.Read failing.
+# - Begin{Registration,Login}: json.Marshal of a fixed map of only
+#   strings/ints/slices/nested maps never errors.
+# - CredentialStore.persistLocked: json.MarshalIndent of the credential
+#   set (string + []byte + time fields) never errors.
+# Every real error path (verification, decode, persist-mkdir, redeem,
+# expiry, duplicate) is exercised.
+github.com/kfet/harb/internal/passkey/passkey.go:104\.40,106\.3
+github.com/kfet/harb/internal/passkey/passkey.go:192\.16,194\.3
+github.com/kfet/harb/internal/passkey/passkey.go:272\.16,274\.3
+github.com/kfet/harb/internal/passkey/credstore.go:151\.16,153\.3
+
+# UI passkey handlers: defensive branches unreachable in practice.
+# - register/login Begin error returns: Begin* only fails on crypto/rand
+#   or json.Marshal of a fixed map (both covignored in internal/passkey).
+# - mustJSON's panic: only fixed server-controlled maps are passed.
+github.com/kfet/harb/internal/ui/passkey.go:74\.16,77\.3
+github.com/kfet/harb/internal/ui/passkey.go:109\.16,112\.3
+github.com/kfet/harb/internal/ui/passkey.go:166\.16,167\.40
 
 # Reader ETag helpers: opmlFingerprint degrades to an empty string on
 # OPML.Marshal failure, which is a defensive return for an encoding bug

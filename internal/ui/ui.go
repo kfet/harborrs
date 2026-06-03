@@ -21,6 +21,7 @@ import (
 
 	"github.com/kfet/harb/internal/auth"
 	"github.com/kfet/harb/internal/config"
+	"github.com/kfet/harb/internal/passkey"
 	"github.com/kfet/harb/internal/store"
 )
 
@@ -50,6 +51,11 @@ type Server struct {
 	Theme     string
 	Overrides string // base config dir; "overrides/" is expected underneath
 	Secure    bool   // set Secure flag on session cookies (https deployments)
+
+	// Passkey, when non-nil and enabled, adds WebAuthn passkey login to
+	// the UI alongside the password. nil disables all passkey routes and
+	// hides the UI affordances.
+	Passkey *passkey.Manager
 
 	// StaticVer is appended to bundled-static URLs as a cache-busting
 	// query string (?v=...). Set this to the binary's commit / version
@@ -150,7 +156,21 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/mark-all-read", s.requireSession(s.handleMarkAllRead))
 	mux.HandleFunc("/ui/settings", s.requireSession(s.handleSettings))
 	mux.HandleFunc("/ui/settings/passwd", s.requireSession(s.handlePasswd))
+	if s.passkeyOn() {
+		// Login ceremony — reachable without a session (it *is* login).
+		mux.HandleFunc("/ui/webauthn/login/begin", s.handlePasskeyLoginBegin)
+		mux.HandleFunc("/ui/webauthn/login/finish", s.handlePasskeyLoginFinish)
+		// Registration + removal — only while authenticated.
+		mux.HandleFunc("/ui/webauthn/register/begin", s.requireSession(s.handlePasskeyRegisterBegin))
+		mux.HandleFunc("/ui/webauthn/register/finish", s.requireSession(s.handlePasskeyRegisterFinish))
+		mux.HandleFunc("/ui/settings/passkey/remove", s.requireSession(s.handlePasskeyRemove))
+	}
 	return mux
+}
+
+// passkeyOn reports whether passkey support is wired and enabled.
+func (s *Server) passkeyOn() bool {
+	return s.Passkey != nil
 }
 
 func (s *Server) requireSession(h http.HandlerFunc) http.HandlerFunc {
@@ -233,6 +253,7 @@ type baseData struct {
 	Version       string // shown in the base.html footer; empty hides it
 	Settings      bool   // true when /ui/settings is available
 	PasswdChanged bool   // set on login page after a successful change
+	Passkey       bool   // true when passkey (WebAuthn) login is enabled
 
 	// Base is the relative URL prefix from the effective request URI
 	// back up to the /ui/ root, always ending in "/". Templates prefix
@@ -247,7 +268,7 @@ type baseData struct {
 }
 
 func (s *Server) base(r *http.Request) baseData {
-	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Version: s.Version, Settings: s.ConfigPath != "", Base: uiBase(r)}
+	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Version: s.Version, Settings: s.ConfigPath != "", Base: uiBase(r), Passkey: s.passkeyOn()}
 	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
 		d.User = s.Auth.Cfg.Username
 	}
@@ -1095,8 +1116,34 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	d := s.base(r)
 	s.render(w, "settings", struct {
 		baseData
-		Ok bool
-	}{d, r.URL.Query().Get("ok") == "1"})
+		Ok       bool
+		Passkeys []passkeyView
+	}{d, r.URL.Query().Get("ok") == "1", s.passkeyViews()})
+}
+
+// passkeyView is the per-credential row rendered on the settings page.
+type passkeyView struct {
+	Label   string
+	ID      string // standard-base64 credential ID, for the remove form
+	AddedAt string
+}
+
+// passkeyViews returns the registered credentials in display form, or nil
+// when passkeys are disabled.
+func (s *Server) passkeyViews() []passkeyView {
+	if !s.passkeyOn() {
+		return nil
+	}
+	creds := s.Passkey.Store().List()
+	out := make([]passkeyView, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, passkeyView{
+			Label:   c.Label,
+			ID:      b64Std.EncodeToString(c.ID),
+			AddedAt: c.AddedAt.Format("2006-01-02"),
+		})
+	}
+	return out
 }
 
 // handlePasswd handles POST /ui/settings/passwd. Verifies the current
@@ -1159,8 +1206,9 @@ func (s *Server) renderPasswdErr(w http.ResponseWriter, r *http.Request, msg str
 	d.Error = msg
 	s.render(w, "settings", struct {
 		baseData
-		Ok bool
-	}{d, false})
+		Ok       bool
+		Passkeys []passkeyView
+	}{d, false, s.passkeyViews()})
 }
 
 // handleStatic serves bundled CSS / overrides theme.css.

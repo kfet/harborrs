@@ -106,6 +106,29 @@ and as `harborrsVersion` on `/reader/api/0/user-info`.
 If you'd rather hand-roll the config, `harborrs hashpass <password>`
 prints a hash you can drop into `<data-dir>/config.json` by hand.
 
+### Passkeys (WebAuthn)
+
+Optionally sign in to the web UI with Touch ID, Windows Hello, a phone,
+or a security key instead of the password. The password still works (and
+remains the RSS-client / Reader-API path). Enable it by adding a
+`webauthn` block to `config.json`:
+
+```json
+"webauthn": {
+  "rp_id": "rss.example.com",
+  "origin": "https://rss.example.com",
+  "rp_name": "Harbour RSS"
+}
+```
+
+`rp_id` is the site's hostname; `origin` is its exact https origin.
+Both are required — passkeys stay off until they're set. WebAuthn only
+works in a **secure context** (https or `localhost`); a plain-http LAN
+deployment can't use passkeys. Once serving, open **settings → passkeys
+→ add a passkey** to register, then use **sign in with a passkey** on
+the login page. Credentials are stored in `credentials.json` and you
+can register several (e.g. laptop + phone).
+
 ## Storage layout
 
 ```
@@ -113,6 +136,7 @@ prints a hash you can drop into `<data-dir>/config.json` by hand.
   config.json
   subscriptions.opml
   tokens.json
+  credentials.json       # registered passkeys (when webauthn is enabled)
   read.log
   starred.log
   state/<feed-hash>.json

@@ -12,15 +12,17 @@ import (
 
 	"github.com/kfet/harb/internal/atomic"
 	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/passkey"
 	"github.com/kfet/harb/internal/store"
 )
 
 // Config is the on-disk configuration loaded from `config.json` in the
 // data dir. v0.1 is plain JSON; switching to TOML is a v0.2 conversation.
 type Config struct {
-	Listen string      `json:"listen"`
-	Auth   auth.Config `json:"auth"`
-	UI     UIConfig    `json:"ui"`
+	Listen   string         `json:"listen"`
+	Auth     auth.Config    `json:"auth"`
+	UI       UIConfig       `json:"ui"`
+	WebAuthn passkey.Config `json:"webauthn,omitempty"`
 }
 
 // UIConfig governs the web UI presentation.

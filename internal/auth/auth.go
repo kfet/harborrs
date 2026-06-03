@@ -204,6 +204,14 @@ func (s *Store) IssueSession(username, password string) (string, error) {
 	if err := s.Verify(username, password); err != nil {
 		return "", err
 	}
+	return s.NewSession()
+}
+
+// NewSession mints a session cookie value without a password check. It is
+// for callers that have already authenticated the single user by another
+// means (e.g. a verified WebAuthn assertion). The token is persisted so
+// it survives restarts.
+func (s *Store) NewSession() (string, error) {
 	tok, err := newToken()
 	if err != nil {
 		return "", err
