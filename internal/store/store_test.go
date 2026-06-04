@@ -926,3 +926,46 @@ func TestStateVersion(t *testing.T) {
 		t.Errorf("StateVersion not restored from logs: was=%v (trunc=%v) now=%v", afterRead, want, got)
 	}
 }
+
+// TestStateVersionNoRestartRegression guards the unread-count ETag
+// against regressing below entries still on disk after a restart.
+// Repro of the live bug: an old read mark sets the state-log timestamp,
+// then newer entries arrive (bumping contentVer in-process). Before the
+// fix, Open rebuilt contentVer from the state log alone, regressing
+// below the new entries — so a client whose cached ETag predated them
+// was wrongly served 304 and never re-fetched.
+func TestStateVersionNoRestartRegression(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := FeedHash("https://x/feed")
+	// An old entry, read long ago — pin the state-log timestamp into
+	// the past via the now hook so the read mark is genuinely older
+	// than the entries that arrive later.
+	old := time.Now().UTC().Add(-72 * time.Hour)
+	s.now = func() time.Time { return old }
+	if _, err := s.AppendEntries(fh, []Entry{{GUID: "old", Link: "lo", FetchedAt: old}}); err != nil {
+		t.Fatal(err)
+	}
+	oldEntries, _ := s.ListEntries(fh)
+	if err := s.SetRead(oldEntries[0].Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	s.now = time.Now
+	// Fresh entries fetched recently — newer than any state-log mark.
+	fetched := time.Now().UTC().Add(-1 * time.Minute)
+	if _, err := s.AppendEntries(fh, []Entry{{GUID: "new", Link: "ln", FetchedAt: fetched}}); err != nil {
+		t.Fatal(err)
+	}
+	// Restart: the validator must NOT regress below the newest entry's
+	// FetchedAt, or cached-ETag clients miss the new entries forever.
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s2.StateVersion(); got.Before(fetched.Truncate(time.Second)) {
+		t.Errorf("StateVersion regressed across restart: got=%v, want >= newest FetchedAt %v", got, fetched)
+	}
+}

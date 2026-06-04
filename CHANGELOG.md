@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-04
+
+### Fixed
+
+- **Unread-count ETag no longer regresses on restart**, which had let
+  Reeder (and other GReader clients) miss freshly-polled items — the
+  web UI showed N unread while the client saw none. The `unread-count`
+  validator is the store's content-version; new entries bumped it in
+  memory, but `Open` rebuilt it from the read/starred logs alone, so
+  after a restart it fell back below entries still on disk. A client
+  whose cached ETag predated those entries was then wrongly served a
+  `304 Not Modified` and never re-fetched. `Open` now also folds the
+  newest entry `FetchedAt` across all feeds into the content-version,
+  so the post-restart validator stays at or above the last append and
+  cached-ETag clients always get a `200` when there is genuinely new
+  content. Added a store regression test pinning the no-regression
+  invariant.
+
 ## [0.6.0] - 2026-06-03
 
 ### Added

@@ -33,7 +33,7 @@ github.com/kfet/harb/internal/store/store.go:130\.71,132\.3
 github.com/kfet/harb/internal/store/store.go:133\.74,135\.3
 github.com/kfet/harb/internal/store/store.go:137\.39,139\.3
 github.com/kfet/harb/internal/store/store.go:152\.3,152\.13
-github.com/kfet/harb/internal/store/store.go:230\.3,230\.13
+github.com/kfet/harb/internal/store/store.go:244\.3,244\.13
 
 # FileOPML lazy init uses double-checked locking. The second nil-check
 # inside the write-locked section is the race-loser branch — only

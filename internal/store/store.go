@@ -173,6 +173,20 @@ func (s *Store) buildIndex() error {
 				}
 				list = append(list, en)
 				s.byHash[en.Hash] = en
+				if en.FetchedAt.After(s.contentVer) {
+					// Fold entry-arrival time into the validator so it
+					// survives restarts. AppendEntries bumps contentVer
+					// in-process when new entries land, but Open only
+					// rebuilds it from the state logs — so without this
+					// the validator regresses below the last append on
+					// restart. A client whose cached unread-count ETag
+					// predates the new entries would then be wrongly
+					// served 304 (it never re-fetches; the UI shows the
+					// items but the client never sees them). Seeding from
+					// the newest FetchedAt keeps the post-restart
+					// validator >= the pre-restart new-entry bump.
+					s.contentVer = en.FetchedAt
+				}
 				return nil
 			}); err != nil {
 				return err
@@ -286,12 +300,11 @@ func (s *Store) EntryState(hash string) EntryState {
 // this data dir.
 //
 // Restart semantics: rebuilt in Open from the state-log UpdatedAt
-// timestamps, so SetRead/SetStarred bumps survive restarts. New-
-// entries-only bumps from AppendEntries are in-process only — after
-// a restart the validator reflects the latest state-log timestamp,
-// which is older than (or equal to) the pre-restart value. Clients
-// notice this as one forced 200 right after a restart, then resume
-// 304s.
+// timestamps AND the newest entry FetchedAt across all feeds (see
+// buildIndex). Folding in FetchedAt keeps the validator >= the last
+// in-process AppendEntries bump, so it does not regress below entries
+// that are still on disk after a restart. Without it a client whose
+// cached ETag predated the new entries would be wrongly served 304.
 func (s *Store) StateVersion() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -462,11 +475,10 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		s.idx[feedHash] = list
 		// Bump the content version — new entries change the
 		// unread-count payload and must invalidate cached ETags.
-		// Only forward-monotonic within a process; after a restart
-		// the validator is rebuilt from state-log timestamps and
-		// new-entries-only bumps from before the restart are not
-		// preserved (clients see a forced refresh post-restart,
-		// which is fine).
+		// This in-process bump is also made durable across restarts:
+		// Open seeds contentVer from the newest entry FetchedAt (see
+		// buildIndex), so the validator does not regress below entries
+		// still on disk.
 		if now := s.now().UTC(); now.After(s.contentVer) {
 			s.contentVer = now
 		}
