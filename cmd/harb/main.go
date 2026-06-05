@@ -191,7 +191,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	uiSrv.StaticVer = harb.Commit
 	uiSrv.Version = harb.Version
 	uiSrv.ConfigPath = cfgPath
-	uiSrv.Previewer = feedpreview.New()
+	uiSrv.Previewer = feedpreview.New(data)
 	// Passkey (WebAuthn) login, enabled only when configured with an RP
 	// ID + origin. Credentials live alongside tokens.json in the data dir.
 	if cfg.WebAuthn.Enabled() {

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-05
+
+### Fixed
+
+- **Add-feed preview now applies resolvers**, so feedless pages that only
+  become a feed after a resolver Transform — a Webflow CMS blog index
+  (e.g. `https://claude.com/blog`) fixed by a `webflow-to-feed` sidecar,
+  say — can finally be added through the web UI. Previously the preview
+  path parsed the raw HTTP response with gofeed *without* running the
+  resolve chain the poller uses, so the preview failed with "Failed to
+  detect feed type" and the UI offered no way to add the feed. The
+  previewer now loads the same builtins + per-feed sidecar chain
+  (`<data-dir>/resolvers/<feedHash>.json`), runs `ShapeRequest` on the
+  outgoing request and `Transform` on the response body before parsing.
+  No sidecar means behaviour is unchanged (builtins only); the SSRF-safe
+  client and 5 MiB read cap are preserved.
+
 ## [0.7.0] - 2026-06-05
 
 ### Added
