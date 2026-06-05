@@ -28,6 +28,15 @@
 </section>
 {{end}}
 
+{{define "feedpane"}}
+<h2 class="feed-pane-head"><a href="feed?id={{.ScopeID}}">{{.Heading}}</a></h2>
+{{if not .Entries}}<p class="detail-placeholder">{{if .UnreadOnly}}all caught up.{{else}}nothing to show.{{end}}</p>{{else}}
+<ul class="entries">
+{{range .Entries}}{{template "entryrow" .}}{{end}}
+</ul>
+{{end}}
+{{end}}
+
 {{define "entryrow"}}
 <li id="entry-{{.Hash}}"{{if .OOB}} hx-swap-oob="true"{{end}} class="entry {{if .Read}}read{{else}}unread{{end}}{{if .Starred}} starred{{end}}">
 <button class="readbtn icon" aria-label="{{if .Read}}mark unread{{else}}mark read{{end}}" title="{{if .Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Read}}○{{else}}●{{end}}</span></button>

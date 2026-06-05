@@ -566,7 +566,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		TagFilter  string
 		Groups     []feedGroup
 		Failing    []failingFeed
-	}{s.base(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, tagFilter, groups, failing}
+	}{s.wideBase(r), feeds, scopedTotal, withUnread, unreadOnly, pinned, tagFilter, groups, failing}
 	s.render(w, "home", data)
 }
 
@@ -712,7 +712,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			PublishedFmt: formatPublished(e.Published, time.Now()),
 		})
 	}
-	s.render(w, "feed", entryListData{
+	data := entryListData{
 		baseData:    s.wideBase(r),
 		Heading:     feed.Title,
 		Entries:     entries,
@@ -723,7 +723,18 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		UnreadCount: unreadCount,
 		FeedTags:    feed.Tags,
 		AllTags:     op.AllTags(),
-	})
+	}
+	// panel=1 — render just the feed's entry-list fragment, no chrome.
+	// Used by the home master-detail layout (keys.js previews the
+	// selected feed's entries into #feed-pane via an htmx.ajax GET with
+	// panel=1), analogous to the entry-detail panel=1 path on /ui/entry.
+	if r.URL.Query().Get("panel") == "1" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = s.pages["feed"].ExecuteTemplate(w, "feedpane", data)
+		return
+	}
+	s.render(w, "feed", data)
 }
 
 // handleAllUnread renders every unread entry across every feed, newest

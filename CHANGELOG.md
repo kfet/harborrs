@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop master-detail home view.** On wide screens (≥ 64em) the
+  home page (`/ui/`) becomes a two-pane master-detail: feeds on the
+  left, the keyboard-selected feed's entries previewed on the right
+  (`#feed-pane`, fed by a new `?panel=1` fragment of the feed view).
+  Keyboard nav: `j`/`k` move the feed selection and preview its
+  entries, `r` marks the whole selected feed read in place, `→`/`Enter`
+  drill in to the feed's full entries+article view, `←`/`u` return to
+  the feeds list. Narrow/mobile is unchanged — home stays a plain feeds
+  list and `Enter` follows the feed link. The `?` help overlay and
+  `keys.js` header document the new keys.
+
 ## [0.7.4] - 2026-06-05
 
 ### Added

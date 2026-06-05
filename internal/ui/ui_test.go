@@ -2563,3 +2563,56 @@ func TestToggleFlagRequiresPost(t *testing.T) {
 		}
 	}
 }
+
+// TestFeedPanel covers the panel=1 fragment branch of handleFeed used
+// by the home master-detail layout: it renders just the feed's entry
+// list (the "feedpane" partial) with no page chrome, so keys.js can
+// swap it into #feed-pane via htmx when a feed is keyboard-selected.
+func TestFeedPanel(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	u := seed(t, st, op, 2)
+	w := do(mux, req("GET", "/ui/feed?id="+u+"&panel=1", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("panel code=%d", w.Code)
+	}
+	body := w.Body.String()
+	// Fragment, not a full page: no doctype / base chrome.
+	if strings.Contains(body, "<!DOCTYPE") || strings.Contains(body, "<main") {
+		t.Fatalf("panel fragment should carry no page chrome: %s", body)
+	}
+	// Carries the feed-pane heading (linking to the full feed view) and
+	// at least one entry row.
+	if !strings.Contains(body, "feed-pane-head") {
+		t.Fatalf("panel missing feed-pane-head: %s", body)
+	}
+	if !strings.Contains(body, `class="entry`) {
+		t.Fatalf("panel missing entry rows: %s", body)
+	}
+	// Empty feed (no entries) still renders the fragment with a
+	// placeholder rather than erroring.
+	empty := "https://empty.example/feed"
+	op.op.Feeds = append(op.op.Feeds, store.Feed{XMLURL: empty, Title: "Empty"})
+	we := do(mux, req("GET", "/ui/feed?id="+empty+"&panel=1&unread=0", tok, nil))
+	if we.Code != 200 || !strings.Contains(we.Body.String(), "detail-placeholder") {
+		t.Fatalf("empty panel: code=%d body=%s", we.Code, we.Body.String())
+	}
+}
+
+// TestHomeMasterDetailMarkup pins the home page's master-detail layout
+// shell: a wide main column, the .split grid, and the #feed-pane the
+// keyboard nav previews selected feeds into. Narrow-screen collapse is
+// handled entirely in CSS (covered by TestSplitLayoutCSS).
+func TestHomeMasterDetailMarkup(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+	seed(t, st, op, 1)
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("home code=%d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`<main class="wide">`, `class="split home-split"`, `id="feed-pane"`, `aria-live="polite"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home master-detail missing %q: %s", want, body)
+		}
+	}
+}

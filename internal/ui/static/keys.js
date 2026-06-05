@@ -5,6 +5,7 @@
 //   Esc    → close overlay
 //   u      → up the hierarchy (entry view → parent feed; any other
 //            authenticated page → home /ui/)
+//   ← / u  → up the hierarchy (also: feed view → home)
 //   N / n  → toggle "show unread only" filter (home + per-feed views)
 //
 // On any list view — home feeds (/ui/) and entry lists
@@ -13,6 +14,15 @@
 //   k / ↑  → focus previous row
 //   Enter  → open the focused row's primary link
 //   gg     → first row, G → last row
+//
+// Home master-detail (wide screens ≥ 64em only):
+//   j / k  → move feed selection; the selected feed's entries are
+//            previewed in the right-hand #feed-pane via htmx (?panel=1)
+//   r      → mark ALL entries of the selected feed read (in place)
+//   → / Enter → drill in to /ui/feed?id=… (full entries + article view)
+//   ← / u  → back out to the feeds list (home)
+//   On narrow screens the home view stays a plain feeds list and these
+//   keys are inert (Enter follows the feed link as a full-page nav).
 //
 // Entry-list additions:
 //   r      → toggle row's read state
@@ -135,7 +145,7 @@
   };
   document.addEventListener("keydown", function (e) {
     if (inEditable(e) || helpOpen()) return;
-    if (e.key !== "u") return;
+    if (e.key !== "u" && e.key !== "ArrowLeft") return;
     // In split-panel mode the entry detail lives inside #detail-pane;
     // that doesn't count as "on the entry view" — the universal u
     // should still walk us up to /ui/. Only bail when the article is
@@ -234,23 +244,58 @@
     };
     let previewTimer = null;
     const schedulePreview = () => {
-      if (!isEntryList) return;
       if (!wideScreen()) return;
+      // On entry-list pages we preview the focused entry into the
+      // article pane (#detail-pane); on the home feed-list we preview
+      // the focused feed's entry list into the master-detail pane
+      // (#feed-pane). Both are gated on the target pane existing in the
+      // DOM — it is display:none below 64em, so this is a no-op on
+      // narrow screens and on any page without the pane.
+      const paneSel = isEntryList ? "#detail-pane" : "#feed-pane";
+      if (!document.querySelector(paneSel)) return;
       if (previewTimer !== null) clearTimeout(previewTimer);
       previewTimer = setTimeout(function () {
         previewTimer = null;
         if (idx < 0) return;
         const cur = rows()[idx];
         if (!cur) return;
-        const a = cur.querySelector("a.entry-link");
+        // Entry rows expose a.entry-link; home feed rows expose the
+        // feed link as their first/primary anchor.
+        const a = isEntryList ? cur.querySelector("a.entry-link") : cur.querySelector("a");
         if (!a || !window.htmx) return;
         const href = a.getAttribute("href");
         // htmx.ajax resolves the URL relative to the document, which
         // matches what a native click on the anchor would do. The
         // promise rejection on aborted requests is harmless here.
         const sep = href.indexOf("?") >= 0 ? "&" : "?";
-        try { htmx.ajax("GET", href + sep + "panel=1", "#detail-pane"); } catch (_) { /* */ }
+        try { htmx.ajax("GET", href + sep + "panel=1", paneSel); } catch (_) { /* */ }
       }, 140);
+    };
+    // Mark every entry of the keyboard-selected feed read (home master-
+    // detail only). We POST the existing feed-scope mark-all-read
+    // endpoint directly — not via the .markall click interceptor — then
+    // zero the row's unread count and refresh the preview pane in place,
+    // so focus and scroll are preserved. Returns true when it acted.
+    const markSelectedFeedRead = () => {
+      if (isEntryList || !wideScreen() || idx < 0) return false;
+      const row = rows()[idx];
+      if (!row) return false;
+      const a = row.querySelector("a");
+      if (!a || !window.htmx) return false;
+      let id;
+      try { id = new URL(a.href).searchParams.get("id"); } catch (_) { return false; }
+      if (!id) return false;
+      fetch(uiURL("mark-all-read?scope=feed&id=" + encodeURIComponent(id)), {
+        method: "POST", credentials: "same-origin",
+      }).then(function (resp) {
+        if (!resp.ok) return;
+        const c = row.querySelector(".count");
+        if (c) c.textContent = "0";
+        const href = a.getAttribute("href");
+        const sep = href.indexOf("?") >= 0 ? "&" : "?";
+        try { htmx.ajax("GET", href + sep + "panel=1", "#feed-pane"); } catch (_) { /* */ }
+      }).catch(function () { /* network hiccup — user can retry */ });
+      return true;
     };
     const focusRow = (i) => {
       const all = rows();
@@ -322,6 +367,14 @@
       switch (e.key) {
         case "j": case "ArrowDown": focusRow(idx + 1); e.preventDefault(); break;
         case "k": case "ArrowUp":   focusRow(idx - 1); e.preventDefault(); break;
+        case "ArrowRight":
+          // Home master-detail: "drill in" to the selected feed's full
+          // entries+article view. Equivalent to Enter on a feed row.
+          if (!isEntryList && idx >= 0) {
+            const a = rows()[idx].querySelector("a");
+            if (a) { a.click(); e.preventDefault(); }
+          }
+          break;
         case "Enter":
           if (idx >= 0) {
             const row = rows()[idx];
@@ -342,7 +395,12 @@
           else { lastG = Date.now(); }
           break;
         case "G": focusRow(rows().length - 1); break;
-        case "r": if (isEntryList) clickInRow(".readbtn"); break;
+        case "r":
+          // Entry list: toggle the focused row's read state. Home
+          // master-detail: mark the whole selected feed read.
+          if (isEntryList) clickInRow(".readbtn");
+          else if (markSelectedFeedRead()) e.preventDefault();
+          break;
         case "s": if (isEntryList) clickInRow(".starbtn"); break;
         case "R":
           if (isEntryList) {

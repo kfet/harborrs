@@ -31,6 +31,7 @@
 </ul>
 </aside>
 
+<div class="split home-split">
 <div class="feed-groups">
 {{if .Groups}}
 {{range .Groups}}
@@ -52,6 +53,10 @@
 <li class="empty">{{if $.UnreadOnly}}all caught up — <a href="./?unread=0{{if $.TagFilter}}&tag={{$.TagFilter}}{{end}}">show all feeds</a>{{else if $.TagFilter}}no feeds in this view — <a href="./">show all feeds</a>{{else}}no feeds yet — click <a href="feed/new">+ add feed</a>, or import an OPML file with <code>harb import</code>{{end}}</li>
 </ul>
 {{end}}
+</div>
+<aside class="detail-pane feed-pane" id="feed-pane" aria-label="feed entries" aria-live="polite">
+<p class="detail-placeholder">select a feed to preview its entries</p>
+</aside>
 </div>
 </div>
 </section>

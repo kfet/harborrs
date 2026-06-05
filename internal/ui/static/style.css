@@ -562,6 +562,25 @@ ul.entries {
   .detail-pane .entry-full { max-width: none; margin: 0; }
 }
 
+/* ---- home master-detail (feeds left, entry preview right) ---------
+ * The home page reuses the .split + .detail-pane machinery: on wide
+ * screens the feeds list (left) sits beside #feed-pane (right) which
+ * previews the keyboard-selected feed's entries via htmx (?panel=1).
+ * Below 64em .detail-pane is display:none, so home collapses back to
+ * the plain feeds list and feed links navigate normally. */
+.feed-pane .feed-pane-head {
+  margin: 0 0 0.6em;
+  font-size: 1.05em;
+}
+.feed-pane .feed-pane-head a { color: var(--fg); }
+.feed-pane .feed-pane-head a:hover { color: var(--accent); text-decoration: none; }
+.feed-pane .detail-placeholder {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  margin: 2em 0;
+}
+
 .entry-full { max-width: 44em; margin: 0 auto; }
 .entry-full h1 { margin-bottom: 0.3em; }
 .entry-full .meta {
