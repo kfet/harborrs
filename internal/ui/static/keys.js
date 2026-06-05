@@ -567,3 +567,29 @@
     });
   });
 })();
+
+
+/* copy-to-clipboard buttons (e.g. RSS feed URL) */
+(function () {
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest && ev.target.closest(".copy-url");
+    if (!btn) return;
+    ev.preventDefault();
+    var sel = btn.getAttribute("data-copy-target");
+    var el = sel && document.querySelector(sel);
+    if (!el) return;
+    var text = el.value != null ? el.value : el.textContent;
+    function done() {
+      var prev = btn.textContent;
+      btn.textContent = "copied";
+      btn.classList.add("copied");
+      setTimeout(function () { btn.textContent = prev; btn.classList.remove("copied"); }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { el.focus(); el.select(); });
+    } else {
+      el.focus(); el.select();
+      try { document.execCommand("copy"); done(); } catch (e) {}
+    }
+  });
+})();

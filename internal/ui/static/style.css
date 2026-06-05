@@ -739,3 +739,42 @@ ul.entries {
 
 /* Used in the entry-list rendering to dim already-read rows. */
 .entry.read > a { color: var(--muted); }
+
+/* ---- feed source (copyable RSS URL) ------------------------------- */
+.feed-source {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0.2em 0 0.9em;
+  min-width: 0;
+}
+.feed-source-label {
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  flex: none;
+}
+.feed-source .feed-url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+  padding: 0.3em 0.5em;
+  color: var(--fg);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.feed-source .copy-url {
+  flex: none;
+  font-size: 0.8em;
+  padding: 0.35em 0.7em;
+  cursor: pointer;
+  color: var(--fg);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.feed-source .copy-url:hover { border-color: var(--accent); color: var(--accent); }
+.feed-source .copy-url.copied { color: var(--accent); border-color: var(--accent); }

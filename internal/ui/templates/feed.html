@@ -7,6 +7,11 @@
 <div class="home-actions">
 {{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}&unread=0" class="filter active">unread only ({{.UnreadCount}}) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only ({{.UnreadCount}})</a>{{end}}
 </div>
+<div class="feed-source">
+<span class="feed-source-label">RSS</span>
+<input id="feed-url" class="feed-url" type="text" readonly value="{{.ScopeID}}" aria-label="RSS feed URL" onfocus="this.select()">
+<button type="button" class="copy-url" data-copy-target="#feed-url" aria-label="copy RSS URL" title="copy RSS URL">copy</button>
+</div>
 <div id="feed-tags-{{.ScopeID}}">{{template "tagchips" .}}</div>
 {{end}}
 {{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}&unread=0">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}

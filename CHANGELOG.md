@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-06-05
+
+### Added
+
+- **Copyable RSS URL on each feed page.** The per-feed view now shows the
+  feed's source URL in a selectable, monospace field with a **copy**
+  button (flashes "copied"). Makes it easy to grab a feed's RSS
+  address to share or re-subscribe elsewhere.
+
 ## [0.7.3] - 2026-06-05
 
 ### Fixed
