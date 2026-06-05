@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"strings"
@@ -22,10 +23,17 @@ func init() {
 // are present without executing JavaScript — which is exactly what makes
 // them scrapeable here.
 //
-// This is a Transform-stage resolver. It is meant to be scoped to a
-// single feed via a sidecar Spec (Source "user"/"agent") whose target
-// URL is the collection page itself; the gate defaults to text/html so it
-// never touches a response that is already a real feed.
+// This is a Transform-stage resolver. It runs in two modes:
+//
+//   - as a zero-config builtin (see autoWebflowResolver), applied to every
+//     feed like strip-control-chars, so a feedless Webflow blog can be
+//     added through the UI with no configuration; and
+//   - as a sidecar Spec (Source "user"/"agent") scoped to one feed, which
+//     can override any parameter below.
+//
+// Either way the gate defaults to text/html so it never touches a response
+// that is already a real feed, and the looksLikeXML guard in Transform
+// makes a second pass (builtin + sidecar both present) a no-op.
 //
 // Params (all optional — defaults match a stock Webflow blog):
 //
@@ -86,7 +94,46 @@ func newWebflowToFeed(params map[string]string) (Resolver, error) {
 	return wf, nil
 }
 
+// defaultWebflowExclude is the zero-config taxonomy filter for the builtin
+// webflow instance. A stock Webflow blog index also renders its
+// /category/ and /tag/ nav lists as .w-dyn-item nodes; dropping links that
+// contain these substrings keeps the synthesised feed to real posts. A
+// sidecar Spec's exclude_link_contains overrides this default.
+const defaultWebflowExclude = "/category/,/tag/"
+
+// autoWebflowResolver is the zero-config builtin instance of
+// webflow-to-feed, applied to every feed (see builtinResolvers). It cannot
+// fail to construct — its only fallible param (limit) is unset — so the
+// error is discarded, keeping it off the poll error path exactly like the
+// other builtins.
+func autoWebflowResolver() Resolver {
+	r, _ := newWebflowToFeed(map[string]string{"exclude_link_contains": defaultWebflowExclude})
+	return r
+}
+
+// looksLikeXML reports whether body already begins with an XML/feed prolog
+// after leading whitespace. It is the idempotency guard for the builtin:
+// if both the builtin auto-instance and a sidecar instance of
+// webflow-to-feed run, the second sees the RSS the first synthesised — its
+// content-type gate still reads "text/html" (the original response CT), so
+// this byte-level check, not the gate, is what makes the second pass a
+// no-op. It also leaves a real XML feed mislabelled as text/html untouched.
+func looksLikeXML(body []byte) bool {
+	b := bytes.TrimLeft(body, " \t\r\n")
+	if len(b) > 16 {
+		b = b[:16]
+	}
+	b = bytes.ToLower(b)
+	return bytes.HasPrefix(b, []byte("<?xml")) ||
+		bytes.HasPrefix(b, []byte("<rss")) ||
+		bytes.HasPrefix(b, []byte("<feed")) ||
+		bytes.HasPrefix(b, []byte("<rdf:"))
+}
+
 func (w webflowToFeed) Transform(body []byte, m FeedMeta) ([]byte, error) {
+	if looksLikeXML(body) {
+		return body, nil // already a feed (real, or one we just synthesised)
+	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
 		return body, nil // not parseable as HTML: leave it for the next stage

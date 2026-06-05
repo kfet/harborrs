@@ -805,7 +805,7 @@ func TestPollSidecarShapesRequestAndRecordsSuccess(t *testing.T) {
 	if last.Outcome != observe.Success || last.NewEntries != 2 {
 		t.Fatalf("observation=%+v", last)
 	}
-	if len(last.Resolvers) != 2 || last.Resolvers[1] != "set-header" {
+	if len(last.Resolvers) != 3 || last.Resolvers[2] != "set-header" {
 		t.Fatalf("resolvers=%v", last.Resolvers)
 	}
 }

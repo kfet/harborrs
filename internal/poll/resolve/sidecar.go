@@ -8,15 +8,25 @@ import (
 	"path/filepath"
 )
 
-// builtinResolvers are prepended to every feed's chain. strip-control-chars
-// (the former poll.sanitizeXML) is cheap and safe on clean feeds — its
-// fast path returns the body untouched — so it runs unconditionally. It is
-// constructed directly rather than via Build because it takes no params and
-// cannot fail to build; keeping it off the error path means a feed poll can
-// never be derailed by builtin construction.
+// builtinResolvers are prepended to every feed's chain. They run in order:
+//
+//   - strip-control-chars (the former poll.sanitizeXML) is cheap and safe
+//     on clean feeds — its fast path returns the body untouched — so it
+//     runs unconditionally; and
+//   - webflow-to-feed runs as a zero-config auto-instance so a feedless
+//     Webflow CMS blog index becomes a synthetic RSS feed with no sidecar.
+//     It is a strict no-op unless the response is HTML with Webflow markers
+//     that yield at least one item, so it never touches a real feed.
+//
+// Both are constructed directly rather than via Build because they take
+// fixed (or no) params and cannot fail to build; keeping them off the
+// error path means a feed poll can never be derailed by builtin
+// construction. A sidecar may still add an explicitly-parameterised
+// webflow-to-feed instance; the looksLikeXML guard keeps the second pass a
+// no-op.
 func builtinResolvers() []Resolver {
-	r, _ := newStripControlChars(nil)
-	return []Resolver{r}
+	scc, _ := newStripControlChars(nil)
+	return []Resolver{scc, autoWebflowResolver()}
 }
 
 // SidecarPath returns the on-disk path of a feed's resolver sidecar:

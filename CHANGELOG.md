@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-05
+
+### Changed
+
+- **`webflow-to-feed` now auto-applies as a builtin** — no per-feed
+  sidecar required. A feedless Webflow CMS blog index (e.g.
+  `https://claude.com/blog`) can be added purely through the web UI:
+  paste the URL, the preview succeeds, add. The resolver is registered
+  among the builtins applied to every feed (alongside
+  `strip-control-chars`) in both the preview and poll paths, with
+  sensible zero-config defaults (it excludes `/category/` and `/tag/`
+  taxonomy lists so only real posts surface). It remains a strict no-op
+  unless the response is HTML carrying Webflow markers that yield at
+  least one item, so real XML/JSON feeds and plain non-Webflow HTML pass
+  through byte-identical. An explicit sidecar `webflow-to-feed` Spec can
+  still override every parameter; a `looksLikeXML` guard makes the
+  builtin + sidecar combination idempotent (the second pass sees the
+  already-synthesised RSS and does nothing).
+
 ## [0.7.1] - 2026-06-05
 
 ### Fixed

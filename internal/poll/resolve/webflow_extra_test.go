@@ -165,3 +165,129 @@ func TestAbsolutiseEdges(t *testing.T) {
 		t.Errorf("hostless base: got %q, want /rel", got)
 	}
 }
+
+// --- builtin auto-apply --------------------------------------------------
+
+// A Webflow page with no sidecar is turned into a feed by the builtin
+// chain; the default /category/,/tag/ exclusion drops taxonomy items.
+func TestBuiltinWebflowAutoApplies(t *testing.T) {
+	chain, err := Load(t.TempDir(), "deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := `<html data-wf-site="x"><head><title>Auto Blog</title></head><body>
+		<div class="w-dyn-item"><a href="/blog/real-one"><h3>Real One</h3></a></div>
+		<div class="w-dyn-item"><a href="/blog/category/news"><h3>Cat</h3></a></div>
+		<div class="w-dyn-item"><a href="/blog/tag/foo"><h3>Tagged</h3></a></div>
+		<div class="w-dyn-item"><a href="/blog/real-two"><h3>Real Two</h3></a></div>
+	</body></html>`
+	out, err := chain.Transform([]byte(in), FeedMeta{URL: "https://auto.test/blog", ContentType: "text/html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := gofeed.NewParser().ParseString(string(out))
+	if err != nil {
+		t.Fatalf("synthetic feed did not parse: %v\n%s", err, out)
+	}
+	if f.Title != "Auto Blog" {
+		t.Errorf("title = %q", f.Title)
+	}
+	if len(f.Items) != 2 || f.Items[0].Title != "Real One" || f.Items[1].Title != "Real Two" {
+		t.Fatalf("default exclusion failed, items: %+v", f.Items)
+	}
+}
+
+// A plain non-Webflow HTML page passes through the builtin chain
+// byte-identical.
+func TestBuiltinWebflowNonWebflowPassthrough(t *testing.T) {
+	chain, err := Load(t.TempDir(), "deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := `<html><head><title>plain</title></head><body><p>hi</p><a href="/x">x</a></body></html>`
+	out, err := chain.Transform([]byte(in), FeedMeta{URL: "https://plain.test/", ContentType: "text/html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != in {
+		t.Errorf("non-webflow HTML was modified:\n%s", out)
+	}
+}
+
+// The builtin gate skips a real XML feed (application/rss+xml): it is not
+// applied at all, so the body is untouched.
+func TestBuiltinWebflowSkipsXMLFeed(t *testing.T) {
+	chain, err := Load(t.TempDir(), "deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed := `<?xml version="1.0"?><rss version="2.0"><channel><title>Real</title>` +
+		`<item><title>i</title><link>https://r.test/i</link></item></channel></rss>`
+	out, err := chain.Transform([]byte(feed), FeedMeta{URL: "https://r.test/feed", ContentType: "application/rss+xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != feed {
+		t.Errorf("xml feed was modified:\n%s", out)
+	}
+}
+
+// Double-apply safety: builtin + a sidecar webflow instance both run. The
+// builtin synthesises RSS; the sidecar pass sees XML and is a no-op, so
+// the result is a single clean feed (not double-transformed garbage).
+func TestBuiltinWebflowDoubleApplyIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	fh := "doubled"
+	writeSidecar(t, dir, fh, []Spec{
+		{Name: "webflow-to-feed", Source: "user"},
+	})
+	chain, err := Load(dir, fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// builtins (strip, webflow) + sidecar webflow => 3 resolvers.
+	if got := chain.Names(); len(got) != 3 || got[1] != "webflow-to-feed" || got[2] != "webflow-to-feed" {
+		t.Fatalf("chain=%v", got)
+	}
+	in := `<html data-wf-site="x"><head><title>Dbl</title></head><body>
+		<div class="w-dyn-item"><a href="/p/1"><h3>One</h3></a></div>
+		<div class="w-dyn-item"><a href="/p/2"><h3>Two</h3></a></div>
+	</body></html>`
+	out, err := chain.Transform([]byte(in), FeedMeta{URL: "https://dbl.test/blog", ContentType: "text/html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := gofeed.NewParser().ParseString(string(out))
+	if err != nil {
+		t.Fatalf("double-apply produced unparseable output: %v\n%s", err, out)
+	}
+	if len(f.Items) != 2 || f.Title != "Dbl" {
+		t.Fatalf("double-apply not idempotent, feed: title=%q items=%+v", f.Title, f.Items)
+	}
+}
+
+func TestLooksLikeXML(t *testing.T) {
+	yes := []string{
+		`<?xml version="1.0"?><rss/>`,
+		"   \n\t<rss version=\"2.0\">",
+		"<feed xmlns=\"http://www.w3.org/2005/Atom\">",
+		"<RDF:RDF>",
+		`<?XML?>`,
+	}
+	for _, s := range yes {
+		if !looksLikeXML([]byte(s)) {
+			t.Errorf("looksLikeXML(%q) = false, want true", s)
+		}
+	}
+	no := []string{
+		`<!DOCTYPE html><html>`,
+		"<html><body>x</body></html>",
+		"  plain text",
+		"",
+	}
+	for _, s := range no {
+		if looksLikeXML([]byte(s)) {
+			t.Errorf("looksLikeXML(%q) = true, want false", s)
+		}
+	}
+}

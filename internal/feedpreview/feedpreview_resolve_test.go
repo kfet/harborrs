@@ -69,18 +69,25 @@ func TestPreviewAppliesWebflowSidecar(t *testing.T) {
 	}
 }
 
-// Without a sidecar, the same Webflow page is not a feed and previewing it
-// fails at parse — confirming the no-sidecar path is unchanged (plus
-// builtins) and resolvers are not applied unconditionally.
-func TestPreviewNoSidecarWebflowStillFails(t *testing.T) {
+// Without any sidecar, the builtin webflow-to-feed auto-applies, so a
+// feedless Webflow page previews into a real feed with items — the
+// zero-config add-via-UI path. The default /category/,/tag/ exclusion
+// drops the taxonomy item, leaving the two real posts.
+func TestPreviewNoSidecarWebflowAutoApplies(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, webflowPage)
 	}))
 	defer srv.Close()
-	_, err := New(t.TempDir()).Preview(srv.URL)
-	if err == nil {
-		t.Fatal("expected parse failure with no sidecar")
+	out, err := New(t.TempDir()).Preview(srv.URL)
+	if err != nil {
+		t.Fatalf("expected zero-config preview to succeed, got: %v", err)
+	}
+	if out.Title != "Acme Blog" {
+		t.Errorf("title = %q, want Acme Blog", out.Title)
+	}
+	if len(out.Items) != 2 || out.Items[0].Title != "Hello World" {
+		t.Fatalf("got items %+v, want 2 real posts", out.Items)
 	}
 }
 

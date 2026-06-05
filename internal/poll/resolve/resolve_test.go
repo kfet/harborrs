@@ -158,8 +158,8 @@ func TestLoadBuiltinsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if c.Len() != 1 || c.Names()[0] != "strip-control-chars" {
-		t.Fatalf("want builtin-only chain, got %v", c.Names())
+	if got := c.Names(); len(got) != 2 || got[0] != "strip-control-chars" || got[1] != "webflow-to-feed" {
+		t.Fatalf("want builtin-only chain [strip-control-chars webflow-to-feed], got %v", got)
 	}
 }
 
@@ -176,8 +176,9 @@ func TestLoadSidecarMergesAfterBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	// builtin + enabled set-header; disabled regex-replace skipped.
-	if got := c.Names(); len(got) != 2 || got[0] != "strip-control-chars" || got[1] != "set-header" {
+	// builtins (strip-control-chars, webflow-to-feed) + enabled set-header;
+	// disabled regex-replace skipped.
+	if got := c.Names(); len(got) != 3 || got[0] != "strip-control-chars" || got[1] != "webflow-to-feed" || got[2] != "set-header" {
 		t.Fatalf("chain=%v", got)
 	}
 }
@@ -193,8 +194,8 @@ func TestLoadBadSpecIsNonFatal(t *testing.T) {
 	if err == nil {
 		t.Fatal("want non-nil (warning) error for bad spec")
 	}
-	// chain still usable: builtin + the good set-header.
-	if got := c.Names(); len(got) != 2 || got[1] != "set-header" {
+	// chain still usable: builtins + the good set-header.
+	if got := c.Names(); len(got) != 3 || got[2] != "set-header" {
 		t.Fatalf("chain=%v", got)
 	}
 }
@@ -213,7 +214,7 @@ func TestLoadCorruptSidecarKeepsBuiltins(t *testing.T) {
 	if err == nil {
 		t.Fatal("want parse error")
 	}
-	if c.Len() != 1 {
+	if c.Len() != 2 {
 		t.Fatalf("want builtin-only chain, got %v", c.Names())
 	}
 }
@@ -326,7 +327,7 @@ func TestLoadSpecsReadError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want warning error")
 	}
-	if c.Len() != 1 {
+	if c.Len() != 2 {
 		t.Fatalf("want builtin-only chain, got %v", c.Names())
 	}
 }

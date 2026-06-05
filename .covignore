@@ -80,4 +80,4 @@ github.com/kfet/harb/internal/reader/reader.go:1012\.16,1014\.3
 # strings.Reader (in-memory, never errors) and html.Parse itself does not
 # return parse errors on malformed markup, so this defensive
 # leave-the-body-for-the-next-stage branch is unreachable in practice.
-github.com/kfet/harb/internal/poll/resolve/webflow.go:91\.16,93\.3
+github.com/kfet/harb/internal/poll/resolve/webflow.go:138\.16,140\.3
