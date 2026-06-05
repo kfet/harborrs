@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-05
+
+### Added
+
+- **`webflow-to-feed` resolver primitive.** Subscribe to Webflow CMS
+  collection pages (blog indexes that ship no RSS/Atom feed, e.g.
+  `https://claude.com/blog`) by synthesising an RSS 2.0 document from the
+  server-rendered `.w-dyn-list` / `.w-dyn-item` HTML before gofeed parses
+  it. A transform-stage resolver gated on `text/html`, so it never
+  touches a real feed; a non-Webflow page or zero scraped items returns
+  the body unchanged so genuine breakage still surfaces. Tunable via
+  params (`item_selector`, `link_selector`, `title_selector`,
+  `date_selector`, `base_url`, `title`, `limit`,
+  `exclude_link_contains`, `require_webflow`). Promotes
+  `github.com/PuerkitoBio/goquery` from an indirect to a direct
+  dependency.
+
 ## [0.6.1] - 2026-06-04
 
 ### Fixed
