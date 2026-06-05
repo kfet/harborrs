@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-06-05
+
 ### Added
 
 - **Desktop master-detail home view.** On wide screens (≥ 64em) the
