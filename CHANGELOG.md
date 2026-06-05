@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-05
+
+### Fixed
+
+- **Webflow feeds now show real publish dates.** A Webflow CMS index
+  renders the post date as plain text in a `<div>` (e.g. "May 19, 2026"),
+  not a `<time datetime>`, so the previous `date_selector` missed it and
+  every entry fell back to the fetch time. `webflow-to-feed` now, when the
+  selector yields no parseable date, scans the item's full text for the
+  first date-like substring ("Month D, YYYY", ISO `YYYY-MM-DD`, or
+  RFC3339) and validates it before use, so dates like "May 19, 2026" come
+  through correctly.
+
+### Added
+
+- **Full article text for Webflow feed entries.** The Webflow index has
+  no article body — it lives in the `.w-richtext` block on each post's
+  detail page — so harb now enriches entries by fetching that page and
+  taking the largest `.w-richtext` block as the entry content. The
+  resolver marks synthesised feeds with a
+  `<generator>harb-webflow-to-feed</generator>`; the poller enriches only
+  on that marker and only for **new** entries (later polls fetch nothing
+  for already-stored posts). Fetches use the SSRF-safe client with a 15s
+  per-page timeout, a 5 MiB read cap, and bounded concurrency (4 workers),
+  and are strictly best-effort — a slow or broken detail page leaves the
+  entry's content empty and never fails the poll.
+
 ## [0.7.2] - 2026-06-05
 
 ### Changed

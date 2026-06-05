@@ -969,3 +969,38 @@ func TestStateVersionNoRestartRegression(t *testing.T) {
 		t.Errorf("StateVersion regressed across restart: got=%v, want >= newest FetchedAt %v", got, fetched)
 	}
 }
+
+func TestKnownHashes(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := FeedHash("https://x/feed")
+	now := time.Now().UTC()
+	es := []Entry{
+		{GUID: "1", Link: "https://x/a", Title: "A", Published: now, FetchedAt: now},
+		{GUID: "2", Link: "https://x/b", Title: "B", Published: now, FetchedAt: now},
+	}
+	added, err := s.AppendEntries(fh, es)
+	if err != nil || len(added) != 2 {
+		t.Fatalf("append: err=%v added=%d", err, len(added))
+	}
+	known, err := s.KnownHashes(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known) != 2 {
+		t.Fatalf("known=%d, want 2", len(known))
+	}
+	for _, e := range added {
+		if !known[e.Hash] {
+			t.Errorf("hash %q not reported known", e.Hash)
+		}
+	}
+	// Unknown feed → empty set, no error.
+	empty, err := s.KnownHashes("deadbeefdeadbeefdead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected empty set, got %v", empty)
+	}
+}

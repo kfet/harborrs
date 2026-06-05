@@ -80,4 +80,10 @@ github.com/kfet/harb/internal/reader/reader.go:1012\.16,1014\.3
 # strings.Reader (in-memory, never errors) and html.Parse itself does not
 # return parse errors on malformed markup, so this defensive
 # leave-the-body-for-the-next-stage branch is unreachable in practice.
-github.com/kfet/harb/internal/poll/resolve/webflow.go:138\.16,140\.3
+github.com/kfet/harb/internal/poll/resolve/webflow.go:146\.16,148\.3
+
+# webflow content enrichment: largestRichText wraps the fetched body in an
+# in-memory bytes.Reader, so goquery.NewDocumentFromReader cannot error
+# (the reader never errors and html.Parse does not reject malformed HTML).
+# Same unreachable defensive branch as the resolver above.
+github.com/kfet/harb/internal/poll/enrich.go:105\.16,107\.3

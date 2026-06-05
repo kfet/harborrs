@@ -226,6 +226,18 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		entries = append(entries, e)
 	}
 
+	// Webflow article-text enrichment: when this feed was synthesised from
+	// a Webflow page (the resolver stamps a generator marker), fetch each
+	// NEW entry's detail page and fill in the full article body from its
+	// largest .w-richtext block. "New-only" keeps later polls cheap — only
+	// freshly-published posts are fetched — and the fetch is best-effort,
+	// so a slow or broken detail page never fails the poll.
+	if parsed.Generator == resolve.WebflowGenerator {
+		if known, kerr := p.Store.KnownHashes(fh); kerr == nil {
+			enrichWebflowContent(ctx, p.Client, ua, entries, func(h string) bool { return !known[h] })
+		}
+	}
+
 	added, err := p.Store.AppendEntries(fh, entries)
 	if err != nil {
 		return 0, p.recordErr(fh, &st, err)

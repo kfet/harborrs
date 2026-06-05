@@ -4,11 +4,19 @@ import (
 	"bytes"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+// WebflowGenerator is written into the synthetic channel's <generator>
+// element so downstream consumers — specifically the poller's article-text
+// enrichment — can recognise a feed harb synthesised from a Webflow page
+// without coupling to the resolver internals. Detection is a simple equal
+// against parsed.Generator.
+const WebflowGenerator = "harb-webflow-to-feed"
 
 func init() {
 	Register("webflow-to-feed", newWebflowToFeed)
@@ -176,14 +184,7 @@ func (w webflowToFeed) Transform(body []byte, m FeedMeta) ([]byte, error) {
 		if title == "" {
 			return true
 		}
-		date := ""
-		if d := s.Find(w.dateSel).First(); d.Length() > 0 {
-			if dt, ok := d.Attr("datetime"); ok && strings.TrimSpace(dt) != "" {
-				date = strings.TrimSpace(dt)
-			} else {
-				date = strings.TrimSpace(d.Text())
-			}
-		}
+		date := findDate(s, w.dateSel)
 		seen[link] = true
 		items = append(items, item{title: title, link: link, date: date})
 		return len(items) < w.limit
@@ -201,6 +202,7 @@ func (w webflowToFeed) Transform(body []byte, m FeedMeta) ([]byte, error) {
 		b.WriteString("<link>" + xmlEscape(root) + "</link>\n")
 	}
 	b.WriteString("<description>" + xmlEscape("Synthesised from Webflow CMS page by harb") + "</description>\n")
+	b.WriteString("<generator>" + xmlEscape(WebflowGenerator) + "</generator>\n")
 	for _, it := range items {
 		b.WriteString("<item>")
 		b.WriteString("<title>" + xmlEscape(it.title) + "</title>")
@@ -302,6 +304,45 @@ func absolutise(base, href string) string {
 		return href
 	}
 	return b.ResolveReference(u).String()
+}
+
+// findDate extracts a publish date for an item. It first tries the date
+// selector — a <time datetime> attribute, else the element's text — and if
+// that yields nothing pubDate can parse, it scans the item's full text for
+// the first date-like substring. Webflow CMS indexes commonly render the
+// date as plain text in a <div> (e.g. "May 19, 2026") rather than a
+// <time datetime>, which the selector alone misses. Returns a string
+// pubDate() can parse, or "".
+func findDate(s *goquery.Selection, dateSel string) string {
+	raw := ""
+	if d := s.Find(dateSel).First(); d.Length() > 0 {
+		if dt, ok := d.Attr("datetime"); ok && strings.TrimSpace(dt) != "" {
+			raw = strings.TrimSpace(dt)
+		} else {
+			raw = strings.TrimSpace(d.Text())
+		}
+	}
+	if pubDate(raw) != "" {
+		return raw
+	}
+	return scanDate(s.Text())
+}
+
+// dateScanRe matches candidate date substrings: a "Month D, YYYY" label
+// (the capitalised word is validated as a real month by pubDate) and an
+// ISO date with an optional RFC3339 time/offset.
+var dateScanRe = regexp.MustCompile(`[A-Z][a-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?)?`)
+
+// scanDate returns the first date-like substring in text that pubDate can
+// actually parse, or "". The pubDate check guards against false positives
+// — a "Foo 3, 2024" that matches the shape but names no real month.
+func scanDate(text string) string {
+	for _, m := range dateScanRe.FindAllString(text, -1) {
+		if pubDate(m) != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // pubDate normalises a scraped date into an RFC1123Z string gofeed will

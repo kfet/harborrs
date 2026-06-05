@@ -487,6 +487,15 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 	return added, nil
 }
 
+// KnownHashes returns the set of entry hashes currently persisted for a
+// feed (current + all archives). It is exported for the poll-stage Webflow
+// content enrichment, which must distinguish brand-new entries from ones
+// already stored *before* AppendEntries runs, so that later polls only
+// fetch detail pages for newly-published posts.
+func (s *Store) KnownHashes(feedHash string) (map[string]bool, error) {
+	return s.knownHashes(feedHash)
+}
+
 // knownHashes returns the set of entry hashes currently known for a feed
 // across current + all archives.
 func (s *Store) knownHashes(feedHash string) (map[string]bool, error) {

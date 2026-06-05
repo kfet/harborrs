@@ -291,3 +291,61 @@ func TestLooksLikeXML(t *testing.T) {
 		}
 	}
 }
+
+// --- date extraction (FIX A) ---------------------------------------------
+
+// A Webflow index that renders the date as plain text in a <div> (not a
+// <time datetime>) must still yield a real pubDate via the text scan.
+func TestWebflowToFeed_PlainTextDateScan(t *testing.T) {
+	r, _ := Build(Spec{Name: "webflow-to-feed"})
+	in := `<html data-wf-site="x"><head><title>B</title></head><body>
+		<div class="w-dyn-item"><a href="/p/1"><h3>Post One</h3></a>
+			<div class="u-text-style-caption">May 19, 2026</div></div>
+		<div class="w-dyn-item"><a href="/p/2"><h3>Post Two</h3></a>
+			<div class="caption">2026-04-15</div></div>
+		<div class="w-dyn-item"><a href="/p/3"><h3>Post Three no date</h3></a></div>
+		<div class="w-dyn-item"><a href="/p/4"><h3>Post Four</h3></a>
+			<time>tomorrow</time><div class="caption">Jan 5, 2026</div></div>
+	</body></html>`
+	out, err := r.Transform([]byte(in), FeedMeta{URL: "https://b.test/blog", ContentType: "text/html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := gofeed.NewParser().ParseString(string(out))
+	if err != nil {
+		t.Fatalf("parse: %v\n%s", err, out)
+	}
+	if len(f.Items) != 4 {
+		t.Fatalf("items=%d", len(f.Items))
+	}
+	wantDate := func(i int, want string) {
+		t.Helper()
+		if f.Items[i].PublishedParsed == nil {
+			t.Fatalf("item %d has no parsed date", i)
+		}
+		if got := f.Items[i].PublishedParsed.UTC().Format("2006-01-02"); got != want {
+			t.Errorf("item %d date = %s, want %s", i, got, want)
+		}
+	}
+	wantDate(0, "2026-05-19") // plain-text "Month D, YYYY" div
+	wantDate(1, "2026-04-15") // ISO date in a div
+	if f.Items[2].PublishedParsed != nil {
+		t.Errorf("item 2 should have no date, got %v", f.Items[2].PublishedParsed)
+	}
+	wantDate(3, "2026-01-05") // <time> text unparseable -> falls back to div scan
+}
+
+func TestScanDate(t *testing.T) {
+	cases := map[string]string{
+		"posted May 19, 2026 by x":     "May 19, 2026",
+		"date 2026-04-15 ok":           "2026-04-15",
+		"at 2026-04-15T10:00:00Z done": "2026-04-15T10:00:00Z",
+		"Foo 3, 2024 not a month":      "", // matches shape but no real month
+		"no date here at all":          "",
+	}
+	for in, want := range cases {
+		if got := scanDate(in); got != want {
+			t.Errorf("scanDate(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
