@@ -174,6 +174,31 @@ func TestHome(t *testing.T) {
 	}
 }
 
+func TestHelpOverlayTouchGestures(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	w := do(mux, req("GET", "/ui/", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("home code=%d", w.Code)
+	}
+	body := w.Body.String()
+	// The ? help overlay must document the revised (v2) swipe mapping:
+	// swipe-right = up, swipe-left = context action on entry/article and
+	// feed rows.
+	for _, want := range []string{
+		"touch gestures",
+		"swipe →",
+		"up the hierarchy",
+		"swipe ← (entry/article)",
+		"short: toggle read · long: toggle star",
+		"swipe ← (feed row)",
+		"open / drill into the feed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("help overlay missing %q", want)
+		}
+	}
+}
+
 func seed(t *testing.T, st *store.Store, op *memOPML, count int) string {
 	t.Helper()
 	u := "https://demo.example/feed"

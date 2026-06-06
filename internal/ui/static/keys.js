@@ -60,19 +60,41 @@
 //     (e.g. you hit Back from an entry view), it is force-reloaded
 //     so read/star toggles you made are reflected without F5.
 //
-// Touch gestures (touch devices, mirrors the keyboard nav):
-//   swipe LEFT  (right→left)            → up the hierarchy (same as
-//                                         `u` / ←: entry → feed, else
-//                                         universal up). Page-level;
-//                                         never fires from form fields
-//                                         or the help overlay.
-//   swipe RIGHT (left→right) on a row   → short swipe toggles READ,
-//                                         long swipe toggles STAR
-//                                         (clicks the row's .readbtn /
-//                                         .starbtn so htmx + OOB/focus
-//                                         patching keep working).
+// Touch gestures (touch devices, mirrors the keyboard nav). This
+// REVISES the v0.7.7 mapping: the two directions are flipped and the
+// left-swipe action is extended to feed rows and the article view.
+//
+//   swipe RIGHT (finger left→right, ">")  → up the hierarchy (same as
+//       `u` / ←: standalone entry → parent feed; any other non-home
+//       page → universal up). Page-level; never fires from form fields
+//       or the help overlay. (This was swipe-LEFT in v0.7.7.)
+//
+//   swipe LEFT  (finger right→left, "<")  → context action, scoped to
+//       whichever element the gesture STARTED on:
+//         · entry row (ul.entries li): short swipe toggles READ,
+//           long swipe toggles STAR (clicks the row's .readbtn /
+//           .starbtn so htmx + OOB/focus patching keep working).
+//         · article view (.entry-full — standalone page OR inside
+//           #detail-pane): short → toggle read, long → toggle star
+//           (clicks .actions .readbtn / .starbtn). A swipe that starts
+//           on a link/button inside the article is left alone, and a
+//           swipe that starts inside a horizontally-scrollable element
+//           (wide code block / table) scrolls that element instead.
+//         · feed row (ul.feeds li): short swipe "enters" / drills into
+//           the feed (clicks the feed link, same as Enter / tapping it).
+//
+//   Live preview: while swiping LEFT the target element translates a
+//   little under the finger and reveals WHICH action will fire if you
+//   release now — a READ hint (●) past the short threshold switching to
+//   a STAR hint (★) past the long threshold for rows/articles, or an
+//   "open" hint (→) for feed rows. Releasing before the short threshold
+//   (or letting it become a vertical scroll) fires nothing and snaps
+//   back with no tint.
+//
 //   The axis is locked to horizontal only once |dx| dominates |dy| and
-//   passes a small slop, so vertical scrolling and taps are unaffected.
+//   passes a small slop, so vertical scrolling and taps are unaffected;
+//   preventDefault is called ONLY after that horizontal commit (which is
+//   why touchmove is registered with { passive:false }).
 (function () {
   "use strict";
 
@@ -595,19 +617,24 @@
 
   // ---- touch swipe gestures ----------------------------------------
   //
-  // Two touch-only gestures that mirror the keyboard nav, for narrow /
+  // Touch-only gestures that mirror the keyboard nav, for narrow /
   // touch devices. Implemented with touchstart/move/end (clean, no
   // Pointer-Event polyfilling) and dependency-free.
   //
-  //   SWIPE LEFT  (finger right→left)  → up the hierarchy. Page-level:
+  //   SWIPE RIGHT (finger left→right) → up the hierarchy. Page-level:
   //       runs the SAME goUp() the `u` / ← keys use (standalone entry
   //       view → parent feed; any other non-home page → universal up).
-  //   SWIPE RIGHT (finger left→right) ON AN ENTRY ROW (ul.entries li):
-  //       short swipe → toggle READ  (clicks the row's .readbtn)
-  //       long  swipe → toggle STAR  (clicks the row's .starbtn)
-  //       Using the row's existing buttons keeps htmx + the OOB/focus
-  //       patching working unchanged. The row translates a little during
-  //       the drag and snaps back on release.
+  //   SWIPE LEFT (finger right→left) → context action scoped to the
+  //       element the gesture started on:
+  //         entry row  : short → toggle READ (.readbtn),
+  //                      long  → toggle STAR (.starbtn)
+  //         article    : short → toggle READ (.actions .readbtn),
+  //                      long  → toggle STAR (.actions .starbtn)
+  //         feed row   : short → enter / drill into the feed (its link)
+  //       Using the elements' existing buttons/links keeps htmx + the
+  //       OOB/focus patching working unchanged. The element translates a
+  //       little during the drag, previews the pending action, and snaps
+  //       back on release.
   //
   // Axis lock: we only commit to a horizontal swipe once |dx| clearly
   // dominates |dy| and passes a small slop — until then the browser is
@@ -615,30 +642,65 @@
   // commit, which is why touchmove is registered with { passive:false }.
   // Taps never lock the axis, so taps/button-clicks/link-opens are
   // unaffected. The gesture never starts from a form field or while the
-  // help overlay is open.
+  // help overlay is open. A left-swipe that starts inside a
+  // horizontally-scrollable element (wide code block / table in an
+  // article) is left to scroll that element natively.
   (function () {
     const SLOP = 10;        // px of travel before we decide the axis
-    const SHORT = 40;       // px right-swipe to toggle read
-    const LONG = 120;       // px right-swipe to toggle star instead
-    const CAP = 150;        // max px the row visually translates
-    const LEFT_BACK = 60;   // px left-swipe to trigger up-the-hierarchy
+    const SHORT = 40;       // px left-swipe to toggle read / enter feed
+    const LONG = 120;       // px left-swipe to toggle star instead
+    const CAP = 150;        // max px the element visually translates
+    const BACK = 60;        // px right-swipe to trigger up-the-hierarchy
 
     let sx = 0, sy = 0;
     let tracking = false;
     let axis = null;        // null | 'h' | 'v'
-    let row = null;         // entry row captured at touchstart (right-swipe)
+    let actionEl = null;    // element captured at touchstart (left-swipe)
+    let kind = null;        // null | 'entry' | 'feed' | 'article'
+    let letScroll = false;  // touch started in a horizontal scroller
 
-    const snapBack = function (r) {
-      if (!r) return;
-      r.style.transition = "transform 0.15s ease-out";
-      r.style.transform = "";
-      r.classList.remove("swipe-read", "swipe-star");
-      setTimeout(function () { r.style.transition = ""; }, 160);
+    // Walk ancestors from `node` up to (but not including) `stop`,
+    // looking for an element that can scroll horizontally and currently
+    // has room to. Used so a left-swipe that begins inside a wide code
+    // block / table scrolls that element instead of firing an action.
+    const inHScroll = function (node, stop) {
+      let el = node;
+      while (el && el !== stop && el.nodeType === 1) {
+        const ox = window.getComputedStyle(el).overflowX;
+        if ((ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1) return true;
+        el = el.parentElement;
+      }
+      return false;
+    };
+
+    const snapBack = function (el) {
+      if (!el) return;
+      el.style.transition = "transform 0.15s ease-out";
+      el.style.transform = "";
+      el.classList.remove("swipe-read", "swipe-star", "swipe-open");
+      setTimeout(function () { el.style.transition = ""; }, 160);
+    };
+    // setPreview: reflect WHICH action would fire at the current drag
+    // distance (dist = how far left, in px). Rows/articles tint toward
+    // read past SHORT and star past LONG; feed rows show the "open" hint.
+    const setPreview = function (el, dist) {
+      if (kind === "feed") {
+        el.classList.toggle("swipe-open", dist >= SHORT);
+      } else {
+        el.classList.toggle("swipe-star", dist >= LONG);
+        el.classList.toggle("swipe-read", dist >= SHORT && dist < LONG);
+      }
+    };
+    const clickSel = function (el, sel) {
+      const b = el.querySelector(sel);
+      if (b) b.click();
     };
     const reset = function () {
       tracking = false;
       axis = null;
-      row = null;
+      actionEl = null;
+      kind = null;
+      letScroll = false;
     };
 
     document.addEventListener("touchstart", function (e) {
@@ -650,13 +712,31 @@
       sx = t.clientX; sy = t.clientY;
       tracking = true;
       axis = null;
-      const li = e.target.closest ? e.target.closest("ul.entries li") : null;
-      row = (li && !li.classList.contains("empty")) ? li : null;
+      actionEl = null; kind = null; letScroll = false;
+      const tgt = e.target;
+      if (!tgt || !tgt.closest) return;
+      // Resolve the left-swipe target. Entry rows take precedence, then
+      // feed rows, then the article surface (these live in disjoint DOM
+      // regions, so at most one matches in practice).
+      const eli = tgt.closest("ul.entries li");
+      if (eli && !eli.classList.contains("empty")) { kind = "entry"; actionEl = eli; }
+      if (!actionEl) {
+        const fli = tgt.closest("ul.feeds li");
+        if (fli && !fli.classList.contains("empty")) { kind = "feed"; actionEl = fli; }
+      }
+      if (!actionEl) {
+        const art = tgt.closest(".entry-full");
+        // Don't hijack swipes that start on a link/button in the article.
+        if (art && !tgt.closest("a, button")) { kind = "article"; actionEl = art; }
+      }
+      // If the touch began inside a horizontally-scrollable element, let
+      // that element scroll — never translate/act on a left swipe.
+      if (inHScroll(tgt, actionEl || document.body)) letScroll = true;
     }, { passive: true });
 
     document.addEventListener("touchmove", function (e) {
       if (!tracking) return;
-      if (e.touches.length !== 1) { reset(); return; }
+      if (e.touches.length !== 1) { if (actionEl) snapBack(actionEl); reset(); return; }
       const t = e.touches[0];
       const dx = t.clientX - sx;
       const dy = t.clientY - sy;
@@ -666,47 +746,54 @@
         else return;
       }
       if (axis !== "h") return;          // vertical — let the page scroll
+      if (letScroll) return;             // horizontal scroller — let it scroll
       e.preventDefault();                // committed horizontal swipe
-      // Visual feedback: only the right-swipe-on-a-row case translates.
-      if (row && dx > 0) {
-        const tx = Math.min(dx, CAP);
-        row.style.transition = "";
-        row.style.transform = "translateX(" + tx + "px)";
-        row.classList.toggle("swipe-star", tx >= LONG);
-        row.classList.toggle("swipe-read", tx >= SHORT && tx < LONG);
+      // Live preview: only the left-swipe (dx < 0) on a captured element
+      // translates and previews. The right-swipe (up) is page-level and
+      // has no per-element feedback.
+      if (actionEl && dx < 0) {
+        const tx = Math.max(dx, -CAP);
+        actionEl.style.transition = "";
+        actionEl.style.transform = "translateX(" + tx + "px)";
+        setPreview(actionEl, -dx);
+      } else if (actionEl) {
+        // Drifted back rightward — clear any preview shown so far.
+        actionEl.style.transform = "";
+        actionEl.classList.remove("swipe-read", "swipe-star", "swipe-open");
       }
     }, { passive: false });
 
     document.addEventListener("touchend", function (e) {
       if (!tracking) { reset(); return; }
-      const committed = axis === "h";
-      const r = row;
+      const committed = axis === "h" && !letScroll;
+      const el = actionEl;
+      const k = kind;
       if (committed) {
         const t = (e.changedTouches && e.changedTouches[0]) || null;
         const dx = t ? t.clientX - sx : 0;
-        if (r && dx > 0) {
-          // Right swipe on a row → read (short) or star (long).
-          snapBack(r);
-          if (dx >= LONG) {
-            const b = r.querySelector(".starbtn");
-            if (b) b.click();
-          } else if (dx >= SHORT) {
-            const b = r.querySelector(".readbtn");
-            if (b) b.click();
-          }
-        } else if (dx <= -LEFT_BACK) {
-          // Left swipe anywhere → up the hierarchy.
-          if (r) snapBack(r);
+        if (el) snapBack(el);
+        if (dx >= BACK) {
+          // Right swipe → up the hierarchy (page-level).
           goUp();
-        } else if (r) {
-          snapBack(r);
+        } else if (dx < 0 && el) {
+          // Left swipe → context action scoped to the captured element.
+          const dist = -dx;
+          if (k === "feed") {
+            if (dist >= SHORT) clickSel(el, "a");
+          } else if (k === "article") {
+            if (dist >= LONG) clickSel(el, ".actions .starbtn");
+            else if (dist >= SHORT) clickSel(el, ".actions .readbtn");
+          } else { // entry row
+            if (dist >= LONG) clickSel(el, ".starbtn");
+            else if (dist >= SHORT) clickSel(el, ".readbtn");
+          }
         }
       }
       reset();
     }, { passive: true });
 
     document.addEventListener("touchcancel", function () {
-      if (row) snapBack(row);
+      if (actionEl) snapBack(actionEl);
       reset();
     }, { passive: true });
   })();

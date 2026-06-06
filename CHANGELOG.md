@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Touch swipe gestures revised (revises the 0.7.7 mapping).** The two
+  swipe directions are flipped and the action swipe is extended:
+  - **Swipe right** (left→right) now goes **up the hierarchy** (was
+    swipe-left in 0.7.7) — same code path as `u` / `←`.
+  - **Swipe left** (right→left) is now the **context action**, scoped to
+    the element the swipe starts on: on an **entry row** a short swipe
+    toggles read and a long swipe stars (was swipe-right in 0.7.7); in
+    the **article view** (standalone page or split-panel `#detail-pane`)
+    a short swipe toggles read and a long swipe stars (new); on a **feed
+    row** it enters / drills into the feed.
+  - **Live action preview:** while swiping left the target element
+    translates under the finger and reveals which action will fire on
+    release — a read hint (●) past the short threshold switching to a
+    star hint (★) past the long threshold for rows/articles, or an open
+    hint (→) for feed rows. Releasing before the short threshold, or
+    letting the gesture become a vertical scroll, fires nothing and
+    snaps back with no tint.
+  - A left swipe that begins inside a horizontally-scrollable element
+    (wide code block / table in an article) scrolls that element instead
+    of firing an action, and a swipe starting on a link/button in the
+    article is left alone. The `?` help overlay documents the new
+    mapping.
+
 ## [0.7.7] - 2026-06-06
 
 ### Added

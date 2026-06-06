@@ -484,13 +484,38 @@ ul.entries {
 .entry.read > a { color: var(--muted); font-weight: 400; }
 .entry:not(.read) > a { font-weight: 600; }
 .entry.starred::before { content: "★ "; color: var(--star); }
-/* Touch swipe feedback: the row translates under the finger during a
-   committed right-swipe (see static/keys.js). swipe-read tints toward
-   the read action (short swipe), swipe-star toward the star action
-   (long swipe). The inline transform is cleared on release. */
-.entry { touch-action: pan-y; }
+/* Touch swipe feedback: the element translates under the finger during
+   a committed LEFT swipe (see static/keys.js) and reveals which action
+   will fire on release. swipe-read tints + shows a ● hint (short swipe →
+   toggle read); swipe-star tints + shows a ★ hint (long swipe → toggle
+   star); swipe-open shows a → hint (feed row → enter / drill in). The
+   inline transform is cleared on release. touch-action: pan-y lets the
+   browser own vertical scrolling while we handle horizontal swipes. */
+.entry, .feeds li { touch-action: pan-y; }
+.entry, .feeds li, .entry-full { position: relative; }
 .entry.swipe-read { background: var(--accent-soft); }
 .entry.swipe-star { background: var(--star-soft, var(--accent-soft)); }
+.entry-full.swipe-read { background: var(--accent-soft); }
+.entry-full.swipe-star { background: var(--star-soft, var(--accent-soft)); }
+.feeds li.swipe-open { background: var(--accent-soft); }
+/* The action hint glyph, revealed at the trailing (right) edge as the
+   element slides left under the finger. */
+.entry.swipe-read::after,
+.entry.swipe-star::after,
+.feeds li.swipe-open::after,
+.entry-full.swipe-read::after,
+.entry-full.swipe-star::after {
+  position: absolute;
+  top: 50%;
+  right: 0.4em;
+  transform: translateY(-50%);
+  font-size: 1.1em;
+  line-height: 1;
+  pointer-events: none;
+}
+.entry.swipe-read::after, .entry-full.swipe-read::after { content: "●"; color: var(--accent); }
+.entry.swipe-star::after, .entry-full.swipe-star::after { content: "★"; color: var(--star); }
+.feeds li.swipe-open::after { content: "→"; color: var(--accent); }
 .entry.kb-focus {
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
