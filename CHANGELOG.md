@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-06-06
+
 ### Changed
 
 - **Touch swipe gestures revised (revises the 0.7.7 mapping).** The two
