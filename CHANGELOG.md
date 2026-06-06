@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-06-06
+
 ### Added
 
 - **Touch swipe gestures (mobile / touch web UI).** Two touch-only
