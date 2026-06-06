@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Auto-select the first row in split views (desktop).** On wide
+  screens (≥ 64em), when a split view loads with at least one visible
+  row, the first visible row is now auto-selected and its preview shown
+  in the right pane, so you never land on an empty detail pane. Applies
+  to the home master-detail (`/ui/`, first feed → `#feed-pane`) and the
+  entry-list split (`/ui/feed`, `/ui/all`, `/ui/starred`, first entry →
+  `#detail-pane`), and re-applies when navigating between the views and
+  on bfcache restores. It is a fallback only — an existing restored
+  selection is preferred — respects the unread-only / tag filters, is
+  inert on narrow screens, and leaves empty lists showing their
+  placeholder. The previewed first entry follows the existing ~0.7 s
+  dwell auto-mark-read rule; merely loading a list marks nothing else
+  read.
+
 ## [0.7.5] - 2026-06-05
 
 ### Added

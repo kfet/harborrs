@@ -24,6 +24,22 @@
 //   On narrow screens the home view stays a plain feeds list and these
 //   keys are inert (Enter follows the feed link as a full-page nav).
 //
+// Auto-select-first (wide screens ≥ 64em only):
+//   When a split view loads (or is restored from bfcache) with at
+//   least one visible row and nothing already selected, the first
+//   visible row is auto-selected so the right pane is never empty:
+//     - home (/ui/)       → first feed row selected, its entries
+//                           previewed into #feed-pane
+//     - entry list views  → first entry row selected, its article
+//                           previewed into #detail-pane
+//   This is a fallback only: an existing restored selection (via the
+//   focusedHash logic) is preferred and never overridden. It respects
+//   the unread-only / tag filters ("first visible row" = the first row
+//   per the rows() helper) and is inert on narrow screens. Previewing
+//   the first article follows the normal ~0.7 s dwell auto-mark-read
+//   rule (it is a genuinely-shown entry); merely loading a list never
+//   marks anything else read.
+//
 // Entry-list additions:
 //   r      → toggle row's read state
 //   s      → toggle row's star
@@ -325,6 +341,24 @@
         }
       }
     };
+    // Auto-select the first visible row as a fallback when the split
+    // view loads (or is restored from bfcache, which force-reloads) and
+    // nothing is selected yet — so the right pane never lands empty.
+    // Wide-screen only and gated on the target pane existing. We defer
+    // to any selection already restored by reapplyFocus (idx >= 0): the
+    // focusedHash restoration wins; this only fires when idx < 0. The
+    // first "visible" row is rows()[0] — rows() already drops empty and
+    // hidden (collapsed-group / filtered-out) rows, so unread-only and
+    // tag filters are honoured. focusRow(0) sets focus AND schedules the
+    // preview (entry article into #detail-pane, feed entries into
+    // #feed-pane). Empty lists leave the pane's placeholder untouched.
+    const autoSelectFirst = function () {
+      if (!wideScreen() || idx >= 0) return;
+      const paneSel = isEntryList ? "#detail-pane" : "#feed-pane";
+      if (!document.querySelector(paneSel)) return;
+      if (rows().length === 0) return;
+      focusRow(0);
+    };
     // Mouse/tap click on a row → treat it as the new keyboard focus, so
     // subsequent j/k navigation continues from the clicked row. Event
     // delegation on the list lets the row's icon-buttons keep their own
@@ -413,6 +447,11 @@
           break;
       }
     });
+
+    // Initial fallback selection — runs once after wiring, after any
+    // synchronous reapplyFocus from load-time swaps. The idx<0 guard
+    // inside means a restored selection is preferred.
+    autoSelectFirst();
   }
 
   // ---- entry view --------------------------------------------------
