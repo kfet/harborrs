@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-06-05
+
 ### Added
 
 - **Auto-select the first row in split views (desktop).** On wide
