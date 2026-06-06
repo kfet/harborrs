@@ -59,6 +59,20 @@
 //   - When a page is restored from the browser's back/forward cache
 //     (e.g. you hit Back from an entry view), it is force-reloaded
 //     so read/star toggles you made are reflected without F5.
+//
+// Touch gestures (touch devices, mirrors the keyboard nav):
+//   swipe LEFT  (right→left)            → up the hierarchy (same as
+//                                         `u` / ←: entry → feed, else
+//                                         universal up). Page-level;
+//                                         never fires from form fields
+//                                         or the help overlay.
+//   swipe RIGHT (left→right) on a row   → short swipe toggles READ,
+//                                         long swipe toggles STAR
+//                                         (clicks the row's .readbtn /
+//                                         .starbtn so htmx + OOB/focus
+//                                         patching keep working).
+//   The axis is locked to horizontal only once |dx| dominates |dy| and
+//   passes a small slop, so vertical scrolling and taps are unaffected.
 (function () {
   "use strict";
 
@@ -159,24 +173,58 @@
       return u;
     } catch (_) { return null; }
   };
-  document.addEventListener("keydown", function (e) {
-    if (inEditable(e) || helpOpen()) return;
-    if (e.key !== "u" && e.key !== "ArrowLeft") return;
-    // In split-panel mode the entry detail lives inside #detail-pane;
-    // that doesn't count as "on the entry view" — the universal u
-    // should still walk us up to /ui/. Only bail when the article is
-    // the page-level one (i.e. the standalone /ui/entry view).
+  // isListPath: true when a same-origin referrer pathname is one of the
+  // list pages under the /ui/ root (home, feed, all, starred).
+  const isListPath = function (p) {
+    if (p === UI_ROOT || p + "/" === UI_ROOT) return true;
+    if (!p.startsWith(UI_ROOT)) return false;
+    const tail = p.slice(UI_ROOT.length);
+    return tail === "feed" || tail === "all" || tail === "starred";
+  };
+  // universalUp: walk up the hierarchy from any page that ISN'T the
+  // standalone entry view. In split-panel mode the entry detail lives
+  // inside #detail-pane; that doesn't count as "on the entry view" — we
+  // still walk up to /ui/. Returns true when it navigated (so a keyboard
+  // caller knows to preventDefault).
+  const universalUp = function () {
     const article = $(".entry-full");
-    if (article && !article.closest("#detail-pane")) return;
+    if (article && !article.closest("#detail-pane")) return false;
     const path = window.location.pathname;
-    if (path === UI_ROOT || path + "/" === UI_ROOT) return;  // already at top
+    if (path === UI_ROOT || path + "/" === UI_ROOT) return false;  // already at top
     const ref = sameOriginRef();
     if (ref && (ref.pathname === UI_ROOT || ref.pathname + "/" === UI_ROOT)) {
       window.history.back();
     } else {
       window.location.href = BASE;
     }
-    e.preventDefault();
+    return true;
+  };
+  // entryUp: standalone entry view → back to the parent feed. Prefer
+  // history.back() when we came from a same-origin list page (restores
+  // pill/scroll state); else follow the canonical parent-feed link in
+  // the meta line.
+  const entryUp = function () {
+    const ref = sameOriginRef();
+    if (ref && isListPath(ref.pathname)) {
+      window.history.back();
+    } else {
+      const a = $(".meta a[href*='feed?id=']");
+      if (a) window.location.href = a.href;
+    }
+  };
+  // goUp: the single page-level "up the hierarchy" action shared by the
+  // `u` / ← keys AND the swipe-left touch gesture. On the standalone
+  // entry view it goes to the parent feed (entryUp); everywhere else it
+  // runs the universal behaviour (universalUp). Returns true if it acted.
+  const goUp = function () {
+    const article = $(".entry-full");
+    if (article && !article.closest("#detail-pane")) { entryUp(); return true; }
+    return universalUp();
+  };
+  document.addEventListener("keydown", function (e) {
+    if (inEditable(e) || helpOpen()) return;
+    if (e.key !== "u" && e.key !== "ArrowLeft") return;
+    if (universalUp()) e.preventDefault();
   });
 
   // ---- N — toggle "show unread only" filter ------------------------
@@ -537,35 +585,131 @@
           break;
         }
         case "u": {
-          // Prefer going back via history when we came from a list
-          // page on the same origin — that restores the unread-only
-          // pill state, scroll position, and (via our bfcache reload)
-          // shows the fresh read/star state. Fall back to the
-          // canonical parent feed link in the meta line.
-          const ref = sameOriginRef();
-          // List-page pathnames are UI_ROOT (home) or its siblings
-          // feed/all/starred under the same /ui/ root. Match by
-          // stripping UI_ROOT off the referrer pathname.
-          const isListPath = function (p) {
-            if (p === UI_ROOT || p + "/" === UI_ROOT) return true;
-            if (!p.startsWith(UI_ROOT)) return false;
-            const tail = p.slice(UI_ROOT.length);
-            return tail === "feed" || tail === "all" || tail === "starred";
-          };
-          if (ref && isListPath(ref.pathname)) {
-            window.history.back();
-          } else {
-            // The .meta link to the parent feed is rendered as a
-            // page-relative href like "feed?id=..." — match by a
-            // substring so we work regardless of any path prefix.
-            const a = $(".meta a[href*='feed?id=']");
-            if (a) window.location.href = a.href;
-          }
+          // Shared with the swipe-left gesture — see entryUp above.
+          entryUp();
           break;
         }
       }
     });
   }
+
+  // ---- touch swipe gestures ----------------------------------------
+  //
+  // Two touch-only gestures that mirror the keyboard nav, for narrow /
+  // touch devices. Implemented with touchstart/move/end (clean, no
+  // Pointer-Event polyfilling) and dependency-free.
+  //
+  //   SWIPE LEFT  (finger right→left)  → up the hierarchy. Page-level:
+  //       runs the SAME goUp() the `u` / ← keys use (standalone entry
+  //       view → parent feed; any other non-home page → universal up).
+  //   SWIPE RIGHT (finger left→right) ON AN ENTRY ROW (ul.entries li):
+  //       short swipe → toggle READ  (clicks the row's .readbtn)
+  //       long  swipe → toggle STAR  (clicks the row's .starbtn)
+  //       Using the row's existing buttons keeps htmx + the OOB/focus
+  //       patching working unchanged. The row translates a little during
+  //       the drag and snaps back on release.
+  //
+  // Axis lock: we only commit to a horizontal swipe once |dx| clearly
+  // dominates |dy| and passes a small slop — until then the browser is
+  // left to scroll vertically. preventDefault is called ONLY after that
+  // commit, which is why touchmove is registered with { passive:false }.
+  // Taps never lock the axis, so taps/button-clicks/link-opens are
+  // unaffected. The gesture never starts from a form field or while the
+  // help overlay is open.
+  (function () {
+    const SLOP = 10;        // px of travel before we decide the axis
+    const SHORT = 40;       // px right-swipe to toggle read
+    const LONG = 120;       // px right-swipe to toggle star instead
+    const CAP = 150;        // max px the row visually translates
+    const LEFT_BACK = 60;   // px left-swipe to trigger up-the-hierarchy
+
+    let sx = 0, sy = 0;
+    let tracking = false;
+    let axis = null;        // null | 'h' | 'v'
+    let row = null;         // entry row captured at touchstart (right-swipe)
+
+    const snapBack = function (r) {
+      if (!r) return;
+      r.style.transition = "transform 0.15s ease-out";
+      r.style.transform = "";
+      r.classList.remove("swipe-read", "swipe-star");
+      setTimeout(function () { r.style.transition = ""; }, 160);
+    };
+    const reset = function () {
+      tracking = false;
+      axis = null;
+      row = null;
+    };
+
+    document.addEventListener("touchstart", function (e) {
+      if (e.touches.length !== 1) { reset(); return; }
+      const t = e.touches[0];
+      // Never treat a touch inside a form field or the help overlay as a
+      // navigation gesture.
+      if (inEditable(e) || helpOpen()) { reset(); return; }
+      sx = t.clientX; sy = t.clientY;
+      tracking = true;
+      axis = null;
+      const li = e.target.closest ? e.target.closest("ul.entries li") : null;
+      row = (li && !li.classList.contains("empty")) ? li : null;
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!tracking) return;
+      if (e.touches.length !== 1) { reset(); return; }
+      const t = e.touches[0];
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      if (axis === null) {
+        if (Math.abs(dx) > SLOP && Math.abs(dx) > Math.abs(dy)) axis = "h";
+        else if (Math.abs(dy) > SLOP) { axis = "v"; return; }
+        else return;
+      }
+      if (axis !== "h") return;          // vertical — let the page scroll
+      e.preventDefault();                // committed horizontal swipe
+      // Visual feedback: only the right-swipe-on-a-row case translates.
+      if (row && dx > 0) {
+        const tx = Math.min(dx, CAP);
+        row.style.transition = "";
+        row.style.transform = "translateX(" + tx + "px)";
+        row.classList.toggle("swipe-star", tx >= LONG);
+        row.classList.toggle("swipe-read", tx >= SHORT && tx < LONG);
+      }
+    }, { passive: false });
+
+    document.addEventListener("touchend", function (e) {
+      if (!tracking) { reset(); return; }
+      const committed = axis === "h";
+      const r = row;
+      if (committed) {
+        const t = (e.changedTouches && e.changedTouches[0]) || null;
+        const dx = t ? t.clientX - sx : 0;
+        if (r && dx > 0) {
+          // Right swipe on a row → read (short) or star (long).
+          snapBack(r);
+          if (dx >= LONG) {
+            const b = r.querySelector(".starbtn");
+            if (b) b.click();
+          } else if (dx >= SHORT) {
+            const b = r.querySelector(".readbtn");
+            if (b) b.click();
+          }
+        } else if (dx <= -LEFT_BACK) {
+          // Left swipe anywhere → up the hierarchy.
+          if (r) snapBack(r);
+          goUp();
+        } else if (r) {
+          snapBack(r);
+        }
+      }
+      reset();
+    }, { passive: true });
+
+    document.addEventListener("touchcancel", function () {
+      if (row) snapBack(row);
+      reset();
+    }, { passive: true });
+  })();
 
   // ---- mark-all-read click interceptor -----------------------------
   //

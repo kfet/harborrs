@@ -484,6 +484,13 @@ ul.entries {
 .entry.read > a { color: var(--muted); font-weight: 400; }
 .entry:not(.read) > a { font-weight: 600; }
 .entry.starred::before { content: "★ "; color: var(--star); }
+/* Touch swipe feedback: the row translates under the finger during a
+   committed right-swipe (see static/keys.js). swipe-read tints toward
+   the read action (short swipe), swipe-star toward the star action
+   (long swipe). The inline transform is cleared on release. */
+.entry { touch-action: pan-y; }
+.entry.swipe-read { background: var(--accent-soft); }
+.entry.swipe-star { background: var(--star-soft, var(--accent-soft)); }
 .entry.kb-focus {
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);

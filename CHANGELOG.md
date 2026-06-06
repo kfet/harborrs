@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Touch swipe gestures (mobile / touch web UI).** Two touch-only
+  gestures mirror the keyboard nav. **Swipe left** (right→left) goes up
+  the hierarchy — the same action as the `u` / `←` keys (standalone
+  entry view → parent feed; any other non-home page → universal back-up)
+  — and shares one code path with them. **Swipe right on an entry row**
+  toggles state by distance: a short swipe (≥ 40px) toggles read, a long
+  swipe (≥ 120px) stars it, driving the row's existing buttons so htmx
+  and the OOB/focus patching keep working. The row translates under the
+  finger and snaps back on release. Gestures lock to the horizontal axis
+  only once horizontal movement clearly dominates (so vertical scrolling
+  and taps are unaffected), never fire from form fields or the help
+  overlay, and are documented in the `?` help overlay.
+
 ## [0.7.6] - 2026-06-05
 
 ### Added
