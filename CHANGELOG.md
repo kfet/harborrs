@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`o` keyboard shortcut on the entry view** opens the article's
+  original source URL in a new browser window/tab (no-op when the entry
+  has no source link). Documented in the keyboard-help overlay.
+
 
 ## [0.7.9] - 2026-06-07
 

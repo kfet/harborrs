@@ -48,6 +48,7 @@
 // On the entry view (/ui/entry):
 //   r      → mark read/unread
 //   s      → star/unstar
+//   o      → open source in new window
 //   u      → back to parent feed
 //
 // Behaviour:
@@ -609,6 +610,16 @@
         case "u": {
           // Shared with the swipe-left gesture — see entryUp above.
           entryUp();
+          break;
+        }
+        case "o": {
+          // Open the article's original source in a new window/tab.
+          // No-op when the entry has no source link.
+          const src = article.querySelector("a.source-link");
+          if (src) {
+            const href = src.getAttribute("href");
+            if (href) window.open(href, "_blank", "noopener");
+          }
           break;
         }
       }
