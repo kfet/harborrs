@@ -4,12 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.7.9] - 2026-06-07
+
 ### Added
 
 - **Rename a subscribed feed.** The feed page now has an inline rename
   form (an editable title field + a save button) so the display title of
   an already-subscribed feed can be changed. The new name persists to the
   OPML and is reflected on the feed page heading and the home feed list.
+
+### Fixed
+
+- **Entries whose feed body is only a bare link now show a preview.**
+  Some feeds (e.g. "News – CIRA") publish `content:encoded` as nothing
+  but a lone "Source" link with no article text, which suppressed the
+  entry preview. The entry view now detects content with no meaningful
+  text or media outside of `<a>` labels and falls back to the feed's
+  summary excerpt (the separate source link is unaffected).
 
 
 ## [0.7.8] - 2026-06-06
