@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -148,6 +149,7 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/feed/add", s.requireSession(s.handleFeedAdd))
 	mux.HandleFunc("/ui/feed/remove", s.requireSession(s.handleFeedRemove))
 	mux.HandleFunc("/ui/feed/tag", s.requireSession(s.handleFeedTag))
+	mux.HandleFunc("/ui/feed/rename", s.requireSession(s.handleFeedRename))
 	mux.HandleFunc("/ui/all", s.requireSession(s.handleAllUnread))
 	mux.HandleFunc("/ui/starred", s.requireSession(s.handleStarred))
 	mux.HandleFunc("/ui/entry", s.requireSession(s.handleEntry))
@@ -885,6 +887,53 @@ func (s *Server) handleFeedTag(w http.ResponseWriter, r *http.Request) {
 		FeedTags []string
 		AllTags  []string
 	}{u, feedTags, allTags})
+}
+
+// handleFeedRename changes the display title of an already-subscribed
+// feed. POST with form `url` + `title`. The trimmed title must be
+// non-empty (400 otherwise, mirroring the tag handler). On success the
+// new title is persisted to the OPML and the user is redirected back to
+// the feed page so the heading — and the home feed list on its next
+// load — reflect the new name.
+func (s *Server) handleFeedRename(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	u := strings.TrimSpace(r.FormValue("url"))
+	title := strings.TrimSpace(r.FormValue("title"))
+	if u == "" {
+		http.Error(w, "missing url", http.StatusBadRequest)
+		return
+	}
+	if title == "" {
+		http.Error(w, "missing title", http.StatusBadRequest)
+		return
+	}
+	notFound := false
+	err := s.OPML.Update(func(op *store.OPML) error {
+		f := op.Find(u)
+		if f == nil {
+			notFound = true
+			return errAbortOPMLUpdate
+		}
+		f.Title = title
+		return nil
+	})
+	if notFound {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Land back on the feed page so the renamed heading renders.
+	RelRedirect(w, r, "../feed?id="+url.QueryEscape(u), http.StatusSeeOther)
 }
 
 // handleFeedRemove unsubscribes.

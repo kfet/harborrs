@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Rename a subscribed feed.** The feed page now has an inline rename
+  form (an editable title field + a save button) so the display title of
+  an already-subscribed feed can be changed. The new name persists to the
+  OPML and is reflected on the feed page heading and the home feed list.
+
+
 ## [0.7.8] - 2026-06-06
 
 ### Changed

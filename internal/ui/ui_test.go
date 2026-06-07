@@ -1948,6 +1948,71 @@ func TestFeedTagChip(t *testing.T) {
 	}
 }
 
+func TestFeedRename(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "Old"}}
+	// Method check
+	if w := do(mux, req("GET", "/ui/feed/rename", tok, nil)); w.Code != 405 {
+		t.Fatalf("method=%d", w.Code)
+	}
+	// Success: title is trimmed and persisted, redirect back to feed.
+	form := url.Values{"url": {"https://x/feed"}, "title": {"  New Name  "}}
+	w := do(mux, req("POST", "/ui/feed/rename", tok, form))
+	if w.Code != 303 {
+		t.Fatalf("rename code=%d body=%s", w.Code, w.Body.String())
+	}
+	if op.op.Feeds[0].Title != "New Name" {
+		t.Fatalf("title not set: %q", op.op.Feeds[0].Title)
+	}
+	if loc := w.Header().Get("Location"); loc != "../feed?id="+url.QueryEscape("https://x/feed") {
+		t.Fatalf("loc=%q", loc)
+	}
+	// Missing url
+	if w := do(mux, req("POST", "/ui/feed/rename", tok, url.Values{"title": {"x"}})); w.Code != 400 {
+		t.Fatalf("missing url=%d", w.Code)
+	}
+	// Empty (whitespace-only) title
+	form2 := url.Values{"url": {"https://x/feed"}, "title": {"   "}}
+	if w := do(mux, req("POST", "/ui/feed/rename", tok, form2)); w.Code != 400 {
+		t.Fatalf("empty title=%d", w.Code)
+	}
+	// Unknown feed
+	form3 := url.Values{"url": {"https://nope/feed"}, "title": {"y"}}
+	if w := do(mux, req("POST", "/ui/feed/rename", tok, form3)); w.Code != 404 {
+		t.Fatalf("nope=%d", w.Code)
+	}
+	// Save error
+	op.saveErr = errBoom
+	if w := do(mux, req("POST", "/ui/feed/rename", tok, form)); w.Code != 500 {
+		t.Fatalf("save=%d", w.Code)
+	}
+	op.saveErr = nil
+}
+
+func TestFeedRenameParseFormErr(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	r := httptest.NewRequest("POST", "/ui/feed/rename", strings.NewReader("%ZZ"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("code=%d", w.Code)
+	}
+}
+
+func TestFeedViewIncludesRenameForm(t *testing.T) {
+	_, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{{XMLURL: "https://x/feed", Title: "Old"}}
+	w := do(mux, req("GET", "/ui/feed?id=https://x/feed", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `action="feed/rename"`) {
+		t.Fatalf("rename form missing: %s", w.Body.String())
+	}
+}
+
 func TestFeedAddDropsReservedTag(t *testing.T) {
 	// /ui/feed/add tags input must silently drop the reserved pseudo-
 	// tag name so the home sidebar's __untagged__ bucket can't be

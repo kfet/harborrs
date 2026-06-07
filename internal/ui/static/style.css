@@ -829,3 +829,32 @@ ul.entries {
 }
 .feed-source .copy-url:hover { border-color: var(--accent); color: var(--accent); }
 .feed-source .copy-url.copied { color: var(--accent); border-color: var(--accent); }
+
+.rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0 0 0.9em;
+  min-width: 0;
+}
+.rename-form .rename-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9em;
+  padding: 0.3em 0.5em;
+  color: var(--fg);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.rename-form .rename-save {
+  flex: none;
+  font-size: 0.8em;
+  padding: 0.35em 0.7em;
+  cursor: pointer;
+  color: var(--fg);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.rename-form .rename-save:hover { border-color: var(--accent); color: var(--accent); }
