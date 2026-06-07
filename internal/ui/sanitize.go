@@ -293,3 +293,64 @@ var allowedAttrs = map[string]map[string]bool{
 	"var":     {},
 	"wbr":     {},
 }
+
+// isLinkOnly reports whether s, parsed as HTML, carries no meaningful
+// content outside of <a> link labels — i.e. it is empty, whitespace, or
+// only a bare link. Some feeds publish exactly this as content:encoded
+// (a lone "Source"/"Read more" link), which is useless as an entry
+// preview, so entryBody falls back to the feeds Summary in that case.
+// isLinkOnly reports whether s, parsed as HTML, carries no meaningful
+// content outside of <a> link labels — i.e. it is empty, whitespace, or
+// only a bare link. Some feeds publish exactly this as content:encoded
+// (a lone "Source"/"Read more" link), which is useless as an entry
+// preview, so entryBody falls back to the feed's Summary in that case.
+//
+// Text inside an <a> is treated as a link label, not article content;
+// any non-link text, or any embedded media (img, figure, video, …),
+// counts as meaningful. A parse failure is reported as meaningful so a
+// genuine body is never discarded on a tokenizer edge case.
+func isLinkOnly(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return true
+	}
+	ctx := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
+	// ParseFragment with a valid context node is total on string input
+	// (the tokenizer never errors), so the error is ignored exactly as
+	// sanitizeHTML does; an empty node set simply yields link-only=true.
+	nodes, _ := html.ParseFragment(strings.NewReader(s), ctx)
+	for _, n := range nodes {
+		if hasMeaningfulContent(n, false) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasMeaningfulContent reports whether node n (or any descendant) holds
+// content worth showing as a preview. inLink is true when n is inside an
+// <a> subtree, in which case its text is a link label and ignored;
+// embedded media is meaningful regardless of link nesting.
+func hasMeaningfulContent(n *html.Node, inLink bool) bool {
+	switch n.Type {
+	case html.TextNode:
+		if inLink {
+			return false
+		}
+		return strings.TrimSpace(n.Data) != ""
+	case html.ElementNode:
+		switch strings.ToLower(n.Data) {
+		case "img", "picture", "figure", "video", "audio", "iframe", "embed", "object", "table":
+			return true
+		case "a":
+			inLink = true
+		}
+	default:
+		return false
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if hasMeaningfulContent(c, inLink) {
+			return true
+		}
+	}
+	return false
+}

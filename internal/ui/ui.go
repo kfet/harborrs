@@ -1043,7 +1043,12 @@ func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed
 // set a target.
 func entryBody(e store.Entry) template.HTML {
 	body := e.Content
-	if body == "" {
+	// Some feeds (e.g. WordPress sites that publish a bare "Source" link
+	// as content:encoded) carry no real article body in Content — just a
+	// link, whitespace, or nothing. The entry view already renders a
+	// separate source link, so such Content is useless as a preview; fall
+	// back to the Summary, which holds the actual excerpt.
+	if isLinkOnly(body) {
 		body = e.Summary
 	}
 	return template.HTML(sanitizeHTML(body))

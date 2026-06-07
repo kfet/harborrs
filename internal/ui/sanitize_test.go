@@ -258,3 +258,114 @@ func TestLinkURL(t *testing.T) {
 		}
 	}
 }
+
+// TestEntryBodyLinkOnlyFallback covers feeds (e.g. CIRA's WordPress feed)
+// whose content:encoded is only a bare "Source" link with no article
+// body. entryBody must treat such Content as empty and fall back to the
+// Summary excerpt, while keeping real Content (including media-only or
+// link-wrapped media) intact.
+func TestEntryBodyLinkOnlyFallback(t *testing.T) {
+	cases := []struct {
+		name        string
+		entry       store.Entry
+		wantContain string
+		wantAbsent  string
+	}{
+		{
+			name: "bare source link falls back to summary",
+			entry: store.Entry{
+				Content: `<p><a href="https://ex.com/x">Source</a></p>`,
+				Summary: "The real article excerpt.",
+			},
+			wantContain: "The real article excerpt.",
+			wantAbsent:  "Source",
+		},
+		{
+			name:        "empty content falls back to summary",
+			entry:       store.Entry{Content: "", Summary: "excerpt here"},
+			wantContain: "excerpt here",
+		},
+		{
+			name:        "whitespace-only content falls back to summary",
+			entry:       store.Entry{Content: "  \n\t ", Summary: "excerpt here"},
+			wantContain: "excerpt here",
+		},
+		{
+			name: "real text content is kept over summary",
+			entry: store.Entry{
+				Content: `<p>Full body text.</p>`,
+				Summary: "short excerpt",
+			},
+			wantContain: "Full body text.",
+			wantAbsent:  "short excerpt",
+		},
+		{
+			name: "link plus real text is kept",
+			entry: store.Entry{
+				Content: `<p>Intro paragraph. <a href="https://ex.com">more</a></p>`,
+				Summary: "excerpt",
+			},
+			wantContain: "Intro paragraph.",
+			wantAbsent:  "excerpt",
+		},
+		{
+			name: "image-only content is meaningful and kept",
+			entry: store.Entry{
+				Content: `<p><img src="https://ex.com/p.png" alt="pic"></p>`,
+				Summary: "excerpt",
+			},
+			wantContain: "<img",
+			wantAbsent:  "excerpt",
+		},
+		{
+			name: "linked image is meaningful and kept",
+			entry: store.Entry{
+				Content: `<a href="https://ex.com"><img src="https://ex.com/p.png"></a>`,
+				Summary: "excerpt",
+			},
+			wantContain: "<img",
+			wantAbsent:  "excerpt",
+		},
+		{
+			name:        "both empty yields empty",
+			entry:       store.Entry{Content: "", Summary: ""},
+			wantContain: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(entryBody(tc.entry))
+			if tc.wantContain != "" && !strings.Contains(got, tc.wantContain) {
+				t.Fatalf("got %q, want it to contain %q", got, tc.wantContain)
+			}
+			if tc.wantAbsent != "" && strings.Contains(got, tc.wantAbsent) {
+				t.Fatalf("got %q, want it to NOT contain %q", got, tc.wantAbsent)
+			}
+		})
+	}
+}
+
+// TestIsLinkOnlyParseFallback covers the defensive parse-failure branch:
+// malformed input the fragment parser rejects is treated as meaningful so
+// a genuine body is never discarded. ParseFragment is total on string
+// input, so this also documents that empty/whitespace short-circuits.
+func TestIsLinkOnly(t *testing.T) {
+	if !isLinkOnly("") {
+		t.Fatal("empty should be link-only")
+	}
+	if !isLinkOnly("   \n ") {
+		t.Fatal("whitespace should be link-only")
+	}
+	if isLinkOnly("plain text") {
+		t.Fatal("plain text is meaningful")
+	}
+	if !isLinkOnly(`<a href="x">label</a>`) {
+		t.Fatal("bare link is link-only")
+	}
+	if isLinkOnly(`<table><tr><td>x</td></tr></table>`) {
+		t.Fatal("table is meaningful")
+	}
+	if !isLinkOnly(`<!-- comment --><a href="x">label</a>`) {
+		t.Fatal("comment plus bare link is link-only")
+	}
+}
