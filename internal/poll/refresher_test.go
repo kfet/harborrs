@@ -259,6 +259,10 @@ func TestRefresherStopMidCycleCancelsBaseCtx(t *testing.T) {
 	r := NewRefresher(p, func() []string {
 		return []string{srv.URL + "/a", srv.URL + "/b", srv.URL + "/c"}
 	})
+	// Pin to one worker so the cancellation deterministically cuts the
+	// dispatch loop short: worker `a` blocks holding the only slot, so
+	// `b` is parked in the slot-acquire select when Stop cancels.
+	r.Concurrency = 1
 	r.Trigger(context.Background())
 	// Wait until the first feed's HTTP request is in flight.
 	deadline := time.Now().Add(2 * time.Second)
@@ -377,5 +381,148 @@ func TestTriggerMiddlewareNilRefresherIsNoop(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/anything", nil))
 	if !served {
 		t.Fatal("next not invoked")
+	}
+}
+
+// TestRefresherCycleBoundedConcurrency verifies (a) the worker pool
+// never exceeds Concurrency simultaneous polls, and (b) every feed is
+// polled exactly once in a cycle. The feed handler tracks live in-flight
+// requests and the max observed, gating each one on a barrier so the
+// pool genuinely fills.
+func TestRefresherCycleBoundedConcurrency(t *testing.T) {
+	const feeds = 24
+	const bound = 4
+	dir := t.TempDir()
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(s)
+
+	var live, maxLive, total atomic.Int64
+	gate := make(chan struct{})
+	hitsPer := make([]atomic.Int64, feeds)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := live.Add(1)
+		for {
+			old := maxLive.Load()
+			if cur <= old || maxLive.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		total.Add(1)
+		idx := int(r.URL.Query().Get("i")[0] - 'A')
+		if idx >= 0 && idx < feeds {
+			hitsPer[idx].Add(1)
+		}
+		<-gate // hold the slot so the pool fills up to its bound
+		live.Add(-1)
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+
+	urls := make([]string, feeds)
+	for i := range urls {
+		urls[i] = srv.URL + "/?i=" + string(rune('A'+i))
+	}
+	r := NewRefresher(p, func() []string { return urls })
+	r.Concurrency = bound
+	r.Trigger(context.Background())
+
+	// Wait until the pool is saturated (bound requests parked on gate).
+	deadline := time.Now().Add(3 * time.Second)
+	for live.Load() < bound && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if live.Load() < bound {
+		t.Fatalf("pool never reached bound: live=%d want>=%d", live.Load(), bound)
+	}
+	// Release everything and let the cycle drain.
+	close(gate)
+	waitIdle(t, r)
+	r.Stop()
+
+	if got := total.Load(); got != feeds {
+		t.Fatalf("total polls=%d, want %d (every feed exactly once)", got, feeds)
+	}
+	if got := maxLive.Load(); got > bound {
+		t.Fatalf("max in-flight=%d exceeded bound %d", got, bound)
+	}
+	for i := range hitsPer {
+		if n := hitsPer[i].Load(); n != 1 {
+			t.Fatalf("feed %d polled %d times, want 1", i, n)
+		}
+	}
+}
+
+// TestRefresherCycleEmptyFeeds covers the len(urls)==0 fast path: a
+// non-nil Feeds func returning no URLs must spawn no polls and return.
+func TestRefresherCycleEmptyFeeds(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := store.Open(dir)
+	p := New(s)
+	r := NewRefresher(p, func() []string { return []string{} })
+	r.wg.Add(1)
+	r.cycle(context.Background()) // direct call; no network
+}
+
+// TestRefresherCyclePreCancelledCtx covers the top-of-loop ctx.Err()
+// guard: a cycle entered with an already-cancelled ctx dispatches no
+// polls.
+func TestRefresherCyclePreCancelledCtx(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := store.Open(dir)
+	p := New(s)
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+	r := NewRefresher(p, func() []string { return []string{srv.URL + "/a", srv.URL + "/b"} })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.wg.Add(1)
+	r.cycle(ctx)
+	if hits.Load() != 0 {
+		t.Fatalf("hits=%d, want 0 (pre-cancelled ctx dispatches nothing)", hits.Load())
+	}
+}
+
+func TestPollConcurrencyFromEnv(t *testing.T) {
+	t.Setenv("HARB_POLL_CONCURRENCY", "")
+	if got := pollConcurrencyFromEnv(); got != DefaultPollConcurrency {
+		t.Fatalf("unset: got %d, want %d", got, DefaultPollConcurrency)
+	}
+	t.Setenv("HARB_POLL_CONCURRENCY", "garbage")
+	if got := pollConcurrencyFromEnv(); got != DefaultPollConcurrency {
+		t.Fatalf("invalid: got %d, want %d", got, DefaultPollConcurrency)
+	}
+	t.Setenv("HARB_POLL_CONCURRENCY", "0")
+	if got := pollConcurrencyFromEnv(); got != DefaultPollConcurrency {
+		t.Fatalf("zero: got %d, want %d", got, DefaultPollConcurrency)
+	}
+	t.Setenv("HARB_POLL_CONCURRENCY", "-3")
+	if got := pollConcurrencyFromEnv(); got != DefaultPollConcurrency {
+		t.Fatalf("negative: got %d, want %d", got, DefaultPollConcurrency)
+	}
+	t.Setenv("HARB_POLL_CONCURRENCY", "16")
+	if got := pollConcurrencyFromEnv(); got != 16 {
+		t.Fatalf("valid: got %d, want 16", got)
+	}
+}
+
+func TestRefresherConcurrencyResolution(t *testing.T) {
+	r := &Refresher{}
+	// Explicit field wins.
+	r.Concurrency = 5
+	if got := r.concurrency(); got != 5 {
+		t.Fatalf("field set: got %d, want 5", got)
+	}
+	// <=0 falls back to env/default.
+	r.Concurrency = 0
+	t.Setenv("HARB_POLL_CONCURRENCY", "11")
+	if got := r.concurrency(); got != 11 {
+		t.Fatalf("field zero -> env: got %d, want 11", got)
 	}
 }

@@ -39,10 +39,19 @@ import (
 const DefaultUserAgent = "harb"
 
 // Poller fetches feeds and writes results to a Store.
+//
+// Concurrency: a single Poller is safe to use from many goroutines at
+// once (the Refresher fans cycle() out across a bounded worker pool).
+// Everything Poll touches is either goroutine-safe (the *store.Store
+// guards its in-memory indexes with a RWMutex and writes per-feed
+// files; the resolve registry is read-only after init; DiskObserver
+// locks; http.Client is safe) or constructed fresh per call. In
+// particular Poll allocates a fresh gofeed.Parser per invocation
+// because gofeed.Parser is NOT goroutine-safe and carries no state
+// worth sharing.
 type Poller struct {
 	Store  *store.Store
 	Client *http.Client
-	Parser *gofeed.Parser
 	Now    func() time.Time
 	// MaxBodyBytes caps how much body we read per feed (default 10MiB).
 	MaxBodyBytes int64
@@ -63,7 +72,6 @@ func New(s *store.Store) *Poller {
 	return &Poller{
 		Store:        s,
 		Client:       safedial.NewClient(30 * time.Second),
-		Parser:       gofeed.NewParser(),
 		Now:          time.Now,
 		MaxBodyBytes: 10 * 1024 * 1024,
 		UserAgent:    DefaultUserAgent,
@@ -192,7 +200,10 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		return 0, p.recordErr(fh, &st, terr)
 	}
 
-	parsed, err := p.Parser.ParseString(string(transformed))
+	// gofeed.Parser is not goroutine-safe, so allocate a fresh one
+	// per poll: cheap, and lets N workers parse concurrently without
+	// a shared-parser data race.
+	parsed, err := gofeed.NewParser().ParseString(string(transformed))
 	if err != nil {
 		// Save the raw (pre-transform) body: it is what the fixer needs to
 		// diagnose, and what a new resolver Spec must learn to repair.

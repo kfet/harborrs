@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded concurrent feed polling.** A refresh cycle previously polled
+  feeds one-at-a-time, so a large OPML took the sum of every feed's
+  latency to finish. Cycles now fan feeds out across a bounded worker
+  pool (default 8 parallel polls), cutting wall-clock refresh time on
+  multi-hundred-feed OPMLs roughly by the pool size. The bound is
+  deliberate — it keeps a 1000-feed OPML from opening 1000 sockets/fds
+  or saturating the uplink at once. Tune with `HARB_POLL_CONCURRENCY`
+  (positive integer; invalid/unset falls back to 8) or the
+  `Refresher.Concurrency` field. Each poll uses its own feed parser, so
+  the fan-out is data-race-free; cancellation mid-cycle stops dispatch
+  promptly and drains in-flight polls.
+
 
 ## [0.7.11] - 2026-06-08
 

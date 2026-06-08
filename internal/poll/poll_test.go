@@ -572,7 +572,7 @@ func TestPoll304SaveFail(t *testing.T) {
 
 func TestNewSensibleDefaults(t *testing.T) {
 	p := New(nil)
-	if p.Client.Timeout == 0 || p.Parser == nil || p.Now == nil || p.MaxBodyBytes == 0 {
+	if p.Client.Timeout == 0 || p.Now == nil || p.MaxBodyBytes == 0 {
 		t.Fatalf("New defaults: %+v", p)
 	}
 }

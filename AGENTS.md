@@ -18,7 +18,13 @@ DB, single-user-first, stdlib-leaning Go.
 
 - **Storage on disk**, no SQL. See "Storage model" below.
 - **Polling loop** with ETag / Last-Modified conditional GETs and
-  adaptive per-feed intervals + error backoff.
+  adaptive per-feed intervals + error backoff. Each refresh cycle fans
+  feeds out across a **bounded worker pool** (default 8; override via
+  `HARB_POLL_CONCURRENCY` or `Refresher.Concurrency`). The bound exists
+  so a 1000-feed OPML can't exhaust fds or saturate the uplink. Poll is
+  goroutine-safe end-to-end: a fresh `gofeed.Parser` per poll (gofeed is
+  not goroutine-safe), the `store.Store` guards its in-memory indexes
+  and writes per-feed files, and cycles stay single-flight.
 - **OPML import / export**.
 - **Google Reader API subset** sufficient for Reeder Classic to sync,
   triage (mark read / starred), and refresh:

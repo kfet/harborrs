@@ -12,17 +12,22 @@
 // since the in-flight cycle will already see whatever's currently in
 // the OPML on its next iteration, that's fine.
 //
-// A cycle iterates every feed in the current OPML (sequentially, so we
-// don't accidentally fan-out to N goroutines on a big OPML) and calls
-// Poll for each. Per-feed 429/503 cooldown is honoured inside Poll via
-// the RetryAfter field on FeedState — those feeds are skipped without
-// a network round-trip.
+// A cycle iterates every feed in the current OPML and calls Poll for
+// each. To keep a large OPML from polling one-feed-at-a-time, feeds are
+// fanned out across a BOUNDED worker pool (default 8, override via
+// HARB_POLL_CONCURRENCY or the Concurrency field) — bounded so a
+// 1000-feed OPML can't open 1000 sockets/fds or saturate the uplink at
+// once. Per-feed 429/503 cooldown is honoured inside Poll via the
+// RetryAfter field on FeedState — those feeds are skipped without a
+// network round-trip. Feed ordering within a cycle is not guaranteed;
+// nothing depends on it.
 package poll
 
 import (
 	"context"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +57,11 @@ type FeedsFunc func() []string
 type Refresher struct {
 	Poller *Poller
 	Feeds  FeedsFunc
+
+	// Concurrency caps how many feeds a single cycle polls in
+	// parallel. <=0 selects the env/default value (see
+	// pollConcurrency / HARB_POLL_CONCURRENCY / DefaultPollConcurrency).
+	Concurrency int
 
 	// inFlight is 1 iff a cycle goroutine is currently running.
 	// Single-flight admission control: only the CAS winner spawns a
@@ -122,7 +132,15 @@ func (r *Refresher) Trigger(_ context.Context) {
 	go r.cycle(ctx)
 }
 
-// cycle runs one refresh pass over every feed in the current OPML.
+// cycle runs one refresh pass over every feed in the current OPML,
+// fanning the per-feed Poll calls out across a bounded worker pool.
+//
+// Bounding: at most `concurrency` Polls run at once, gated by a
+// buffered-channel semaphore. Cancellation: once ctx is cancelled we
+// stop dispatching new feeds; workers already running drain (their own
+// Poll honours ctx through the request context), and we wait for them
+// before returning so inFlight/wg only clear once the cycle is truly
+// quiescent.
 func (r *Refresher) cycle(ctx context.Context) {
 	defer r.wg.Done()
 	defer r.inFlight.Store(0)
@@ -130,12 +148,45 @@ func (r *Refresher) cycle(ctx context.Context) {
 		return
 	}
 	urls := r.Feeds()
+	if len(urls) == 0 {
+		return
+	}
+	concurrency := r.concurrency()
+	sem := make(chan struct{}, concurrency)
+	var workers sync.WaitGroup
 	for _, u := range urls {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		_, _ = r.Poller.Poll(ctx, u)
+		// Acquire a slot, but abort promptly if ctx is cancelled
+		// while we're blocked waiting for one.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		workers.Add(1)
+		go func(feedURL string) {
+			defer workers.Done()
+			defer func() { <-sem }()
+			_, _ = r.Poller.Poll(ctx, feedURL)
+		}(u)
 	}
+	// Let any in-flight workers drain before the cycle is considered
+	// done — this is what makes Stop()'s wg.Wait observe a fully
+	// quiescent cycle even on mid-cycle cancellation.
+	workers.Wait()
+}
+
+// concurrency resolves the effective per-cycle parallelism: the
+// explicit Concurrency field when positive, else the env/default.
+func (r *Refresher) concurrency() int {
+	if r.Concurrency > 0 {
+		return r.Concurrency
+	}
+	return pollConcurrencyFromEnv()
 }
 
 // Start launches the background ticker. ticker fires Trigger every
@@ -219,6 +270,28 @@ func refreshIntervalFromEnv() time.Duration {
 		return DefaultRefreshInterval
 	}
 	return d
+}
+
+// DefaultPollConcurrency is how many feeds a cycle polls in parallel
+// when nothing overrides it. Eight is a deliberately conservative cap:
+// enough to hide per-feed latency on a typical multi-hundred-feed OPML,
+// but low enough that a 1000-feed OPML can't blow through the process
+// fd limit or saturate a home uplink with simultaneous fetches.
+const DefaultPollConcurrency = 8
+
+// pollConcurrencyFromEnv returns HARB_POLL_CONCURRENCY parsed as a
+// positive integer, or DefaultPollConcurrency if unset/invalid. Mirrors
+// the HARB_REFRESH_INTERVAL pattern above.
+func pollConcurrencyFromEnv() int {
+	v := strings.TrimSpace(os.Getenv("HARB_POLL_CONCURRENCY"))
+	if v == "" {
+		return DefaultPollConcurrency
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return DefaultPollConcurrency
+	}
+	return n
 }
 
 // TriggerMiddleware wraps an http.Handler so that every request whose
