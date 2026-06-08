@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -332,8 +333,20 @@ func TestListEntriesBadJSON(t *testing.T) {
 	if _, err := s.ListEntries(fh); err == nil {
 		t.Fatal("expected json error")
 	}
-	if _, err := s.AppendEntries(fh, []Entry{{GUID: "x"}}); err == nil {
-		t.Fatal("expected knownHashes error")
+	// KnownHashes (exported, used by poll enrichment) still disk-scans and
+	// must surface the corrupt-line error.
+	if _, err := s.KnownHashes(fh); err == nil {
+		t.Fatal("expected KnownHashes scan error")
+	}
+	// AppendEntries no longer disk-scans for dedup (it uses the in-memory
+	// index), so a corrupt on-disk current.ndjson does NOT make it fail —
+	// it appends regardless. The new entry must be reported as added.
+	added, err := s.AppendEntries(fh, []Entry{{GUID: "x"}})
+	if err != nil {
+		t.Fatalf("AppendEntries should not disk-scan: %v", err)
+	}
+	if len(added) != 1 {
+		t.Fatalf("expected 1 added, got %d", len(added))
 	}
 }
 
@@ -1002,5 +1015,120 @@ func TestKnownHashes(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("expected empty set, got %v", empty)
+	}
+}
+
+// TestAppendEntriesDedupInMemory proves AppendEntries de-duplicates against
+// the in-memory index across (a) repeated polls, (b) a simulated restart
+// (Open rebuilds idx from disk), and (c) an archive rollover that relocates
+// entries to a quarter file — none of which may reintroduce duplicates.
+func TestAppendEntriesDedupInMemory(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := FeedHash("https://x/feed")
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
+	es := []Entry{
+		{GUID: "1", Link: "https://x/a", Title: "A", Published: old, FetchedAt: now},
+		{GUID: "2", Link: "https://x/b", Title: "B", Published: now, FetchedAt: now},
+	}
+	if added, err := s.AppendEntries(fh, es); err != nil || len(added) != 2 {
+		t.Fatalf("first append added=%d err=%v", len(added), err)
+	}
+	// Repeated poll: zero new.
+	if added, err := s.AppendEntries(fh, es); err != nil || len(added) != 0 {
+		t.Fatalf("repeat poll should dedup, added=%d err=%v", len(added), err)
+	}
+
+	// Simulated restart: reopen, idx rebuilt from disk. Re-appending the
+	// same entries must still dedup (no disk-scan, but idx superset holds).
+	s2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added, err := s2.AppendEntries(fh, es); err != nil || len(added) != 0 {
+		t.Fatalf("post-restart dedup, added=%d err=%v", len(added), err)
+	}
+
+	// Archive rollover: entry "1" (old) moves to a quarter archive. idx must
+	// still know it, so re-appending it stays deduped.
+	n, err := s2.RolloverArchives(fh, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 archived, got %d", n)
+	}
+	if added, err := s2.AppendEntries(fh, es); err != nil || len(added) != 0 {
+		t.Fatalf("post-rollover dedup, added=%d err=%v", len(added), err)
+	}
+	// And after another restart (idx rebuilt across current + archive).
+	s3, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added, err := s3.AppendEntries(fh, es); err != nil || len(added) != 0 {
+		t.Fatalf("post-rollover-restart dedup, added=%d err=%v", len(added), err)
+	}
+}
+
+// TestAppendEntriesPerFeedIsolation proves dedup is per-feed: the same
+// GUID+link published by two different feeds keeps a distinct entry in each.
+func TestAppendEntriesPerFeedIsolation(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	now := time.Now().UTC()
+	fhA := FeedHash("https://a/feed")
+	fhB := FeedHash("https://b/feed")
+	e := Entry{GUID: "shared", Link: "https://shared/x", Title: "S", Published: now, FetchedAt: now}
+	if added, err := s.AppendEntries(fhA, []Entry{e}); err != nil || len(added) != 1 {
+		t.Fatalf("feed A added=%d err=%v", len(added), err)
+	}
+	// Same GUID+link into feed B: must NOT be deduped against feed A.
+	if added, err := s.AppendEntries(fhB, []Entry{e}); err != nil || len(added) != 1 {
+		t.Fatalf("feed B should keep its own copy, added=%d err=%v", len(added), err)
+	}
+	if got, _ := s.ListEntries(fhA); len(got) != 1 {
+		t.Fatalf("feed A entries=%d", len(got))
+	}
+	if got, _ := s.ListEntries(fhB); len(got) != 1 {
+		t.Fatalf("feed B entries=%d", len(got))
+	}
+}
+
+// TestAppendEntriesConcurrentFeeds runs AppendEntries concurrently across
+// many distinct feeds (the v0.8.0 fan-out shape) to catch data races on the
+// shared s.idx map under -race.
+func TestAppendEntriesConcurrentFeeds(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	now := time.Now().UTC()
+	const feeds = 16
+	var wg sync.WaitGroup
+	for i := 0; i < feeds; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			fh := FeedHash(fmt.Sprintf("https://f%d/feed", i))
+			es := []Entry{
+				{GUID: fmt.Sprintf("%d-1", i), Link: "l1", Published: now, FetchedAt: now},
+				{GUID: fmt.Sprintf("%d-2", i), Link: "l2", Published: now, FetchedAt: now},
+			}
+			// Poll the same feed twice concurrently-with other feeds; each
+			// feed's two appends are sequential here, so the second dedups.
+			if added, err := s.AppendEntries(fh, es); err != nil || len(added) != 2 {
+				t.Errorf("feed %d first added=%d err=%v", i, len(added), err)
+			}
+			if added, err := s.AppendEntries(fh, es); err != nil || len(added) != 0 {
+				t.Errorf("feed %d repeat added=%d err=%v", i, len(added), err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	for i := 0; i < feeds; i++ {
+		fh := FeedHash(fmt.Sprintf("https://f%d/feed", i))
+		if got, _ := s.ListEntries(fh); len(got) != 2 {
+			t.Fatalf("feed %d entries=%d", i, len(got))
+		}
 	}
 }

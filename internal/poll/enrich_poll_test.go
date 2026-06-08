@@ -182,14 +182,15 @@ func TestPollWebflowEnrichSkippedOnStoreError(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	// Corrupt the feed's on-disk entries so KnownHashes (and AppendEntries)
-	// fail when scanning.
+	// Make the feed's entries path un-creatable so AppendEntries' MkdirAll
+	// fails and the poll surfaces a store error. (Dedup no longer disk-scans,
+	// so a corrupt ndjson would be silently appended to — we need a real
+	// write-path failure instead.)
 	fh := store.FeedHash(srv.URL)
-	edir := filepath.Join(dir, "entries", fh)
-	if err := os.MkdirAll(edir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "entries"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(edir, "current.ndjson"), []byte("{not json\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "entries", fh), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Poll(context.Background(), srv.URL); err == nil {

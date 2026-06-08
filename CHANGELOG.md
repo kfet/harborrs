@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Performance
+
+- **Poll-hot-path dedup no longer disk-scans.** `AppendEntries` used to
+  re-read every `entries/<feed>/*.ndjson` file (current + archives) on
+  each poll to build its de-duplication set. With v0.8.0's concurrent
+  fan-out this disk read ran on every feed in parallel on the hot path.
+  Dedup now consults a snapshot of the in-memory per-feed index
+  (`s.idx[feedHash]`) taken under the read lock, eliminating the
+  per-poll scan. Per-feed isolation is preserved (the cross-feed
+  `byHash` map is never consulted) and the index is a complete superset
+  of the on-disk hash set (built from the same glob, append-only, and
+  unaffected by archive rollover), so no duplicates can reappear. A
+  mid-stream write failure now commits the already-written entries to the
+  index (break-then-commit) so they still de-duplicate on the next poll
+  without waiting for a restart.
+
 
 ## [0.8.0] - 2026-06-08
 

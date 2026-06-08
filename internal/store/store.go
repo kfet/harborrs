@@ -419,15 +419,23 @@ func (s *Store) compactLocked(path string, kind byte) error {
 
 // AppendEntries appends entries to feed's current.ndjson. Returns the
 // subset that was actually new (de-duplicated by entry hash within the
-// feed by scanning current + most recent archive).
+// feed against the in-memory index — no per-poll disk scan).
+//
+// Dedup source: a snapshot of s.idx[feedHash]'s hashes taken under s.mu.
+// s.idx is a complete superset of the on-disk known-hash set: buildIndex
+// seeds it from the same entries/<feedHash>/*.ndjson glob knownHashes
+// scans, AppendEntries only ever appends to it, and RolloverArchives
+// merely relocates entries between on-disk files without pruning idx. So
+// deduping against idx can never reintroduce a duplicate that a disk scan
+// would have caught. The snapshot is taken under the read lock and the
+// lock is released before any file I/O, since AppendEntries is called
+// concurrently for different feeds (v0.8.0 bounded fan-out) and s.idx is
+// a shared map.
 func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
-	known, err := s.knownHashes(feedHash)
-	if err != nil {
-		return nil, err
-	}
+	known := s.indexedHashes(feedHash)
 	dir := filepath.Join(s.Dir, "entries", feedHash)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -439,6 +447,13 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 	}
 	defer f.Close()
 	var added []Entry
+	// writeErr captures a mid-stream marshal/write failure. We must NOT
+	// early-return on it: any entries already written to current.ndjson are
+	// in `added`, and since dedup now reads only the in-memory index, they
+	// MUST be committed to s.idx — otherwise the next poll (no restart) would
+	// re-append them and duplicate on disk. So we break out and fall through
+	// to the idx-commit block, then return the partial result with the error.
+	var writeErr error
 	for _, e := range entries {
 		if e.Hash == "" {
 			e.Hash = EntryHash(e.GUID, e.Link)
@@ -454,11 +469,13 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		known[e.Hash] = true
 		line, err := jsonMarshal(e)
 		if err != nil {
-			return added, err
+			writeErr = err
+			break
 		}
 		line = append(line, '\n')
 		if _, err := f.Write(line); err != nil {
-			return added, err
+			writeErr = err
+			break
 		}
 		added = append(added, e)
 	}
@@ -484,7 +501,25 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		}
 		s.mu.Unlock()
 	}
-	return added, nil
+	return added, writeErr
+}
+
+// indexedHashes returns the set of entry hashes currently in the
+// in-memory index for a feed. It takes a snapshot under the read lock so
+// the caller can release the lock before doing file I/O. s.idx is a
+// complete superset of the on-disk known-hash set (see AppendEntries),
+// so this is a safe per-feed dedup source. Per-feed isolation is
+// preserved: only s.idx[feedHash] is consulted, never the cross-feed
+// s.byHash map.
+func (s *Store) indexedHashes(feedHash string) map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := s.idx[feedHash]
+	set := make(map[string]bool, len(list))
+	for _, e := range list {
+		set[e.Hash] = true
+	}
+	return set
 }
 
 // KnownHashes returns the set of entry hashes currently persisted for a

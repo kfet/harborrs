@@ -81,6 +81,56 @@ func TestAppendEntries_MarshalFail(t *testing.T) {
 	}
 }
 
+// TestAppendEntries_PartialWriteCommitsIdx proves that when a mid-stream
+// marshal fails after earlier entries were already written to disk, those
+// written entries are still committed to the in-memory index. Since dedup
+// now reads ONLY the index, missing them would re-append them on the next
+// poll (no restart) and duplicate on disk. The fix: break-then-commit.
+func TestAppendEntries_PartialWriteCommitsIdx(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	fh := "fh"
+	// Fail jsonMarshal only on the 2nd entry.
+	orig := jsonMarshal
+	t.Cleanup(func() { jsonMarshal = orig })
+	calls := 0
+	jsonMarshal = func(v any) ([]byte, error) {
+		calls++
+		if calls == 2 {
+			return nil, errors.New("marshal-boom")
+		}
+		return orig(v)
+	}
+	now := time.Now().UTC()
+	es := []Entry{
+		{GUID: "1", Link: "a", Published: now, FetchedAt: now},
+		{GUID: "2", Link: "b", Published: now, FetchedAt: now},
+	}
+	added, err := s.AppendEntries(fh, es)
+	if err == nil || !strings.Contains(err.Error(), "marshal-boom") {
+		t.Fatalf("expected partial marshal error, got %v", err)
+	}
+	if len(added) != 1 {
+		t.Fatalf("expected 1 entry written before failure, got %d", len(added))
+	}
+	// Entry "1" must be in the in-memory index now.
+	if got := s.IndexedEntries(fh); len(got) != 1 {
+		t.Fatalf("expected entry 1 committed to idx, got %d", len(got))
+	}
+	// Re-poll (no restart). Entry "1" must dedup against idx; only "2" lands.
+	jsonMarshal = orig // healed
+	added, err = s.AppendEntries(fh, es)
+	if err != nil {
+		t.Fatalf("re-poll err=%v", err)
+	}
+	if len(added) != 1 || added[0].GUID != "2" {
+		t.Fatalf("expected only entry 2 to be new, got %v", added)
+	}
+	if got := s.IndexedEntries(fh); len(got) != 2 {
+		t.Fatalf("expected 2 distinct entries (no dup), got %d", len(got))
+	}
+}
+
 func TestAppendEntries_MkdirSurfacesAsKnownHashesError(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)
@@ -393,8 +443,8 @@ func TestFoldLog_ScannerError(t *testing.T) {
 	}
 }
 
-// knownHashes line 301: a feed dir with a non-ndjson file, exercised via
-// AppendEntries (which goes through knownHashes).
+// knownHashes: a feed dir with a non-ndjson file is ignored. Exercised via
+// KnownHashes directly (AppendEntries no longer disk-scans for dedup).
 func TestKnownHashes_NonNDJSONIgnored(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir)
@@ -402,9 +452,13 @@ func TestKnownHashes_NonNDJSONIgnored(t *testing.T) {
 	feedDir := filepath.Join(dir, "entries", fh)
 	os.MkdirAll(feedDir, 0o755)
 	os.WriteFile(filepath.Join(feedDir, "README"), []byte("hi"), 0o644)
-	added, err := s.AppendEntries(fh, []Entry{{GUID: "x"}})
-	if err != nil || len(added) != 1 {
-		t.Fatalf("added=%v err=%v", added, err)
+	os.WriteFile(filepath.Join(feedDir, "current.ndjson"), []byte(`{"hash":"abc"}`+"\n"), 0o644)
+	known, err := s.KnownHashes(fh)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if len(known) != 1 {
+		t.Fatalf("expected README ignored, 1 known hash, got %d", len(known))
 	}
 }
 
