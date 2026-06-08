@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-06-08
+
 ### Added
 
 - **`o` keyboard shortcut on the entry view** opens the article's
