@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.7.11] - 2026-06-08
+
+### Added
+
+- **Full-text previews for link-only aggregator feeds.** Feeds such as
+  Lobsters, Hacker News and Reddit publish each item's body as nothing
+  but a bare "Comments" link, so entries showed only a title. Polling now
+  detects link-only entries and fetches the linked external article,
+  extracting its main readable content (largest `<article>`/`<main>`, else
+  the densest paragraph block) to use as the entry body. New-entries-only
+  and best-effort: a fetch failure or a page with no extractable article
+  simply leaves the entry as before. Applies to every feed, not just
+  Webflow-synthesised ones.
+
 ## [0.7.10] - 2026-06-08
 
 ### Added
