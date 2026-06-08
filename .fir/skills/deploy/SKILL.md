@@ -309,6 +309,73 @@ ssh <host> 'systemctl --user stop harborrs && \
   prefixes per host (currently 3). If the host already runs poe-acp
   + something else, plan the prefix budget before starting.
 
+## Backups
+
+harb's data dir is backed up to a remote host (`kopione`) by an
+event-driven rsync watcher, **not** a timer. A systemd user unit runs a
+script that watches the data dir with `inotifywait` and syncs after a
+quiet period.
+
+- **Unit**: `harb-backup.service` (user unit), `ExecStart` = the watcher
+  script `~/.local/bin/harb-backup-watch`.
+- **Watcher script** (lives on the host, not version-controlled — keep
+  this section as the source of truth):
+
+```bash
+SRC="$HOME/.local/share/harb/"
+DEST="kopione:backups/harb/"
+# debounce, then:
+rsync -az --delete --max-delete=500 \
+  --exclude='observe/' --exclude='*.tmp' --exclude='.*.tmp' \
+  -e "ssh -o BatchMode=yes -o ConnectTimeout=15" "$SRC" "$DEST"
+# plus: on OPML content change, copy subscriptions.opml to
+#   kopione:backups/harb-opml/subscriptions.<utc-stamp>.opml  (keep all)
+```
+
+### Design rules (learned the hard way)
+
+- **Latest-only mirror, no per-sync history.** An earlier version used
+  `rsync --backup --backup-dir=../harb-history/<ts>` on *every* event.
+  Every overwritten/deleted file was stashed into a new dated dir and
+  nothing pruned them — 3815 snapshots filled the remote (a 228G SD
+  card) to 100% while the live data was only ~80M. Do not reintroduce
+  blanket `--backup-dir`.
+- **Version only the curated file.** `subscriptions.opml` is the one
+  irreplaceable, human-edited artefact → keep an immutable timestamped
+  copy per change. Everything else (entries, read/starred state, poll
+  state) is append-mostly or re-pollable; latest is all you need.
+- **Exclude `observe/`.** It's pure poll telemetry (304/not-modified
+  lines), the churniest + largest dir, and worthless in a backup.
+- **`--max-delete` guard.** Caps how many deletions one sync may
+  propagate, so a local corruption/wipe aborts the rsync (rc 25) and is
+  logged instead of silently nuking the backup.
+- **No per-file compression.** gzip-ing mirror files breaks rsync's
+  delta transfer *and* its unchanged-file check. Wire compression
+  (`-z`) is fine; for storage compression use filesystem-level zstd
+  (btrfs/zfs) on the destination — transparent to rsync. No cold tar
+  archive: the data shape doesn't justify one.
+
+### Operating
+
+```bash
+# status / pause / resume
+systemctl --user status  harb-backup.service
+systemctl --user disable --now harb-backup.service     # pause
+systemctl --user enable  --now harb-backup.service     # resume
+
+# env knobs (set in the unit): HARB_BACKUP_QUIET (debounce s, default 30),
+#                              HARB_BACKUP_MAX_DELETE (default 500)
+```
+
+### Restore
+
+```bash
+systemctl --user stop harb
+rsync -az kopione:backups/harb/ ~/.local/share/harb/
+# OPML point-in-time: pick a copy from kopione:backups/harb-opml/
+systemctl --user start harb
+```
+
 ## Handoff checklist
 
 - [ ] `harborrs version` on the host matches the intended release.
