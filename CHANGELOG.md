@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.8.0] - 2026-06-08
+
 ### Added
 
 - **Bounded concurrent feed polling.** A refresh cycle previously polled
