@@ -232,10 +232,18 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 	// largest .w-richtext block. "New-only" keeps later polls cheap — only
 	// freshly-published posts are fetched — and the fetch is best-effort,
 	// so a slow or broken detail page never fails the poll.
-	if parsed.Generator == resolve.WebflowGenerator {
-		if known, kerr := p.Store.KnownHashes(fh); kerr == nil {
-			enrichWebflowContent(ctx, p.Client, ua, entries, func(h string) bool { return !known[h] })
+	// Content enrichment (best-effort, new-entries-only): fetch each new
+	// entry's page and fill in a real body.
+	if known, kerr := p.Store.KnownHashes(fh); kerr == nil {
+		isNew := func(h string) bool { return !known[h] }
+		// Webflow-synthesised feeds: extract the post's .w-richtext block.
+		if parsed.Generator == resolve.WebflowGenerator {
+			enrichWebflowContent(ctx, p.Client, ua, entries, isNew)
 		}
+		// Aggregator / link-only feeds (Lobsters, Hacker News, Reddit):
+		// the feed item body is just a "Comments"/"Source" link, so fetch
+		// the linked external article and extract its readable content.
+		enrichLinkOnlyContent(ctx, p.Client, ua, entries, isNew)
 	}
 
 	added, err := p.Store.AppendEntries(fh, entries)

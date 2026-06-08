@@ -109,8 +109,8 @@ func TestPollWebflowEnrichFailureIsSafe(t *testing.T) {
 	}
 }
 
-// A normal (non-Webflow) RSS feed has no generator marker, so no detail
-// pages are ever fetched.
+// A normal (non-Webflow) RSS feed whose items already carry a body is not
+// link-only, so no detail pages are ever fetched.
 func TestPollNonWebflowNotEnriched(t *testing.T) {
 	p, _, _ := newPoller(t)
 	postHits := 0
@@ -119,7 +119,9 @@ func TestPollNonWebflowNotEnriched(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/rss+xml")
 		io.WriteString(w, `<?xml version="1.0"?><rss version="2.0"><channel><title>R</title>`+
-			`<item><title>i</title><link>`+srvSelf(r)+`/p/1</link></item></channel></rss>`)
+			`<item><title>i</title><link>`+srvSelf(r)+`/p/1</link>`+
+			`<description>This item already has a full readable body.</description></item>`+
+			`</channel></rss>`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -127,7 +129,39 @@ func TestPollNonWebflowNotEnriched(t *testing.T) {
 		t.Fatal(err)
 	}
 	if postHits != 0 {
-		t.Fatalf("non-webflow feed was enriched: postHits=%d", postHits)
+		t.Fatalf("feed with real bodies was enriched: postHits=%d", postHits)
+	}
+}
+
+// An aggregator-style RSS feed (Lobsters/HN/Reddit) whose item body is
+// only a bare "Comments" link triggers link-only enrichment: the external
+// article is fetched and its readable content fills the entry body.
+func TestPollLinkOnlyEnriched(t *testing.T) {
+	p, st, _ := newPoller(t)
+	body := strings.Repeat("The linked external article prose goes here. ", 8)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/article", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<html><body><article><p>`+body+`</p></article></body></html>`)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, `<?xml version="1.0"?><rss version="2.0"><channel><title>Agg</title>`+
+			`<item><title>story</title><link>`+srvSelf(r)+`/article</link>`+
+			`<description>&lt;p&gt;&lt;a href="`+srvSelf(r)+`/c"&gt;Comments&lt;/a&gt;&lt;/p&gt;</description>`+
+			`</item></channel></rss>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	ents, _ := st.ListEntries(store.FeedHash(srv.URL))
+	if len(ents) != 1 {
+		t.Fatalf("entries=%d, want 1", len(ents))
+	}
+	if !strings.Contains(ents[0].Content, "linked external article prose") {
+		t.Errorf("link-only entry not enriched: %q", ents[0].Content)
 	}
 }
 

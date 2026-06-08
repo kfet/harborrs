@@ -27,7 +27,21 @@ const (
 	// enrichMaxBytes caps each detail-page response (matches the preview
 	// path's 5 MiB read cap).
 	enrichMaxBytes = 5 * 1024 * 1024
+	// minArticleChars is the floor below which an extracted article body is
+	// treated as too thin to be real content (nav scraps, a cookie banner),
+	// so link-only enrichment leaves the entry untouched.
+	minArticleChars = 200
 )
+
+// articleStripSelectors are removed before article extraction: site
+// chrome that is never article content but holds text that would skew a
+// naive largest-text heuristic.
+const articleStripSelectors = "script,style,noscript,nav,header,footer,aside,form,svg,iframe"
+
+// linkOnlyMediaSelector lists elements whose presence means an entry body
+// has real content even when all its text sits inside links (a linked
+// hero image, an embedded table or video).
+const linkOnlyMediaSelector = "img,picture,figure,video,audio,iframe,embed,object,table"
 
 // enrichWebflowContent fills entry.Content for every entry whose hash is
 // new (isNew returns true) by fetching the entry's detail page and
@@ -45,6 +59,30 @@ func enrichWebflowContent(ctx context.Context, client *http.Client, ua string, e
 			idxs = append(idxs, i)
 		}
 	}
+	fetchInto(ctx, client, ua, entries, idxs, fetchRichText)
+}
+
+// enrichLinkOnlyContent fills entry.Content for every NEW entry whose feed
+// body is link-only (bodyIsLinkOnly) by fetching its external Link and
+// extracting the article body. Aggregator feeds (Lobsters, Hacker News,
+// Reddit) ship only a "Comments"/"Source" link as the item body; this
+// turns such entries into a readable preview. Like enrichWebflowContent it
+// is bounded, in-place, race-free, and strictly best-effort — a per-entry
+// failure or a page with no extractable article leaves Content untouched.
+func enrichLinkOnlyContent(ctx context.Context, client *http.Client, ua string, entries []store.Entry, isNew func(hash string) bool) {
+	var idxs []int
+	for i := range entries {
+		if entries[i].Link != "" && isNew(entries[i].Hash) && bodyIsLinkOnly(entries[i]) {
+			idxs = append(idxs, i)
+		}
+	}
+	fetchInto(ctx, client, ua, entries, idxs, fetchArticle)
+}
+
+// fetchInto runs fetch over entries[idxs] on enrichWorkers goroutines and
+// writes any non-empty result into that entry's Content. Each worker owns
+// a distinct slice element, so the in-place mutation needs no lock.
+func fetchInto(ctx context.Context, client *http.Client, ua string, entries []store.Entry, idxs []int, fetch func(context.Context, *http.Client, string, string) string) {
 	if len(idxs) == 0 {
 		return
 	}
@@ -55,7 +93,7 @@ func enrichWebflowContent(ctx context.Context, client *http.Client, ua string, e
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				if c := fetchRichText(ctx, client, ua, entries[i].Link); c != "" {
+				if c := fetch(ctx, client, ua, entries[i].Link); c != "" {
 					entries[i].Content = c
 				}
 			}
@@ -68,33 +106,55 @@ func enrichWebflowContent(ctx context.Context, client *http.Client, ua string, e
 	wg.Wait()
 }
 
-// fetchRichText GETs url with the SSRF-safe client, reads up to
-// enrichMaxBytes, and returns the largest .w-richtext block's inner HTML,
-// or "" on any failure (best-effort).
-func fetchRichText(ctx context.Context, client *http.Client, ua, url string) string {
+// fetchHTML GETs url with the SSRF-safe client, reads up to enrichMaxBytes,
+// and returns the response body, or nil on any failure (best-effort). A
+// successful empty response is a non-nil empty slice, so callers can use a
+// nil check to distinguish failure from an empty body.
+func fetchHTML(ctx context.Context, client *http.Client, ua, url string) []byte {
 	ctx, cancel := context.WithTimeout(ctx, enrichTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return nil
 	}
 	req.Header.Set("User-Agent", ua)
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, enrichMaxBytes+1))
 	if err != nil {
-		return ""
+		return nil
 	}
 	if int64(len(body)) > enrichMaxBytes {
+		return nil
+	}
+	return body
+}
+
+// fetchRichText fetches url and returns the largest .w-richtext block's
+// inner HTML, or "" on any failure (best-effort).
+func fetchRichText(ctx context.Context, client *http.Client, ua, url string) string {
+	body := fetchHTML(ctx, client, ua, url)
+	if body == nil {
 		return ""
 	}
 	return largestRichText(body, richTextSelector)
+}
+
+// fetchArticle fetches url and returns its extracted main article body as
+// inner HTML, or "" on any failure or when no block is substantial enough
+// (best-effort).
+func fetchArticle(ctx context.Context, client *http.Client, ua, url string) string {
+	body := fetchHTML(ctx, client, ua, url)
+	if body == nil {
+		return ""
+	}
+	return extractArticle(body)
 }
 
 // largestRichText returns the trimmed inner HTML of the selector-matching
@@ -105,17 +165,107 @@ func largestRichText(body []byte, selector string) string {
 	if err != nil {
 		return ""
 	}
+	return largestByText(doc.Find(selector), 1)
+}
+
+// extractArticle pulls the main readable article body out of a full HTML
+// page with a small readability heuristic, returning its inner HTML, or ""
+// when no block clears minArticleChars. Best-effort: the UI re-sanitizes
+// the result before display, so returning raw page HTML is safe.
+//
+// Heuristic: after stripping site chrome, prefer the largest-by-text
+// <article> then <main> semantic container; failing that, pick the element
+// whose direct-child <p> elements hold the most text (the tight article
+// body wrapper, not an outer page shell that merely contains it).
+func extractArticle(body []byte) string {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	doc.Find(articleStripSelectors).Remove()
+	for _, tag := range []string{"article", "main"} {
+		if h := largestByText(doc.Find(tag), minArticleChars); h != "" {
+			return h
+		}
+	}
+	return largestByDirectParagraphs(doc)
+}
+
+// largestByText returns the inner HTML of the selection's element with the
+// most text content when it has at least minLen characters, else "".
+func largestByText(sel *goquery.Selection, minLen int) string {
 	var best *goquery.Selection
 	bestLen := 0
-	doc.Find(selector).Each(func(_ int, s *goquery.Selection) {
+	sel.Each(func(_ int, s *goquery.Selection) {
 		if n := len(strings.TrimSpace(s.Text())); n > bestLen {
 			bestLen = n
 			best = s
 		}
 	})
-	if best == nil {
+	if best == nil || bestLen < minLen {
 		return ""
 	}
-	h, _ := best.Html()
+	return innerHTML(best)
+}
+
+// largestByDirectParagraphs returns the inner HTML of the element whose
+// immediate-child <p> text totals the most (the article body wrapper),
+// when it clears minArticleChars, else "".
+func largestByDirectParagraphs(doc *goquery.Document) string {
+	var best *goquery.Selection
+	bestLen := 0
+	doc.Find("*").Each(func(_ int, s *goquery.Selection) {
+		n := 0
+		s.ChildrenFiltered("p").Each(func(_ int, p *goquery.Selection) {
+			n += len(strings.TrimSpace(p.Text()))
+		})
+		if n > bestLen {
+			bestLen = n
+			best = s
+		}
+	})
+	if best == nil || bestLen < minArticleChars {
+		return ""
+	}
+	return innerHTML(best)
+}
+
+// innerHTML returns the trimmed inner HTML of s. s.Html() renders into an
+// in-memory buffer and does not error in practice, so its error is ignored.
+func innerHTML(s *goquery.Selection) string {
+	h, _ := s.Html()
 	return strings.TrimSpace(h)
+}
+
+// bodyIsLinkOnly reports whether e has no displayable article body — its
+// Content (falling back to Summary, mirroring the UI's entryBody) is
+// empty, whitespace, or only a bare link such as the "Comments"/"Source"
+// link aggregator feeds publish in place of a body.
+func bodyIsLinkOnly(e store.Entry) bool {
+	body := e.Content
+	if strings.TrimSpace(body) == "" {
+		body = e.Summary
+	}
+	return isLinkOnlyHTML(body)
+}
+
+// isLinkOnlyHTML reports whether s carries no meaningful content outside
+// of <a> link labels: empty/whitespace, or text that lives only inside
+// anchors, with no embedded media. Mirrors the UI's isLinkOnly (which uses
+// x/net/html) with goquery, the parser this package already depends on.
+func isLinkOnlyHTML(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return true
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(s))
+	if err != nil {
+		return false
+	}
+	body := doc.Find("body")
+	if body.Find(linkOnlyMediaSelector).Length() > 0 {
+		return false
+	}
+	stripped := body.Clone()
+	stripped.Find("a").Remove()
+	return strings.TrimSpace(stripped.Text()) == ""
 }
