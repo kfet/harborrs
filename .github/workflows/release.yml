@@ -22,7 +22,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Guard release version
-        uses: kfet/gha/release-guard@afd38afe34a780de4e42d65ddffefdcac4b5e8e0
+        uses: kfet/gha/release-guard@4c729c719a3c76fbfa85c26722f0bd1ab63216ba
 
       - name: Build release artefacts
         run: make release-local VERSION="${GITHUB_REF_NAME#v}"
