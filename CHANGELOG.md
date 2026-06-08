@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.8.1] - 2026-06-08
+
 ### Performance
 
 - **Poll-hot-path dedup no longer disk-scans.** `AppendEntries` used to
