@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-08
+
+### Fixed
+
+- **Synthesise a display title for feeds whose items have no title.**
+  Mastodon RSS items (and some other sources) carry no <title> element,
+  which left entry rows and the entry-view header blank. The UI now
+  derives a title from a plain-text snippet of the entry body (Content,
+  or Summary when Content is link-only) when the item title is empty,
+  falling back to "(untitled)" only when there is no usable text.
+
 ## [0.9.0] - 2026-06-08
 
 ### Added
