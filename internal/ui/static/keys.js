@@ -48,7 +48,7 @@
 // On the entry view (/ui/entry):
 //   r      → mark read/unread
 //   s      → star/unstar
-//   o      → open source in new window
+//   o / →  → open source (article) in new window
 //   u      → back to parent feed
 //
 // Behaviour:
@@ -612,7 +612,8 @@
           entryUp();
           break;
         }
-        case "o": {
+        case "o":
+        case "ArrowRight": {
           // Open the article's original source in a new window/tab.
           // No-op when the entry has no source link.
           const src = article.querySelector("a.source-link");

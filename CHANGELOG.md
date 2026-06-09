@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 
+## [0.8.2] - 2026-06-08
+
+### Added
+
+- **Entry view: `→` (Right arrow) opens the source article** in a new
+  window, as an alias for the existing `o` shortcut. Help overlay
+  updated to show `o`/`→`.
+
+
 ## [0.8.1] - 2026-06-08
 
 ### Performance
