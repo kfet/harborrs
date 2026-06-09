@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-08
+
 ### Added
 
 - **Preserve the forum/discussion link when enriching link-only feeds.**
