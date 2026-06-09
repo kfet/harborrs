@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-06-08
+
 ### Added
 
 - **Tag auto-complete on the add-feed page.** The "tags
