@@ -451,7 +451,7 @@ form.inline { display: inline; margin: 0; }
   color: var(--muted);
 }
 
-.unsubscribe-form { display: inline; margin: 0; font-size: 0.7em; vertical-align: middle; margin-left: 0.4em; }
+.unsubscribe-form { margin: 0; }
 .unsubscribe {
   font-size: 0.85em;
   padding: 0.25em 0.7em;
@@ -790,6 +790,42 @@ ul.entries {
 
 /* Used in the entry-list rendering to dim already-read rows. */
 .entry.read > a { color: var(--muted); }
+
+/* ---- feed management disclosure ----------------------------------- */
+/* All feed-admin controls (URL, rename, tags, unsubscribe) tuck behind
+   a single native <details> so the reading view stays uncluttered. Works
+   with JS off. */
+.feed-manage {
+  margin: 0.2em 0 0.9em;
+}
+.feed-manage-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.8em;
+  padding: 0.3em 0.7em;
+  color: var(--muted);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  user-select: none;
+}
+.feed-manage-summary::-webkit-details-marker { display: none; }
+.feed-manage-summary:hover { border-color: var(--accent); color: var(--accent); }
+.feed-manage-summary:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.feed-manage-gear {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.feed-manage[open] > .feed-manage-summary { color: var(--fg); }
+.feed-manage[open] > .feed-manage-summary .feed-manage-gear { transform: rotate(60deg); }
+.feed-manage-body {
+  margin-top: 0.7em;
+  padding-top: 0.2em;
+}
 
 /* ---- feed source (copyable RSS URL) ------------------------------- */
 .feed-source {

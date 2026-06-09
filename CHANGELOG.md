@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Feed-management controls now hide behind an on-demand disclosure.**
+  On the single-feed view, the RSS feed URL, rename form, tag editor and
+  unsubscribe button are tucked behind one collapsed-by-default native
+  `<details>` ("manage feed"), so the reading view stays uncluttered.
+  Mark-all-read and the unread-only filter remain inline (reading
+  actions, not management). Works with JS off.
+
 ## [0.10.0] - 2026-06-08
 
 ### Added
