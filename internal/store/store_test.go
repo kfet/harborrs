@@ -725,7 +725,7 @@ func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := "abcdef0123456789beef"
-	canon := "abcdef0123456789"
+	canon := "2bcdef0123456789"
 	entries := []Entry{{Hash: legacy, FeedHash: fh, GUID: "g", Link: "https://example.com/1", Title: "one", Published: time.Unix(1, 0), FetchedAt: time.Unix(2, 0)}}
 	var b strings.Builder
 	for _, e := range entries {
@@ -809,7 +809,7 @@ func TestOpenMigrationNoopForCurrentHashes(t *testing.T) {
 	if err := os.MkdirAll(entDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e := Entry{Hash: "abcdef0123456789", FeedHash: fh, GUID: "g", Link: "https://example.com/current/1"}
+	e := Entry{Hash: "1bcdef0123456789", FeedHash: fh, GUID: "g", Link: "https://example.com/current/1"}
 	line, _ := json.Marshal(e)
 	path := filepath.Join(entDir, "current.ndjson")
 	if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
@@ -863,6 +863,27 @@ func TestFoldLogDirectOtherOpenError(t *testing.T) {
 	}
 }
 
+// TestFoldLogOpenPermissionError covers foldLog's os.Open error branch
+// (a non-ErrNotExist failure) using an unreadable regular file.
+func TestFoldLogOpenPermissionError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file mode bits are not enforced")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "read.log")
+	if err := os.WriteFile(p, []byte("2024-01-01T00:00:00Z r abcdef0123456789\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+	s := &Store{Dir: dir, state: map[string]EntryState{}, now: time.Now}
+	if err := s.foldLog(p, 'r'); err == nil {
+		t.Fatal("expected foldLog os.Open permission error")
+	}
+}
+
 func TestAppendEntriesCanonicalizesProvidedHash(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -875,15 +896,129 @@ func TestAppendEntriesCanonicalizesProvidedHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(added) != 1 || added[0].Hash != "abcdef0123456789" {
+	if len(added) != 1 || added[0].Hash != "2bcdef0123456789" {
 		t.Fatalf("added=%+v", added)
 	}
 	listed, err := s.ListEntries(fh)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0].Hash != "abcdef0123456789" {
+	if len(listed) != 1 || listed[0].Hash != "2bcdef0123456789" {
 		t.Fatalf("listed=%+v", listed)
+	}
+}
+
+// TestOpenDedupsHighBitHashDuplicates reproduces the real-world bug where
+// an entry stored before EntryHash's high-bit mask (top bit set) and its
+// masked re-poll landed on disk as two lines for the same article. After
+// canonicalisation both collapse to one masked hash, so the feed must list
+// the item exactly once and carry over its read state.
+func TestOpenDedupsHighBitHashDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/dupfeed")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unmasked := "efffa66a7f27865f" // top bit set (pre-mask)
+	masked := "6fffa66a7f27865f"   // same item, masked re-poll
+	if CanonicalEntryHash(unmasked) == masked {
+		t.Fatalf("fixture: CanonicalEntryHash must be length-only, got %s", CanonicalEntryHash(unmasked))
+	}
+	if StoreEntryHash(unmasked) != masked {
+		t.Fatalf("fixture: StoreEntryHash(%s)=%s want %s", unmasked, StoreEntryHash(unmasked), masked)
+	}
+	var b strings.Builder
+	for _, h := range []string{unmasked, masked} {
+		line, _ := json.Marshal(Entry{Hash: h, FeedHash: fh, GUID: "g", Link: "https://example.com/dup/1", Title: "dup", Published: time.Unix(1, 0)})
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Read state recorded against the legacy (unmasked) hash must follow.
+	if err := os.WriteFile(filepath.Join(dir, "read.log"), []byte("2024-01-01T00:00:00Z r "+unmasked+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed %d entries, want 1 (dedup failed): %+v", len(listed), listed)
+	}
+	if listed[0].Hash != masked {
+		t.Fatalf("listed hash=%s want %s", listed[0].Hash, masked)
+	}
+	if !s.EntryState(masked).Read {
+		t.Fatal("read state under legacy hash did not carry to masked hash")
+	}
+	// Migration must also prune the duplicate physically: the on-disk
+	// current.ndjson should hold exactly one line after Open.
+	raw, err := os.ReadFile(filepath.Join(entDir, "current.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(strings.TrimRight(string(raw), "\n"), "\n") + 1; n != 1 {
+		t.Fatalf("on-disk lines=%d want 1 after dedup migration:\n%s", n, raw)
+	}
+}
+
+// TestListEntriesDedupsCanonicalDuplicates exercises ListEntries' own
+// dedup (independent of migration): two on-disk lines that share a
+// canonical hash must surface as one entry.
+func TestListEntriesDedupsCanonicalDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	fh := FeedHash("https://example.com/listdup")
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, h := range []string{"efffa66a7f27865f", "6fffa66a7f27865f"} {
+		line, _ := json.Marshal(Entry{Hash: h, FeedHash: fh, GUID: "g", Link: "https://example.com/listdup/1", Published: time.Unix(1, 0)})
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{Dir: dir}
+	out, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Hash != "6fffa66a7f27865f" {
+		t.Fatalf("ListEntries=%+v want single masked entry", out)
+	}
+}
+
+func TestStoreEntryHashMasksHighBit(t *testing.T) {
+	cases := map[string]string{
+		"efffa66a7f27865f":     "6fffa66a7f27865f", // 'e' -> '6'
+		"ffffffffffffffff":     "7fffffffffffffff", // 'f' -> '7'
+		"8000000000000000":     "0000000000000000", // '8' -> '0'
+		"9abcdef012345678":     "1abcdef012345678", // '9' -> '1'
+		"7abcdef012345678":     "7abcdef012345678", // already masked, noop
+		"0123456789abcdef":     "0123456789abcdef", // noop
+		"ABCDEF0123456789BEEF": "2bcdef0123456789", // legacy 20-char, truncate+mask
+	}
+	for in, want := range cases {
+		if got := StoreEntryHash(in); got != want {
+			t.Errorf("StoreEntryHash(%q)=%q want %q", in, got, want)
+		}
+	}
+	// Non-hex / too-short inputs pass through untouched.
+	if got := StoreEntryHash("not-hex"); got != "not-hex" {
+		t.Errorf("non-hex passthrough=%q", got)
+	}
+	if got := StoreEntryHash(""); got != "" {
+		t.Errorf("empty passthrough=%q", got)
 	}
 }
 

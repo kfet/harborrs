@@ -47,9 +47,10 @@ func migrateEntryFiles(root string) error {
 func migrateEntryFile(path string, seen map[string]string) error {
 	var entries []Entry
 	changed := false
+	emitted := make(map[string]bool) // canonical hashes already kept in THIS file
 	if err := scanEntries(path, func(e Entry) error {
 		old := e.Hash
-		canon := CanonicalEntryHash(old)
+		canon := StoreEntryHash(old)
 		if prev, ok := seen[canon]; ok && prev != old && len(prev) > EntryHashLen && len(old) > EntryHashLen {
 			return fmt.Errorf("entry hash collision migrating %s: %s and %s both map to %s", path, prev, old, canon)
 		}
@@ -58,6 +59,15 @@ func migrateEntryFile(path string, seen map[string]string) error {
 			e.Hash = canon
 			changed = true
 		}
+		// Drop intra-file duplicates: a legacy unmasked hash and its
+		// masked re-poll collapse to the same canonical id, so the same
+		// article can sit in the file twice. Keep the first, prune the
+		// rest (and rewrite the file to make the prune durable).
+		if emitted[canon] {
+			changed = true
+			return nil
+		}
+		emitted[canon] = true
 		entries = append(entries, e)
 		return nil
 	}); err != nil {
@@ -96,7 +106,7 @@ func migrateStateLog(path string) error {
 		line := sc.Text()
 		parts := strings.SplitN(line, " ", 3)
 		if len(parts) == 3 {
-			canon := CanonicalEntryHash(parts[2])
+			canon := StoreEntryHash(parts[2])
 			if canon != parts[2] {
 				changed = true
 				line = parts[0] + " " + parts[1] + " " + canon

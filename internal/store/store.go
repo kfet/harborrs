@@ -162,16 +162,24 @@ func (s *Store) buildIndex() error {
 			return err
 		}
 		var list []Entry
+		seen := make(map[string]bool)
 		for _, e := range ents {
 			if !strings.HasSuffix(e.Name(), ".ndjson") {
 				continue
 			}
 			if err := scanEntries(filepath.Join(dir, e.Name()), func(en Entry) error {
-				en.Hash = CanonicalEntryHash(en.Hash)
+				en.Hash = StoreEntryHash(en.Hash)
 				if en.FeedHash == "" {
 					en.FeedHash = fh
 				}
-				list = append(list, en)
+				// Dedup by canonical hash: legacy unmasked hashes and
+				// their masked re-poll collapse to the same id, so the
+				// same article can appear on disk more than once. Keep
+				// the first occurrence; later ones only refresh byHash.
+				if !seen[en.Hash] {
+					seen[en.Hash] = true
+					list = append(list, en)
+				}
 				s.byHash[en.Hash] = en
 				if en.FetchedAt.After(s.contentVer) {
 					// Fold entry-arrival time into the validator so it
@@ -217,7 +225,7 @@ func (s *Store) IndexedEntries(feedHash string) []Entry {
 func (s *Store) EntryByHash(hash string) (Entry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	e, ok := s.byHash[CanonicalEntryHash(hash)]
+	e, ok := s.byHash[StoreEntryHash(hash)]
 	return e, ok
 }
 
@@ -260,6 +268,7 @@ func (s *Store) foldLog(path string, kind byte) error {
 			continue
 		}
 		op, hash := parts[1], parts[2]
+		hash = StoreEntryHash(hash)
 		st := s.state[hash]
 		st.UpdatedAt = ts
 		switch {
@@ -290,7 +299,7 @@ func (s *Store) foldLog(path string, kind byte) error {
 func (s *Store) EntryState(hash string) EntryState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.state[CanonicalEntryHash(hash)]
+	return s.state[StoreEntryHash(hash)]
 }
 
 // StateVersion returns the most-recent content-mutation timestamp —
@@ -322,7 +331,7 @@ func (s *Store) SetStarred(hash string, starred bool) error {
 }
 
 func (s *Store) setFlag(hash string, want, isRead bool) error {
-	hash = CanonicalEntryHash(hash)
+	hash = StoreEntryHash(hash)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.state[hash]
@@ -458,7 +467,7 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 		if e.Hash == "" {
 			e.Hash = EntryHash(e.GUID, e.Link)
 		} else {
-			e.Hash = CanonicalEntryHash(e.Hash)
+			e.Hash = StoreEntryHash(e.Hash)
 		}
 		if e.FeedHash == "" {
 			e.FeedHash = feedHash
@@ -548,7 +557,7 @@ func (s *Store) knownHashes(feedHash string) (map[string]bool, error) {
 			continue
 		}
 		if err := scanEntries(filepath.Join(dir, ent.Name()), func(e Entry) error {
-			set[CanonicalEntryHash(e.Hash)] = true
+			set[StoreEntryHash(e.Hash)] = true
 			return nil
 		}); err != nil {
 			return nil, err
@@ -594,11 +603,17 @@ func (s *Store) ListEntries(feedHash string) ([]Entry, error) {
 		return nil, err
 	}
 	var out []Entry
+	seen := make(map[string]bool)
 	for _, ent := range ents {
 		if !strings.HasSuffix(ent.Name(), ".ndjson") {
 			continue
 		}
 		if err := scanEntries(filepath.Join(dir, ent.Name()), func(e Entry) error {
+			e.Hash = StoreEntryHash(e.Hash)
+			if seen[e.Hash] {
+				return nil
+			}
+			seen[e.Hash] = true
 			out = append(out, e)
 			return nil
 		}); err != nil {

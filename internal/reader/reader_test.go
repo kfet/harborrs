@@ -1387,6 +1387,9 @@ func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
 	if _, err := st.AppendEntries(store.FeedHash(u), []store.Entry{entry}); err != nil {
 		t.Fatal(err)
 	}
+	// Storage masks the top bit (StoreEntryHash), so the entry lands under
+	// the masked hash and the Reader API emits the masked longId.
+	storedLong := itemLongID(store.StoreEntryHash("ba7fcb8d8885006e"))
 	w := do(t, mux, "GET", "/reader/api/0/stream/contents/feed/"+u, tok, nil)
 	if w.Code != 200 {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
@@ -1407,11 +1410,11 @@ func TestReaderItemIDsAre16HexAndLongIDRoundTrip(t *testing.T) {
 	if len(hexID) != store.EntryHashLen {
 		t.Fatalf("id=%q hexlen=%d", resp.Items[0].ID, len(hexID))
 	}
-	if resp.Items[0].LongID != long {
-		t.Fatalf("longId=%q want %q", resp.Items[0].LongID, long)
+	if resp.Items[0].LongID != storedLong {
+		t.Fatalf("longId=%q want %q", resp.Items[0].LongID, storedLong)
 	}
 
-	body := url.Values{"i": {long}, "a": {stateReadID}}
+	body := url.Values{"i": {storedLong}, "a": {stateReadID}}
 	w = do(t, mux, "POST", "/reader/api/0/edit-tag", tok, body)
 	if w.Code != 200 {
 		t.Fatalf("edit long id code=%d body=%s", w.Code, w.Body.String())

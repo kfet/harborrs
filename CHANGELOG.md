@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-06-09
+
+### Fixed
+
+- **Duplicate entries from the pre-mask high-bit hash migration.** Entry
+  hashes gained an int64-safe high-bit mask (`sum[0] &= 0x7F`) after some
+  entries had already been stored unmasked; on the next poll the masked
+  hash no longer matched the stored unmasked one, so the same article was
+  stored — and displayed — twice. A storage-level canonicalisation
+  (`StoreEntryHash`) now re-masks legacy hashes on load, in the state
+  logs, in dedup and lookups; the on-disk migration re-masks and prunes
+  the duplicate lines. Reader API item-ids are unchanged.
+
 ## [0.12.2] - 2026-06-09
 
 ### Fixed

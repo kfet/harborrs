@@ -57,11 +57,41 @@ func EntryHash(guid, link string) string {
 // CanonicalEntryHash normalises legacy on-disk entry hashes to the current
 // 16-hex-char format. v0.4.4 and earlier stored 20-hex-char sha1 prefixes;
 // Google Reader item ids are 16 hex chars, so migration truncates old hashes.
+// It is length/case-only and does NOT touch the bits — the Reader API item-id
+// round-trip relies on that identity.
 func CanonicalEntryHash(hash string) string {
 	if len(hash) >= EntryHashLen && isHex(hash) {
 		return strings.ToLower(hash[:EntryHashLen])
 	}
 	return hash
+}
+
+// StoreEntryHash is the canonical *storage identity* of an entry hash:
+// CanonicalEntryHash plus the high-bit mask that EntryHash applies
+// (sum[0] &= 0x7F). The mask was added after some entries had already
+// been persisted with the top bit set; on the next poll EntryHash
+// produced the masked form, which no longer matched the stored unmasked
+// hash, so the same article was stored — and displayed — twice. Masking
+// here collapses a legacy unmasked hash and its masked re-poll to one
+// id. The high bit lives in the first hex nibble, so clearing 0x8 off
+// the leading hex digit is equivalent to sum[0] &= 0x7F.
+//
+// This is used only for on-disk/in-memory dedup, state-log keys and
+// lookups — NOT for Reader item-id encoding, which keeps using
+// CanonicalEntryHash so already-issued ids stay stable.
+func StoreEntryHash(hash string) string {
+	h := CanonicalEntryHash(hash)
+	if len(h) != EntryHashLen || !isHex(h) {
+		return h
+	}
+	b := []byte(h)
+	switch c := b[0]; {
+	case '8' <= c && c <= '9':
+		b[0] = c - 8 // '8'..'9' -> '0'..'1'
+	case 'a' <= c && c <= 'f':
+		b[0] = c - 47 // 'a'..'f' (10..15) masked to 2..7 -> '2'..'7'
+	}
+	return string(b)
 }
 
 func isHex(s string) bool {
