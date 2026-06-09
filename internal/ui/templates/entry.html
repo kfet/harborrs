@@ -1,10 +1,10 @@
 {{define "entry"}}{{template "base" .}}{{end}}
-{{define "title"}}{{.Entry.Title}} — Harbour RSS{{end}}
+{{define "title"}}{{.Title}} — Harbour RSS{{end}}
 {{define "content"}}{{template "entry-detail" .}}{{end}}
 
 {{define "entry-detail"}}
 <article id="entry-detail-{{.Entry.Hash}}" class="entry-full {{if .State.Read}}read{{end}}{{if .State.Starred}} starred{{end}}">
-<h1>{{.Entry.Title}}</h1>
+<h1>{{.Title}}</h1>
 <p class="meta">
 {{with .Entry.Author}}{{.}} · {{end}}{{.Entry.Published.Format "2006-01-02 15:04"}}{{if .SourceLink}} · <a class="source-link" href="{{.SourceLink}}" target="_blank" rel="noopener noreferrer">source ↗</a>{{end}}{{if .FeedURL}} · <a href="feed?id={{.FeedURL}}">{{.FeedTitle}}</a>{{end}}
 </p>

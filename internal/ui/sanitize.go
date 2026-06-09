@@ -354,3 +354,50 @@ func hasMeaningfulContent(n *html.Node, inLink bool) bool {
 	}
 	return false
 }
+
+// htmlToText extracts a plain-text rendering of HTML fragment s: all
+// tags are dropped and their text content concatenated, with runs of
+// whitespace collapsed to single spaces and the result trimmed. Block
+// elements are separated by a space so adjacent paragraphs/line breaks
+// do not run words together. Used to synthesise a display title for
+// feeds (e.g. Mastodon) whose items carry no <title>.
+func htmlToText(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	ctx := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
+	// ParseFragment with a valid context node is total on string input
+	// (the tokenizer never errors), so the error is ignored as isLinkOnly
+	// does; an empty node set simply yields the empty string.
+	nodes, _ := html.ParseFragment(strings.NewReader(s), ctx)
+	var b strings.Builder
+	for _, n := range nodes {
+		collectText(n, &b)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// collectText walks n appending text-node data to b, inserting a space
+// around block-level boundaries so words from separate blocks stay
+// separated after whitespace collapsing.
+func collectText(n *html.Node, b *strings.Builder) {
+	switch n.Type {
+	case html.TextNode:
+		b.WriteString(n.Data)
+		return
+	case html.ElementNode:
+		switch strings.ToLower(n.Data) {
+		case "br", "p", "div", "li", "tr", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6":
+			b.WriteByte(0x20)
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		collectText(c, b)
+	}
+	if n.Type == html.ElementNode {
+		switch strings.ToLower(n.Data) {
+		case "p", "div", "li", "tr", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6":
+			b.WriteByte(0x20)
+		}
+	}
+}

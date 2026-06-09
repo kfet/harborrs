@@ -655,7 +655,7 @@ type feedEntry struct {
 func rowFor(e store.Entry, st store.EntryState) feedEntry {
 	return feedEntry{
 		Hash:         e.Hash,
-		Title:        e.Title,
+		Title:        entryTitle(e),
 		Read:         st.Read,
 		Starred:      st.Starred,
 		Published:    e.Published,
@@ -707,7 +707,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		}
 		entries = append(entries, feedEntry{
 			Hash:         e.Hash,
-			Title:        e.Title,
+			Title:        entryTitle(e),
 			Read:         st.Read,
 			Starred:      st.Starred,
 			Published:    e.Published,
@@ -778,7 +778,7 @@ func (s *Server) crossFeed(w http.ResponseWriter, r *http.Request, heading, scop
 		st := s.Store.EntryState(x.entry.Hash)
 		entries = append(entries, feedEntry{
 			Hash:         x.entry.Hash,
-			Title:        x.entry.Title,
+			Title:        entryTitle(x.entry),
 			Read:         st.Read,
 			Starred:      st.Starred,
 			FeedTitle:    x.feedTitle,
@@ -1079,11 +1079,12 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		data := struct {
 			Entry      store.Entry
 			Body       template.HTML
+			Title      string
 			SourceLink template.URL
 			State      store.EntryState
 			FeedURL    string
 			FeedTitle  string
-		}{e, body, LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+		}{e, body, entryTitle(e), LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		return
@@ -1092,11 +1093,12 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		baseData
 		Entry      store.Entry
 		Body       template.HTML
+		Title      string
 		SourceLink template.URL
 		State      store.EntryState
 		FeedURL    string
 		FeedTitle  string
-	}{s.base(r), e, body, LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
+	}{s.base(r), e, body, entryTitle(e), LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 	s.render(w, "entry", data)
 }
 
@@ -1147,11 +1149,12 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		data := struct {
 			Entry      store.Entry
 			Body       template.HTML
+			Title      string
 			SourceLink template.URL
 			State      store.EntryState
 			FeedURL    string
 			FeedTitle  string
-		}{e, entryBody(e), LinkURL(e.Link), st, f.XMLURL, f.Title}
+		}{e, entryBody(e), entryTitle(e), LinkURL(e.Link), st, f.XMLURL, f.Title}
 		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
 		// Out-of-band patch for the matching list row, so the
 		// split-panel keeps the list and the open entry in sync when
@@ -1443,4 +1446,40 @@ func (s *Server) handleFeedNew(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// entryTitle resolves a display title for e. Most feeds set Item.Title,
+// but some (notably Mastodon, whose RSS items have no <title>) leave it
+// empty — rendering blank rows and a blank entry header. In that case
+// synthesise a title from the entry body: strip HTML to plain text and
+// take a leading snippet. Falls back to "(untitled)" if there is no
+// usable text at all.
+func entryTitle(e store.Entry) string {
+	if t := strings.TrimSpace(e.Title); t != "" {
+		return t
+	}
+	body := e.Content
+	if isLinkOnly(body) {
+		body = e.Summary
+	}
+	text := htmlToText(body)
+	if text == "" {
+		return "(untitled)"
+	}
+	return truncateTitle(text, 100)
+}
+
+// truncateTitle shortens s to at most maxRunes runes, breaking on the
+// last word boundary within budget where possible and appending an
+// ellipsis. Operates on runes so multibyte text is not split mid-glyph.
+func truncateTitle(s string, maxRunes int) string {
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	cut := string(r[:maxRunes])
+	if i := strings.LastIndex(cut, " "); i > maxRunes/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " ") + "\u2026"
 }
