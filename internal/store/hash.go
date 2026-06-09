@@ -19,6 +19,7 @@ package store
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"regexp"
 	"strings"
 )
 
@@ -46,12 +47,31 @@ func FeedHash(url string) string {
 // risk at this scale) and keeps the wire format compatible.
 func EntryHash(guid, link string) string {
 	h := sha1.New()
-	h.Write([]byte(guid))
+	h.Write([]byte(NormalizeGUID(guid)))
 	h.Write([]byte{0})
 	h.Write([]byte(link))
 	sum := h.Sum(nil)
 	sum[0] &= 0x7F
 	return hex.EncodeToString(sum)[:EntryHashLen]
+}
+
+// trailingRFC1123 matches a single RFC 1123 date-time anchored at the end
+// of a string, e.g. " Mon, 18 May 2026 21:12:26 EDT" or
+// " Tue, 9 Jun 2026 13:05:18 +0000". The day-of-month may be 1 or 2 digits
+// and the zone is a short alpha abbreviation or a numeric offset.
+var trailingRFC1123 = regexp.MustCompile(
+	` [A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} (?:[A-Za-z]{2,5}|[+-]\d{4})$`)
+
+// NormalizeGUID strips a single trailing RFC 1123 date-time from a feed's
+// item guid. Some feeds (e.g. Nintendo World Report) emit a non-permalink
+// guid of the form "<stable-path> <pubDate>"; the pubDate's seconds drift
+// between polls (…:26 → …:00), changing the guid and therefore the entry
+// hash, so the same article is stored twice. Removing the volatile date
+// tail yields a stable identity. Only an exact, fully-anchored RFC 1123
+// tail is stripped — a guid that merely ends in digits is left untouched,
+// so genuinely-distinct items are not collapsed.
+func NormalizeGUID(guid string) string {
+	return trailingRFC1123.ReplaceAllString(guid, "")
 }
 
 // CanonicalEntryHash normalises legacy on-disk entry hashes to the current

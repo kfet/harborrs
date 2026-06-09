@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-06-09
+
+### Fixed
+
+- **Duplicate entries from feeds whose guid embeds a volatile pubDate.**
+  Some feeds (e.g. Nintendo World Report) emit a non-permalink guid of the
+  form `<stable-path> <pubDate>`; the pubDate's seconds drift between polls
+  (`…:26` → `…:00`), changing the guid and thus the entry hash, so the same
+  article was stored twice. The entry hash now strips a strict trailing
+  RFC 1123 date from the guid before hashing (`NormalizeGUID`), and a
+  one-time migration recomputes affected entries from the normalised guid,
+  collapses the duplicates, and remaps read/starred state onto the
+  survivor. Only an exact, fully-anchored date tail is stripped, so
+  genuinely-distinct items that merely share a link are left untouched.
+
 ## [0.12.3] - 2026-06-09
 
 ### Fixed

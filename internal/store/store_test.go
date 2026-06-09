@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -996,6 +998,100 @@ func TestListEntriesDedupsCanonicalDuplicates(t *testing.T) {
 	if len(out) != 1 || out[0].Hash != "6fffa66a7f27865f" {
 		t.Fatalf("ListEntries=%+v want single masked entry", out)
 	}
+}
+
+func TestNormalizeGUID(t *testing.T) {
+	cases := map[string]string{
+		"news/75623 Mon, 18 May 2026 21:12:26 EDT":    "news/75623",
+		"review/75580 Tue, 9 Jun 2026 13:05:18 +0000": "review/75580",
+		"news/1 Sun, 1 Jan 2026 00:00:00 GMT":         "news/1",
+		"plain-guid-no-date":                          "plain-guid-no-date",
+		"ends-in-digits 12345":                        "ends-in-digits 12345",
+		"":                                            "",
+		"https://example.com/a?b=1":                   "https://example.com/a?b=1",
+	}
+	for in, want := range cases {
+		if got := NormalizeGUID(in); got != want {
+			t.Errorf("NormalizeGUID(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// TestOpenDedupsVolatileGUID covers the volatile-pubDate guid bug: a feed
+// whose guid is "<stable> <pubDate>" drifts the seconds between polls, so
+// the same article lands twice under different hashes. Migration must
+// recompute identity from the normalised guid, collapse the pair, and
+// carry the read state (logged under the first copy's hash) to the
+// survivor.
+func TestOpenDedupsVolatileGUID(t *testing.T) {
+	dir := t.TempDir()
+	u := "https://feed.example/volatile"
+	fh := FeedHash(u)
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := "https://feed.example/news/42/story"
+	g1 := "news/42 Mon, 18 May 2026 21:12:26 EDT"
+	g2 := "news/42 Mon, 18 May 2026 21:12:00 EDT" // seconds drifted
+	h1 := EntryHash(g1, link)
+	h2 := EntryHash(g2, link)
+	if h1 != h2 {
+		t.Fatalf("fixture: EntryHash should ignore the volatile date (%s vs %s)", h1, h2)
+	}
+	// Pre-mask/legacy: simulate the two as-stored, pre-normalisation hashes
+	// (what older harb wrote, where the date was part of the hash input).
+	old1 := rawHash(g1, link)
+	old2 := rawHash(g2, link)
+	if old1 == old2 {
+		t.Fatal("fixture: stored hashes should differ before normalisation")
+	}
+	var b strings.Builder
+	for _, p := range []struct{ h, g string }{{old1, g1}, {old2, g2}} {
+		line, _ := json.Marshal(Entry{Hash: p.h, FeedHash: fh, GUID: p.g, Link: link, Title: "story", Published: time.Unix(1, 0)})
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Read state recorded against the first copy's stored hash.
+	if err := os.WriteFile(filepath.Join(dir, "read.log"), []byte("2024-01-01T00:00:00Z r "+old1+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListEntries(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed %d want 1: %+v", len(listed), listed)
+	}
+	if listed[0].Hash != h1 {
+		t.Fatalf("survivor hash=%s want recomputed %s", listed[0].Hash, h1)
+	}
+	if !s.EntryState(h1).Read {
+		t.Fatal("read state did not follow the recomputed hash")
+	}
+	raw, _ := os.ReadFile(filepath.Join(entDir, "current.ndjson"))
+	if n := strings.Count(strings.TrimRight(string(raw), "\n"), "\n") + 1; n != 1 {
+		t.Fatalf("on-disk lines=%d want 1: %s", n, raw)
+	}
+}
+
+// rawHash reproduces the pre-normalisation entry hash (date included in the
+// guid) for test fixtures that simulate already-stored legacy entries.
+func rawHash(guid, link string) string {
+	h := sha1.New()
+	h.Write([]byte(guid))
+	h.Write([]byte{0})
+	h.Write([]byte(link))
+	sum := h.Sum(nil)
+	sum[0] &= 0x7F
+	return hex.EncodeToString(sum)[:EntryHashLen]
 }
 
 func TestStoreEntryHashMasksHighBit(t *testing.T) {
