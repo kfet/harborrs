@@ -140,6 +140,11 @@ func TestEnrichLinkOnlyContent(t *testing.T) {
 	if !strings.Contains(entries[0].Content, "external article body") {
 		t.Errorf("agg not enriched: %q", entries[0].Content)
 	}
+	// The original "Comments" forum link is preserved as a footer so the
+	// reader keeps a path to the discussion thread.
+	if !strings.Contains(entries[0].Content, `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`) {
+		t.Errorf("forum link not preserved: %q", entries[0].Content)
+	}
 	if entries[1].Content != "<p>already has a full body</p>" {
 		t.Errorf("full body should be untouched: %q", entries[1].Content)
 	}
@@ -152,4 +157,54 @@ func TestEnrichLinkOnlyContent(t *testing.T) {
 
 	// No eligible entries -> no work, no panic (covers the empty-idxs guard).
 	enrichLinkOnlyContent(context.Background(), client, "ua", []store.Entry{{Hash: "x"}}, isNew)
+}
+
+// TestWithPreservedLink covers the footer composer: anchor present appends
+// the preserved link; anchorless or empty original bodies skip the footer
+// to avoid a dangling empty paragraph; and the Content-over-Summary
+// fallback (linkOnlyBody) is honoured.
+func TestWithPreservedLink(t *testing.T) {
+	article := "<p>real article</p>"
+
+	// Original link lives in Summary (Content empty) -> appended.
+	got := withPreservedLink(store.Entry{Summary: `<p><a href="x">Comments</a></p>`}, article)
+	want := article + `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`
+	if got != want {
+		t.Errorf("summary link not preserved:\n got %q\nwant %q", got, want)
+	}
+
+	// Original link lives in Content -> Content wins over Summary.
+	got = withPreservedLink(store.Entry{Content: `<a href="c">Source</a>`, Summary: `<a href="s">other</a>`}, article)
+	want = article + `<p class="enriched-source-link"><a href="c">Source</a></p>`
+	if got != want {
+		t.Errorf("content link not preserved:\n got %q\nwant %q", got, want)
+	}
+
+	// Anchorless original body -> article returned unchanged (no footer).
+	if got := withPreservedLink(store.Entry{Summary: "just some text"}, article); got != article {
+		t.Errorf("anchorless body should skip footer, got %q", got)
+	}
+
+	// Empty original body -> article returned unchanged.
+	if got := withPreservedLink(store.Entry{}, article); got != article {
+		t.Errorf("empty body should skip footer, got %q", got)
+	}
+}
+
+// TestReplaceContent confirms the webflow composer returns the fetched body
+// verbatim, with no footer.
+func TestReplaceContent(t *testing.T) {
+	if got := replaceContent(store.Entry{Summary: `<a href="x">Comments</a>`}, "<p>body</p>"); got != "<p>body</p>" {
+		t.Errorf("replaceContent should pass through, got %q", got)
+	}
+}
+
+// TestHasAnchor covers both branches and the unparseable-input guard.
+func TestHasAnchor(t *testing.T) {
+	if !hasAnchor(`<p><a href="x">Comments</a></p>`) {
+		t.Error("anchor not detected")
+	}
+	if hasAnchor("<p>no anchor here</p>") {
+		t.Error("false anchor detected")
+	}
 }

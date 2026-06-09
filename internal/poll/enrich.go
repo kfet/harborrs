@@ -59,8 +59,13 @@ func enrichWebflowContent(ctx context.Context, client *http.Client, ua string, e
 			idxs = append(idxs, i)
 		}
 	}
-	fetchInto(ctx, client, ua, entries, idxs, fetchRichText)
+	fetchInto(ctx, client, ua, entries, idxs, fetchRichText, replaceContent)
 }
+
+// replaceContent is the default compose: the fetched body becomes the new
+// Content verbatim. Used by the webflow path, which has no separate forum
+// link to preserve.
+func replaceContent(_ store.Entry, fetched string) string { return fetched }
 
 // enrichLinkOnlyContent fills entry.Content for every NEW entry whose feed
 // body is link-only (bodyIsLinkOnly) by fetching its external Link and
@@ -76,13 +81,38 @@ func enrichLinkOnlyContent(ctx context.Context, client *http.Client, ua string, 
 			idxs = append(idxs, i)
 		}
 	}
-	fetchInto(ctx, client, ua, entries, idxs, fetchArticle)
+	fetchInto(ctx, client, ua, entries, idxs, fetchArticle, withPreservedLink)
 }
 
-// fetchInto runs fetch over entries[idxs] on enrichWorkers goroutines and
-// writes any non-empty result into that entry's Content. Each worker owns
-// a distinct slice element, so the in-place mutation needs no lock.
-func fetchInto(ctx context.Context, client *http.Client, ua string, entries []store.Entry, idxs []int, fetch func(context.Context, *http.Client, string, string) string) {
+// withPreservedLink composes the new Content for a link-only entry that was
+// successfully enriched: the fetched article followed by the entry's
+// original link-only body (the forum/"Comments" discussion link) wrapped in
+// a marker paragraph, so the reader keeps a one-click path to the thread.
+// The original anchor markup is preserved verbatim to keep the feed's own
+// label. If the original body carries no anchor (nothing to preserve), the
+// article is returned unchanged to avoid a dangling empty paragraph.
+func withPreservedLink(orig store.Entry, article string) string {
+	body := strings.TrimSpace(linkOnlyBody(orig))
+	if body == "" || !hasAnchor(body) {
+		return article
+	}
+	return article + `<p class="enriched-source-link">` + body + `</p>`
+}
+
+// hasAnchor reports whether s contains at least one <a> element.
+func hasAnchor(s string) bool {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(s))
+	if err != nil {
+		return false
+	}
+	return doc.Find("a").Length() > 0
+}
+
+// fetchInto runs fetch over entries[idxs] on enrichWorkers goroutines and,
+// for any non-empty result, writes compose(entry, result) into that entry's
+// Content. Each worker owns a distinct slice element, so the in-place
+// mutation needs no lock.
+func fetchInto(ctx context.Context, client *http.Client, ua string, entries []store.Entry, idxs []int, fetch func(context.Context, *http.Client, string, string) string, compose func(store.Entry, string) string) {
 	if len(idxs) == 0 {
 		return
 	}
@@ -94,7 +124,7 @@ func fetchInto(ctx context.Context, client *http.Client, ua string, entries []st
 			defer wg.Done()
 			for i := range jobs {
 				if c := fetch(ctx, client, ua, entries[i].Link); c != "" {
-					entries[i].Content = c
+					entries[i].Content = compose(entries[i], c)
 				}
 			}
 		}()
@@ -237,16 +267,22 @@ func innerHTML(s *goquery.Selection) string {
 	return strings.TrimSpace(h)
 }
 
+// linkOnlyBody returns the entry's displayable body for link-only
+// handling: Content when non-empty (after trimming), else Summary. Mirrors
+// the UI's entryBody fallback.
+func linkOnlyBody(e store.Entry) string {
+	if strings.TrimSpace(e.Content) != "" {
+		return e.Content
+	}
+	return e.Summary
+}
+
 // bodyIsLinkOnly reports whether e has no displayable article body — its
 // Content (falling back to Summary, mirroring the UI's entryBody) is
 // empty, whitespace, or only a bare link such as the "Comments"/"Source"
 // link aggregator feeds publish in place of a body.
 func bodyIsLinkOnly(e store.Entry) bool {
-	body := e.Content
-	if strings.TrimSpace(body) == "" {
-		body = e.Summary
-	}
-	return isLinkOnlyHTML(body)
+	return isLinkOnlyHTML(linkOnlyBody(e))
 }
 
 // isLinkOnlyHTML reports whether s carries no meaningful content outside

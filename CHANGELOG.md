@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Preserve the forum/discussion link when enriching link-only feeds.**
+  Aggregator feeds (Lobsters, Hacker News, Reddit) publish each item's
+  body as only a "Comments"/"Source" discussion link, with the external
+  article as the entry link. Link-only enrichment (v0.7.11) replaces that
+  body with the fetched article, which previously dropped the discussion
+  link from view. The original link is now appended to the enriched
+  Content as a `<p class="enriched-source-link">…</p>` footer, preserving
+  the feed's own anchor label, so the reader keeps a one-click path to the
+  forum thread. Entries whose original body has no anchor get no footer.
+  Note: enrichment is new-only — entries already enriched before this
+  release won't retroactively gain the footer; a backfill may be wanted.
+
 ## [0.8.3] - 2026-06-08
 
 ### Added

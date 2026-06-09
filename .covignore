@@ -83,10 +83,11 @@ github.com/kfet/harb/internal/reader/reader.go:1012\.16,1014\.3
 github.com/kfet/harb/internal/poll/resolve/webflow.go:146\.16,148\.3
 
 # content enrichment: largestRichText / extractArticle wrap the fetched
-# body in an in-memory bytes.Reader, and isLinkOnlyHTML wraps its input in
-# a strings.Reader, so goquery.NewDocumentFromReader cannot error (the
-# reader never errors and html.Parse does not reject malformed HTML). Same
-# unreachable defensive branch as the resolver above.
-github.com/kfet/harb/internal/poll/enrich.go:165\.16,167\.3
-github.com/kfet/harb/internal/poll/enrich.go:182\.16,184\.3
-github.com/kfet/harb/internal/poll/enrich.go:261\.16,263\.3
+# body in an in-memory bytes.Reader, and isLinkOnlyHTML / hasAnchor wrap
+# their input in a strings.Reader, so goquery.NewDocumentFromReader cannot
+# error (the reader never errors and html.Parse does not reject malformed
+# HTML). Same unreachable defensive branch as the resolver above.
+github.com/kfet/harb/internal/poll/enrich.go:195\.16,197\.3
+github.com/kfet/harb/internal/poll/enrich.go:212\.16,214\.3
+github.com/kfet/harb/internal/poll/enrich.go:297\.16,299\.3
+github.com/kfet/harb/internal/poll/enrich.go:105\.16,107\.3
