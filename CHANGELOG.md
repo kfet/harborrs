@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Article reading pane now uses the full page height on wide screens.**
+  On the entry-list views (per-feed, unread, starred), the page chrome
+  (heading, the unread-only filter, and the "manage feed" disclosure)
+  now lives in the left entries column instead of spanning full width
+  above the split. The right-hand article pane consequently rises to the
+  top of the page and gains the reclaimed vertical space, so long
+  entries have room to read instead of being boxed into a short pane
+  with empty space above it. Narrow screens are unchanged (the column
+  still stacks heading → filter → manage → list).
+
+
 ## [0.11.0] - 2026-06-08
 
 ### Changed

@@ -2,6 +2,8 @@
 {{define "title"}}{{.Heading}} — Harbour RSS{{end}}
 {{define "content"}}
 <section class="feed">
+<div class="split">
+<div class="entries-pane">
 <h1>{{.Heading}}{{if .ShowMarkAll}} <form method="POST" action="mark-all-read?scope={{.Scope}}{{if .ScopeID}}&id={{.ScopeID}}{{end}}" class="markall-form"><button type="submit" class="markall">mark all read</button></form>{{end}}</h1>
 {{if eq .Scope "feed"}}
 <div class="home-actions">
@@ -26,8 +28,6 @@
 </details>
 {{end}}
 {{if not .Entries}}<p class="empty">{{if .UnreadOnly}}all caught up — <a href="feed?id={{.ScopeID}}&unread=0">show all entries</a>{{else}}nothing to show.{{end}}</p>{{end}}
-<div class="split">
-<div class="entries-pane">
 <ul class="entries">
 {{range .Entries}}{{template "entryrow" .}}{{end}}
 </ul>
