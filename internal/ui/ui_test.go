@@ -1156,6 +1156,50 @@ func TestFeedNewMethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestFeedNewHasTagDatalist confirms the add-feed page exposes a
+// <datalist> of every known tag, wired to the comma-separated tags
+// input, on both the GET form and the POST preview render path — so the
+// tags field can autocomplete existing tags consistently with the edit
+// view.
+func TestFeedNewHasTagDatalist(t *testing.T) {
+	srv, mux, _, op, tok, _ := fixture(t)
+	op.op.Feeds = []store.Feed{
+		{XMLURL: "https://a/feed", Title: "Alpha", Tags: []string{"tech", "weekly"}},
+		{XMLURL: "https://b/feed", Title: "Bravo", Tags: []string{"news"}},
+	}
+	datalist := []string{
+		`<datalist id="newfeed-all-tags">`,
+		`<option value="tech">`,
+		`<option value="weekly">`,
+		`<option value="news">`,
+	}
+	inputWiring := []string{
+		`list="newfeed-all-tags"`,
+		`data-tag-autocomplete`,
+	}
+
+	// GET: the empty form carries the datalist (always rendered, so the
+	// tags input in the preview form can reference it).
+	w := do(mux, req("GET", "/ui/feed/new", tok, nil))
+	body := w.Body.String()
+	for _, s := range datalist {
+		if !strings.Contains(body, s) {
+			t.Fatalf("GET add-feed missing %q: %s", s, body)
+		}
+	}
+
+	// POST (preview render path): the datalist survives AND the tags
+	// input is wired to it with the token-aware enhancement hook.
+	srv.Previewer = &stubPreviewer{out: &FeedPreview{Title: "Example", Link: "https://example.com"}}
+	w = do(mux, req("POST", "/ui/feed/new", tok, url.Values{"url": {"https://example.com/feed.xml"}}))
+	body = w.Body.String()
+	for _, s := range append(append([]string{}, datalist...), inputWiring...) {
+		if !strings.Contains(body, s) {
+			t.Fatalf("POST add-feed missing %q: %s", s, body)
+		}
+	}
+}
+
 // ---- formatPublished --------------------------------------------------
 
 func TestFormatPublished(t *testing.T) {

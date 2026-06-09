@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Tag auto-complete on the add-feed page.** The "tags
+  (comma-separated)" input on `/ui/feed/new` now offers a `<datalist>`
+  of every known tag, consistent with the feed-edit view. A small
+  progressive enhancement in `keys.js` makes it token-aware: as you
+  type, the suggestions complete only the tag after the last comma
+  (already-typed tags are preserved and filtered out). With JavaScript
+  disabled the plain datalist still completes the first tag.
+
 
 ## [0.8.2] - 2026-06-08
 

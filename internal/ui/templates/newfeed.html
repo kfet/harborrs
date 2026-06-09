@@ -5,6 +5,10 @@
 <h1>add feed</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 
+<datalist id="newfeed-all-tags">
+{{range .AllTags}}<option value="{{.}}"></option>{{end}}
+</datalist>
+
 <form method="POST" action="new">
 <label>feed URL
 <input type="url" name="url" value="{{.URL}}" placeholder="https://example.com/feed.xml" required autofocus></label>
@@ -31,7 +35,7 @@
 <label>title
 <input type="text" name="title" value="{{.Preview.Title}}"></label>
 <label>tags (comma-separated, optional)
-<input type="text" name="tags" value="{{.Tags}}" placeholder="e.g. tech, daily"></label>
+<input type="text" name="tags" value="{{.Tags}}" placeholder="e.g. tech, daily" list="newfeed-all-tags" autocomplete="off" data-tag-autocomplete></label>
 <button type="submit" class="primary">subscribe</button>
 </form>
 </div>

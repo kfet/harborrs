@@ -1397,8 +1397,16 @@ func (s *Server) handleFeedNew(w http.ResponseWriter, r *http.Request) {
 		URL     string
 		Tags    string
 		Preview *FeedPreview
+		AllTags []string // every tag across all feeds, for the tags datalist
 	}
 	d := newFeedData{baseData: s.base(r)}
+	// Populate the tags datalist from every tag the OPML knows about, so
+	// the comma-separated tags input can autocomplete existing tags
+	// (mirrors handleFeed). A load failure is non-fatal: the form still
+	// works, just without suggestions.
+	if op, err := s.OPML.Load(); err == nil {
+		d.AllTags = op.AllTags()
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.render(w, "newfeed", d)

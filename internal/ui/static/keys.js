@@ -933,3 +933,59 @@
     }
   });
 })();
+
+// Token-aware tag autocomplete for comma-separated tag inputs
+// (the add-feed page). Progressive enhancement on top of a plain
+// <datalist>: with JS off the datalist still completes the whole field
+// (useful for the first tag); with JS on we rewrite the <option>
+// values on every keystroke so the browser's native datalist completes
+// only the *current* token — the text after the last comma — while
+// preserving the tags already typed.
+//
+//   input "tech, da"  + candidate "daily"
+//     → option value "tech, daily"  (native datalist offers "daily")
+//
+// Candidates already present in the field are dropped from the list.
+(function () {
+  function tokens(s) {
+    return s.split(",").map(function (t) { return t.trim(); });
+  }
+  function enhance(input) {
+    var list = document.getElementById(input.getAttribute("list"));
+    if (!list) return;
+    // Snapshot the original single-tag candidate values once.
+    var base = Array.prototype.map.call(
+      list.querySelectorAll("option"),
+      function (o) { return o.value; }
+    );
+    function rewrite() {
+      var val = input.value;
+      var lastComma = val.lastIndexOf(",");
+      var prefix = lastComma < 0 ? "" : val.slice(0, lastComma + 1);
+      var token = val.slice(lastComma + 1).trim().toLowerCase();
+      var chosen = tokens(val.slice(0, lastComma < 0 ? 0 : lastComma))
+        .filter(Boolean)
+        .map(function (t) { return t.toLowerCase(); });
+      var sep = prefix && !/\s$/.test(prefix) ? prefix + " " : prefix;
+      list.innerHTML = "";
+      base.forEach(function (cand) {
+        var lc = cand.toLowerCase();
+        if (chosen.indexOf(lc) !== -1) return; // already typed
+        if (token && lc.indexOf(token) !== 0) return; // prefix filter
+        var opt = document.createElement("option");
+        opt.value = sep + cand;
+        list.appendChild(opt);
+      });
+    }
+    input.addEventListener("input", rewrite);
+  }
+  function init() {
+    var inputs = document.querySelectorAll("input[data-tag-autocomplete]");
+    Array.prototype.forEach.call(inputs, enhance);
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
