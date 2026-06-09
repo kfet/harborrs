@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-09
+
+### Fixed
+
+- **`o` / `→` now opens the source article in the wide-screen split
+  view.** The "open source in new tab" shortcut only bound on the
+  standalone entry page; in the master-detail entry list (wide screens)
+  the article is loaded into the detail pane after page load, so the
+  keypress did nothing. The list-view key handler now opens the detail
+  pane article's source link directly.
+
 ## [0.12.0] - 2026-06-08
 
 ### Changed

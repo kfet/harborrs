@@ -459,6 +459,22 @@
       const btn = rows()[idx].querySelector(sel);
       if (btn) btn.click();
     };
+    // Open (in a new tab) the source link of the article currently shown
+    // in the wide-screen detail pane (entry-list master-detail view).
+    // The standalone `.entry-full` keydown handler below only wires up
+    // when an article exists at page load; on the split view the article
+    // is htmx-swapped into #detail-pane later, so its `o`/→ shortcut
+    // never bound. Handle it here instead. Returns true when it acted.
+    const openDetailSource = () => {
+      const pane = document.querySelector("#detail-pane");
+      if (!pane) return false;
+      const src = pane.querySelector(".entry-full a.source-link");
+      if (!src) return false;
+      const href = src.getAttribute("href");
+      if (!href) return false;
+      window.open(href, "_blank", "noopener");
+      return true;
+    };
     let lastG = 0;
     // After any htmx swap on this page (row toggle outerHTML, OOB
     // patches from detail-pane toggles, etc.) re-apply kb-focus to
@@ -478,7 +494,16 @@
           if (!isEntryList && idx >= 0) {
             const a = rows()[idx].querySelector("a");
             if (a) { a.click(); e.preventDefault(); }
+          } else if (isEntryList && openDetailSource()) {
+            // Entry-list split view: open the detail pane article's
+            // source — mirrors `o` / → on the standalone entry page.
+            e.preventDefault();
           }
+          break;
+        case "o":
+          // Entry-list split view: open the detail pane article's source
+          // in a new tab. (Standalone entry page handles `o` separately.)
+          if (isEntryList && openDetailSource()) e.preventDefault();
           break;
         case "Enter":
           if (idx >= 0) {
