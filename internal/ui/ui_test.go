@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2748,5 +2749,90 @@ func TestHomeMasterDetailMarkup(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home master-detail missing %q: %s", want, body)
 		}
+	}
+}
+func TestVersionEndpoint(t *testing.T) {
+	_, mux, st, op, tok, _ := fixture(t)
+
+	// Unauthenticated → redirect to login (session-protected like the
+	// rest of /ui).
+	if w := do(mux, req("GET", "/ui/version", "", nil)); w.Code != http.StatusSeeOther {
+		t.Fatalf("unauth code=%d, want 303", w.Code)
+	}
+
+	// 200 carries the StateVersion as a decimal body + matching ETag.
+	w := do(mux, req("GET", "/ui/version", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%q", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	etag := w.Header().Get("ETag")
+	if etag != `"`+body+`"` {
+		t.Fatalf("etag %q does not wrap body %q", etag, body)
+	}
+	if _, err := strconv.ParseInt(body, 10, 64); err != nil {
+		t.Fatalf("body %q not a decimal: %v", body, err)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "private, no-cache" {
+		t.Fatalf("cache-control=%q", cc)
+	}
+
+	// If-None-Match with the current ETag → 304, no body.
+	r := req("GET", "/ui/version", tok, nil)
+	r.Header.Set("If-None-Match", etag)
+	w304 := do(mux, r)
+	if w304.Code != http.StatusNotModified {
+		t.Fatalf("INM match code=%d, want 304", w304.Code)
+	}
+	if w304.Body.Len() != 0 {
+		t.Fatalf("304 had body %q", w304.Body.String())
+	}
+	if w304.Header().Get("ETag") != etag {
+		t.Fatalf("304 etag=%q, want %q", w304.Header().Get("ETag"), etag)
+	}
+
+	// A content mutation (new entries) must advance the value so the
+	// same INM now gets a fresh 200.
+	u := seed(t, st, op, 1)
+	_ = u
+	r2 := req("GET", "/ui/version", tok, nil)
+	r2.Header.Set("If-None-Match", etag)
+	w2 := do(mux, r2)
+	if w2.Code != 200 {
+		t.Fatalf("after append code=%d, want 200", w2.Code)
+	}
+	if w2.Body.String() == body {
+		t.Fatalf("version did not change after AppendEntries: %q", body)
+	}
+
+	// A read-state mutation advances it again (SetRead bumps
+	// StateVersion).
+	prev := w2.Body.String()
+	prevEtag := w2.Header().Get("ETag")
+	e := st.IndexedEntries(store.FeedHash(u))[0]
+	if err := st.SetRead(e.Hash, true); err != nil {
+		t.Fatal(err)
+	}
+	r3 := req("GET", "/ui/version", tok, nil)
+	r3.Header.Set("If-None-Match", prevEtag)
+	w3 := do(mux, r3)
+	if w3.Code != 200 || w3.Body.String() == prev {
+		t.Fatalf("after SetRead code=%d body=%q (prev %q)", w3.Code, w3.Body.String(), prev)
+	}
+}
+
+func TestBaseStateVerRendered(t *testing.T) {
+	_, mux, _, _, tok, _ := fixture(t)
+	w := do(mux, req("GET", "/ui/?unread=0", tok, nil))
+	if w.Code != 200 {
+		t.Fatalf("home code=%d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "data-state-ver=") {
+		t.Fatalf("home page missing data-state-ver attribute")
+	}
+	// Login page (unauthenticated) must NOT carry the attribute.
+	wl := do(mux, req("GET", "/ui/login", "", nil))
+	if strings.Contains(wl.Body.String(), "data-state-ver=") {
+		t.Fatalf("login page should not carry data-state-ver")
 	}
 }

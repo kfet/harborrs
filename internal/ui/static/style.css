@@ -858,3 +858,42 @@ ul.entries {
   border-radius: 4px;
 }
 .rename-form .rename-save:hover { border-color: var(--accent); color: var(--accent); }
+/* auto-refresh pill — unobtrusive "new items" affordance, fixed to the
+   bottom centre. Small and dismissable; mobile-friendly. */
+#refresh-pill {
+  position: fixed;
+  left: 50%;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  max-width: calc(100vw - 2rem);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+#refresh-pill[hidden] { display: none; }
+.refresh-pill-btn,
+.refresh-pill-x {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.refresh-pill-btn { font-weight: 600; }
+.refresh-pill-x {
+  padding-inline: 0.7rem;
+  opacity: 0.8;
+  border-left: 1px solid color-mix(in srgb, var(--accent-fg) 30%, transparent);
+}
+.refresh-pill-btn:hover,
+.refresh-pill-x:hover { background: color-mix(in srgb, var(--accent-fg) 14%, transparent); }
+.refresh-pill-x:hover { opacity: 1; }

@@ -989,3 +989,79 @@
     init();
   }
 })();
+/* auto-refresh poll — surface new entries without a manual reload.
+ *
+ * On authenticated pages the server stamps <html data-state-ver="...">
+ * with Store.StateVersion() at render time and exposes GET /ui/version
+ * (the same value, body + ETag). We poll it on a single interval with
+ * If-None-Match pinned to the page-load value and never advanced: the
+ * server answers 304 while nothing has changed, and 200 (with a new
+ * value) the moment new entries land or read/star state mutates. On
+ * that first 200 we latch an unobtrusive "new items" pill that reloads
+ * on tap — we never auto-swap the list, which would jump scroll
+ * position and clobber keyboard selection mid-read. Polling pauses
+ * while the tab is hidden and resumes on visibilitychange, so a
+ * backgrounded tab costs nothing. */
+(function () {
+  var root = document.documentElement;
+  var pageVer = root.getAttribute("data-state-ver");
+  // Only authenticated pages carry the attribute (and the pill).
+  if (pageVer == null) return;
+  var pill = document.getElementById("refresh-pill");
+  if (!pill) return;
+
+  var BASE = root.dataset.uiBase || "./";
+  var URL_ = BASE + "version";
+  var INM = '"' + pageVer + '"';
+  var PERIOD = 50000; // ~50s between polls
+  var timer = null;
+  var shown = false;
+  var dismissed = false;
+
+  function show() {
+    if (shown || dismissed) return;
+    shown = true;
+    pill.hidden = false;
+    stop(); // nothing more to learn — release the interval
+  }
+
+  function poll() {
+    if (shown) return; // nothing more to learn once latched
+    fetch(URL_, {
+      headers: { "If-None-Match": INM },
+      cache: "no-store",
+      credentials: "same-origin"
+    }).then(function (res) {
+      // 304 → unchanged. Anything other than a clean 200 (redirects to
+      // login, errors) is ignored so a stray body can't false-trigger.
+      if (res.status !== 200) return;
+      return res.text().then(function (body) {
+        if (body && body.trim() !== pageVer) show();
+      });
+    }).catch(function () { /* transient network error — try again next tick */ });
+  }
+
+  function start() {
+    if (timer != null || shown) return;
+    timer = setInterval(poll, PERIOD);
+  }
+  function stop() {
+    if (timer != null) { clearInterval(timer); timer = null; }
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stop();
+    else { poll(); start(); }
+  });
+
+  var btn = pill.querySelector(".refresh-pill-btn");
+  if (btn) btn.addEventListener("click", function () { window.location.reload(); });
+  var x = pill.querySelector(".refresh-pill-x");
+  if (x) x.addEventListener("click", function () {
+    dismissed = true;
+    pill.hidden = true;
+    stop();
+  });
+
+  if (!document.hidden) start();
+})();

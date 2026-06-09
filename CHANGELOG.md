@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **UI auto-refresh.** Authenticated pages now poll a lightweight
+  `GET /ui/version` endpoint (~every 50s, paused while the tab is
+  hidden) and surface an unobtrusive "new items — tap to refresh" pill
+  when new entries or read/star changes have landed since the page was
+  served. The pill is dismissable and reloads on tap; the list is never
+  auto-swapped, so scroll position and keyboard selection are preserved
+  mid-read. The endpoint reports `Store.StateVersion()` as both body
+  and ETag and honours `If-None-Match` with a 304, so the poll does no
+  OPML load, rendering or disk reads on the hot path.
+
 ## [0.9.1] - 2026-06-08
 
 ### Fixed

@@ -12,11 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,6 +158,7 @@ func (s *Server) Routes(mux *http.ServeMux) *http.ServeMux {
 	mux.HandleFunc("/ui/entry/read", s.requireSession(s.handleSetRead))
 	mux.HandleFunc("/ui/entry/star", s.requireSession(s.handleSetStarred))
 	mux.HandleFunc("/ui/mark-all-read", s.requireSession(s.handleMarkAllRead))
+	mux.HandleFunc("/ui/version", s.requireSession(s.handleVersion))
 	mux.HandleFunc("/ui/settings", s.requireSession(s.handleSettings))
 	mux.HandleFunc("/ui/settings/passwd", s.requireSession(s.handlePasswd))
 	if s.passkeyOn() {
@@ -267,10 +270,16 @@ type baseData struct {
 	// the main column on the entry-list pages (home, feed, all, starred)
 	// so the split-panel detail view has room on wide screens.
 	MainClass string
+
+	// StateVer is the Store.StateVersion() captured at render time, as a
+	// Unix-microsecond decimal. Rendered into <html data-state-ver> so
+	// the client auto-refresh poll can detect when new entries or state
+	// changes have landed since this page was served.
+	StateVer string
 }
 
 func (s *Server) base(r *http.Request) baseData {
-	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Version: s.Version, Settings: s.ConfigPath != "", Base: uiBase(r), Passkey: s.passkeyOn()}
+	d := baseData{Theme: s.Theme, StaticVer: s.StaticVer, Version: s.Version, Settings: s.ConfigPath != "", Base: uiBase(r), Passkey: s.passkeyOn(), StateVer: stateToken(s.Store.StateVersion())}
 	if s.Auth.CheckSession(auth.SessionFromRequest(r)) {
 		d.User = s.Auth.Cfg.Username
 	}
@@ -1011,6 +1020,37 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "bad scope", http.StatusBadRequest)
 	}
+}
+
+// stateToken encodes a StateVersion as a Unix-microsecond decimal —
+// the same encoding the Reader API uses in etagOPMLState. Equal state
+// → equal token across processes (StateVersion is rebuilt from on-disk
+// logs on Open). A zero StateVersion yields a large negative constant,
+// which is a perfectly valid stable opaque token.
+func stateToken(sv time.Time) string {
+	return strconv.FormatInt(sv.UnixMicro(), 10)
+}
+
+// handleVersion is the hot path for the UI auto-refresh poll. It
+// reports the current Store.StateVersion() as a Unix-microsecond
+// decimal, both in the body and as the (quoted) ETag, and honours
+// If-None-Match with a 304. It does no OPML load, no rendering and no
+// disk reads, so clients can poll it cheaply: a matching INM short-
+// circuits before the body write. We deliberately use a pure state-
+// version token (not the OPML-folded reader etag) — OPML edits happen
+// via full-page navs here, so the only thing the poll needs to notice
+// is new entries / read-state changes, which all bump StateVersion.
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	tok := stateToken(s.Store.StateVersion())
+	etag := `"` + tok + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	if inm := r.Header.Get("If-None-Match"); inm == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, tok)
 }
 
 // findEntry resolves the entry with the given hash via the in-memory

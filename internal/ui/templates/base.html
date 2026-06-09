@@ -1,5 +1,5 @@
 {{define "base"}}<!DOCTYPE html>
-<html lang="en" data-theme="{{.Theme}}" data-ui-base="{{.Base}}">
+<html lang="en" data-theme="{{.Theme}}" data-ui-base="{{.Base}}"{{if .User}} data-state-ver="{{.StateVer}}"{{end}}>
 <head>
 <meta charset="utf-8">
 <title>{{block "title" .}}Harbour RSS{{end}}</title>
@@ -28,6 +28,7 @@
 {{end}}
 </header>
 <main{{if .MainClass}} class="{{.MainClass}}"{{end}}>{{block "content" .}}{{end}}</main>
+{{if .User}}<div id="refresh-pill" role="status" hidden><button type="button" class="refresh-pill-btn">new items — tap to refresh</button><button type="button" class="refresh-pill-x" aria-label="dismiss">✕</button></div>{{end}}
 {{if .Version}}<footer class="site-footer">Harbour RSS <span class="version">{{.Version}}</span></footer>{{end}}
 {{if .User}}
 <div id="kbd-backdrop" hidden></div>
