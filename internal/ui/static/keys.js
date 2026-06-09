@@ -363,6 +363,38 @@
     // endpoint directly — not via the .markall click interceptor — then
     // zero the row's unread count and refresh the preview pane in place,
     // so focus and scroll are preserved. Returns true when it acted.
+    // Subtract `n` from the bare-integer .count badge in `el` (tag group
+    // header / sidebar / feed row), clamped at zero.
+    const decCount = (el, n) => {
+      if (!el) return;
+      const v = Math.max(0, (parseInt(el.textContent, 10) || 0) - n);
+      el.textContent = String(v);
+    };
+    // After a feed row is marked read in place, draw down the aggregate
+    // unread counters that included it: its tag group header, the
+    // matching sidebar tag entry, the always-present sidebar "all"
+    // entry, and the "(N unread)" page total. Keeps the home page
+    // consistent without a reload.
+    const decAncestorCounts = (row, n) => {
+      const section = row.closest(".feed-group");
+      const tag = section ? (section.getAttribute("data-tag") || "") : "";
+      if (section) decCount(section.querySelector(".feed-group-head .count"), n);
+      document.querySelectorAll(".taglist li").forEach((li) => {
+        const a = li.querySelector("a");
+        if (!a) return;
+        const href = a.getAttribute("href") || "";
+        const qi = href.indexOf("?tag=");
+        const liTag = qi >= 0 ? decodeURIComponent(href.slice(qi + 5)) : "";
+        // liTag === "" is the "all" entry (href "./") — always affected.
+        if (liTag === "" || liTag === tag) decCount(li.querySelector(".count"), n);
+      });
+      const tot = document.querySelector("h1 small");
+      if (tot) {
+        const cur = (tot.textContent.match(/\d+/) || ["0"])[0];
+        const v = Math.max(0, (parseInt(cur, 10) || 0) - n);
+        tot.textContent = "(" + v + " unread)";
+      }
+    };
     const markSelectedFeedRead = () => {
       if (isEntryList || !wideScreen() || idx < 0) return false;
       const row = rows()[idx];
@@ -377,7 +409,13 @@
       }).then(function (resp) {
         if (!resp.ok) return;
         const c = row.querySelector(".count");
+        const prev = c ? (parseInt(c.textContent, 10) || 0) : 0;
         if (c) c.textContent = "0";
+        // Marking the feed read in place must also draw down every
+        // aggregate counter that included it — the tag group header, the
+        // matching sidebar tag entry, the sidebar "all" entry, and the
+        // page total — otherwise those stay stale until a full reload.
+        if (prev > 0) decAncestorCounts(row, prev);
         const href = a.getAttribute("href");
         const sep = href.indexOf("?") >= 0 ? "&" : "?";
         try { htmx.ajax("GET", href + sep + "panel=1", "#feed-pane"); } catch (_) { /* */ }

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-06-09
+
+### Fixed
+
+- **Tag group header (and sidebar) unread counts now update when a feed
+  is marked read in place.** On the home page, marking a feed read with
+  `r` zeroed only that feed row's badge; the enclosing tag group header,
+  the matching sidebar tag entry, the sidebar "all" entry, and the page
+  total stayed stale until a reload. They are now all drawn down by the
+  feed's prior unread count.
+
 ## [0.12.1] - 2026-06-09
 
 ### Fixed
