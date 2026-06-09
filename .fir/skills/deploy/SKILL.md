@@ -1,13 +1,19 @@
 ---
 name: deploy
-description: Deploy harborrs to a remote host behind Tailscale Funnel, supervised by systemd (Linux) or launchd (macOS). Verify on a throwaway test unit on an alt port, then enable the prod unit.
+description: Deploy harb to a remote host behind Tailscale Funnel, supervised by systemd (Linux) or launchd (macOS). Verify on a throwaway test unit on an alt port, then enable the prod unit.
 ---
 
 # Deploy Skill
 
-Deploy `harborrs` to a host fronted by `tailscale funnel`. The server
+Deploy `harb` to a host fronted by `tailscale funnel`. The server
 listens on loopback (or `0.0.0.0` on a chosen port); funnel terminates
 TLS and forwards. Storage is plain files under a data dir.
+
+> **This is the from-scratch provisioning runbook** (new host, first
+> install). For upgrading an already-deployed host use `update`; for the
+> current prod host (`sea-racknerd`) use the `harb-deploy-test` →
+> `harb-promote-prod` pair. Prod today is `sea-racknerd` (Linux, systemd
+> user unit `harb.service`, funnel `/rss` → `127.0.0.1:8088`).
 
 The flow is **test-then-prod**: install the binary, start a *test*
 service on an alternate port + scratch data dir, smoke-test it through
@@ -23,17 +29,17 @@ real subscriptions DB.
      URL: `https://<host>.<tailnet>.ts.net/`.
    - **(b) Prefix** — funnel `127.0.0.1:<port>` on `/<prefix>` (e.g.
      `/rss`). Funnel **strips** `/<prefix>` before forwarding, and
-     harborrs's UI emits only relative URLs (since v0.3.1) so the
+     harb's UI emits only relative URLs (since v0.3.1) so the
      prefix is transparent to the app. Public URL:
      `https://<host>.<tailnet>.ts.net/<prefix>/`.
 3. **Install method**:
    - **Linux**: `install.sh` from a tagged release (default).
-   - **macOS**: `brew install kfet/tap/harborrs` (default).
-4. **Data dir** — default `~/.local/share/harborrs` (Linux) or
-   `~/Library/Application Support/harborrs` (macOS); we set
-   `HARBORRS_DATA` explicitly in the unit to remove ambiguity. Use the
+   - **macOS**: `brew install kfet/tap/harb` (default).
+4. **Data dir** — default `~/.local/share/harb` (Linux) or
+   `~/Library/Application Support/harb` (macOS); we set
+   `HARB_DATA` explicitly in the unit to remove ambiguity. Use the
    same convention for the test instance with a `-test` suffix.
-5. **Initial credentials** — `harborrs init` generates a password and
+5. **Initial credentials** — `harb init` generates a password and
    prints it once; capture it for the user.
 
 ## Steps
@@ -44,22 +50,22 @@ real subscriptions DB.
 
 ```bash
 ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'
-ssh <host> 'harborrs version'
+ssh <host> 'harb version'
 ```
 
 `install.sh` lands the binary in `/usr/local/bin` if writable, else
-`~/.local/bin`. Confirm `command -v harborrs` resolves to the same
+`~/.local/bin`. Confirm `command -v harb` resolves to the same
 path you expect the unit to ExecStart.
 
 **macOS:**
 
 ```bash
-ssh <host> 'brew tap kfet/tap && brew install kfet/tap/harborrs'
-ssh <host> 'harborrs version'
+ssh <host> 'brew tap kfet/tap && brew install kfet/tap/harb'
+ssh <host> 'harb version'
 ```
 
 (For a hotfix from the dev tree, cross-build with `make
-build-<os>-<arch>` and `scp` to `~/.local/bin/harborrs` on the host.)
+build-<os>-<arch>` and `scp` to `~/.local/bin/harb` on the host.)
 
 ### 2. Bootstrap data dirs (test + prod)
 
@@ -67,8 +73,8 @@ Test instance lives entirely separately so we never touch prod state
 during verify:
 
 ```bash
-ssh <host> 'harborrs init \
-  -data $HOME/.local/share/harborrs-test \
+ssh <host> 'harb init \
+  -data $HOME/.local/share/harb-test \
   -listen 127.0.0.1:8089'
 ```
 
@@ -76,13 +82,13 @@ Capture the printed password for the test smoke-test. (Use `-force` to
 re-init in place if you've run this before.) Then bootstrap prod:
 
 ```bash
-ssh <host> 'harborrs init \
-  -data $HOME/.local/share/harborrs \
+ssh <host> 'harb init \
+  -data $HOME/.local/share/harb \
   -listen 127.0.0.1:8088'
 ```
 
 Hand the prod-instance password to the user (one-time; it isn't
-recoverable, only resettable via `harborrs passwd`).
+recoverable, only resettable via `harb passwd`).
 
 ### 3. Test unit — supervised on alt port
 
@@ -90,16 +96,16 @@ Start a throwaway service on `:8089` against the test data dir.
 
 #### Linux: systemd user unit
 
-`~/.config/systemd/user/harborrs-test.service`:
+`~/.config/systemd/user/harb-test.service`:
 
 ```ini
 [Unit]
-Description=harborrs (test)
+Description=harb (test)
 After=network-online.target
 
 [Service]
-Environment=HARBORRS_DATA=%h/.local/share/harborrs-test
-ExecStart=%h/.local/bin/harborrs serve
+Environment=HARB_DATA=%h/.local/share/harb-test
+ExecStart=%h/.local/bin/harb serve
 Restart=on-failure
 RestartSec=2s
 
@@ -107,48 +113,48 @@ RestartSec=2s
 WantedBy=default.target
 ```
 
-(Use the actual install path from step 1 — `/usr/local/bin/harborrs`
+(Use the actual install path from step 1 — `/usr/local/bin/harb`
 if `install.sh` ran with write access to `/usr/local/bin`, else
-`~/.local/bin/harborrs`. Check with `ssh <host> 'command -v harborrs'`
+`~/.local/bin/harb`. Check with `ssh <host> 'command -v harb'`
 and substitute into `ExecStart`. The unit file does not do PATH
 resolution.)
 
 ```bash
-ssh <host> 'systemctl --user daemon-reload && systemctl --user enable --now harborrs-test'
-ssh <host> 'systemctl --user status harborrs-test --no-pager'
+ssh <host> 'systemctl --user daemon-reload && systemctl --user enable --now harb-test'
+ssh <host> 'systemctl --user status harb-test --no-pager'
 ```
 
 #### macOS: launchd user agent
 
-`~/Library/LaunchAgents/dev.<user>.harborrs-test.plist`:
+`~/Library/LaunchAgents/dev.<user>.harb-test.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.<user>.harborrs-test</string>
+  <key>Label</key><string>dev.<user>.harb-test</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/harborrs</string>
+    <string>/opt/homebrew/bin/harb</string>
     <string>serve</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HARBORRS_DATA</key><string>/Users/<user>/Library/Application Support/harborrs-test</string>
+    <key>HARB_DATA</key><string>/Users/<user>/Library/Application Support/harb-test</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/<user>/Library/Logs/harborrs-test.out.log</string>
-  <key>StandardErrorPath</key><string>/Users/<user>/Library/Logs/harborrs-test.err.log</string>
+  <key>StandardOutPath</key><string>/Users/<user>/Library/Logs/harb-test.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/<user>/Library/Logs/harb-test.err.log</string>
 </dict>
 </plist>
 ```
 
 ```bash
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.<user>.harborrs-test.plist
-launchctl print gui/$UID/dev.<user>.harborrs-test | head
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.<user>.harb-test.plist
+launchctl print gui/$UID/dev.<user>.harb-test | head
 ```
 
 ### 4. Funnel the test port and verify end-to-end
@@ -177,23 +183,23 @@ curl -s -X POST \
 Expect the curl to end at `/rss-test/ui/login` with `code=200`, and
 `ClientLogin` to return `SID=…/Auth=…`. Connection refused → service
 didn't bind to 127.0.0.1; check unit logs
-(`journalctl --user -u harborrs-test -f` / `tail -f
-~/Library/Logs/harborrs-test.err.log`).
+(`journalctl --user -u harb-test -f` / `tail -f
+~/Library/Logs/harb-test.err.log`).
 
 ### 5. Promote: enable the prod unit, retire the test unit
 
-Repeat step 3 with name `harborrs.service` (or `dev.<user>.harborrs.plist`),
+Repeat step 3 with name `harb.service` (or `dev.<user>.harb.plist`),
 no `-test` suffix anywhere, and:
-- `HARBORRS_DATA` → prod data dir
+- `HARB_DATA` → prod data dir
 - listen port → `127.0.0.1:8088`
 
 ```bash
 # Linux
-ssh <host> 'systemctl --user daemon-reload && systemctl --user enable --now harborrs && loginctl enable-linger $USER'
-ssh <host> 'systemctl --user status harborrs --no-pager'
+ssh <host> 'systemctl --user daemon-reload && systemctl --user enable --now harb && loginctl enable-linger $USER'
+ssh <host> 'systemctl --user status harb --no-pager'
 
 # macOS
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.<user>.harborrs.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/dev.<user>.harb.plist
 ```
 
 (`loginctl enable-linger` keeps the user unit running across logouts
@@ -212,20 +218,20 @@ ssh <host> 'sudo tailscale funnel --bg --set-path=/rss 127.0.0.1:8088'
 ssh <host> 'tailscale serve status'
 ```
 
-If you'd rather have harborrs at the host root, drop `--set-path` and
+If you'd rather have harb at the host root, drop `--set-path` and
 the public URL becomes `https://<host>.<tailnet>.ts.net/`. If a stale
 funnel mapping refuses to clear, `tailscale serve reset` wipes all
 mappings on the host (destructive on multi-tenant boxes, fine on a
-dedicated harborrs host).
+dedicated harb host).
 
 Then tear down the test instance:
 
 ```bash
 # Linux
-ssh <host> 'systemctl --user disable --now harborrs-test'
+ssh <host> 'systemctl --user disable --now harb-test'
 
 # macOS
-launchctl bootout gui/$UID/dev.<user>.harborrs-test
+launchctl bootout gui/$UID/dev.<user>.harb-test
 ```
 
 Optionally `rm -rf` the test data dir once you're sure prod is healthy.
@@ -254,20 +260,20 @@ that's a curl-test artefact, not a server bug. Always smoke-test with
 Then point one real RSS client (Reeder Classic / NetNewsWire / etc.)
 at `https://<host>.<tailnet>.ts.net/<pub>/` with the FreshRSS API
 profile and the prod credentials. Confirm it lists subscriptions and
-`harborrs poll-once` works:
+`harb poll-once` works:
 
 ```bash
-ssh <host> 'HARBORRS_DATA=$HOME/.local/share/harborrs harborrs poll-once'
+ssh <host> 'HARB_DATA=$HOME/.local/share/harb harb poll-once'
 ```
 
 ### 7. Tail logs during first hour
 
 ```bash
 # Linux
-ssh <host> 'journalctl --user -u harborrs -f'
+ssh <host> 'journalctl --user -u harb -f'
 
 # macOS
-ssh <host> 'tail -f ~/Library/Logs/harborrs.err.log'
+ssh <host> 'tail -f ~/Library/Logs/harb.err.log'
 ```
 
 Watch for: poll loop start, per-feed conditional GETs, no auth 401
@@ -281,9 +287,9 @@ to be safe):
 
 ```bash
 scp subscriptions.opml <host>:/tmp/
-ssh <host> 'systemctl --user stop harborrs && \
-            HARBORRS_DATA=$HOME/.local/share/harborrs harborrs import /tmp/subscriptions.opml && \
-            systemctl --user start harborrs'
+ssh <host> 'systemctl --user stop harb && \
+            HARB_DATA=$HOME/.local/share/harb harb import /tmp/subscriptions.opml && \
+            systemctl --user start harb'
 ```
 
 ## Pitfalls
@@ -294,12 +300,12 @@ ssh <host> 'systemctl --user stop harborrs && \
 - **Port collisions** — if the test unit is left running on `:8089`
   and you reuse `:8089` for prod, the second unit will fail to bind.
   Always retire the test unit before reusing its port.
-- **`harborrs init` overwrites credentials with `-force`** — use
+- **`harb init` overwrites credentials with `-force`** — use
   `-force` only on the test data dir; prod `init` should be the
   one-and-only invocation, with the password captured immediately.
-- **launchd PATH** — `harborrs serve` itself needs no extra binaries,
+- **launchd PATH** — `harb serve` itself needs no extra binaries,
   but `EnvironmentVariables.PATH` should still include the install dir
-  if you ever invoke `harborrs poll-once` etc. via launchd.
+  if you ever invoke `harb poll-once` etc. via launchd.
 - **`loginctl enable-linger`** — without it the systemd user unit
   stops the moment your ssh session exits.
 - **Data dir on a tmpfs / volatile mount** — verify the data dir is on
@@ -378,7 +384,7 @@ systemctl --user start harb
 
 ## Handoff checklist
 
-- [ ] `harborrs version` on the host matches the intended release.
+- [ ] `harb version` on the host matches the intended release.
 - [ ] `tailscale funnel status` shows the expected prod mapping.
 - [ ] Curl smoke test: UI returns `200`, `ClientLogin` returns
       `SID=…/Auth=…`.
@@ -387,7 +393,7 @@ systemctl --user start harb
 - [ ] Prod supervisor enabled: systemd user unit + linger (Linux) **or**
       launchd user agent with `RunAtLoad` + `KeepAlive` (macOS).
 - [ ] Prod password handed to the user (one-time).
-- [ ] `HARBORRS_DATA` set explicitly in the prod unit (not relying on
+- [ ] `HARB_DATA` set explicitly in the prod unit (not relying on
       shell env).
 - [ ] At least one real RSS client successfully synced.
 
@@ -396,7 +402,7 @@ systemctl --user start harb
 See the `update` skill (`.fir/skills/update/SKILL.md`) for the per-host
 upgrade flow. Quick reference:
 
-- **In-place selfupdate**: `ssh <host> 'harborrs update'` (writes the
+- **In-place selfupdate**: `ssh <host> 'harb update'` (writes the
   new binary alongside the running one), then restart the supervisor.
-- **Brew (macOS)**: `brew upgrade kfet/tap/harborrs && launchctl kickstart -k gui/$UID/<label>`.
-- **install.sh re-run**: `ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'`, then `systemctl --user restart harborrs`.
+- **Brew (macOS)**: `brew upgrade kfet/tap/harb && launchctl kickstart -k gui/$UID/<label>`.
+- **install.sh re-run**: `ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'`, then `systemctl --user restart harb`.

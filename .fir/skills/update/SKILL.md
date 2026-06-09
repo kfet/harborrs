@@ -1,16 +1,24 @@
 ---
 name: update
-description: Update harborrs on a single host to the latest released version and restart its supervisor (systemd or launchd) so the new binary is live. Verifies on a side-by-side test unit if one exists.
+description: Update harb on a single host to the latest released version and restart its supervisor (systemd or launchd) so the new binary is live. Verifies on a side-by-side test unit if one exists.
 ---
 
 # Update Skill
 
-Upgrade `harborrs` on **one** host (local or remote) and restart the
+Upgrade `harb` on **one** host (local or remote) and restart the
 supervisor. Use after a release publishes or when a specific host is
 stale.
 
 > Releasing lives in `.fir/skills/release/SKILL.md` (the kfet stdlib-Go
 > release flow). For multi-host rollouts, repeat this skill per host.
+
+> **Canonical prod host:** `sea-racknerd` (Linux/x86_64, systemd **user**
+> units). Prod = `harb.service` (ExecStart `~/.local/bin/harb serve`,
+> `HARB_DATA=~/.local/share/harb`), funnel `/rss` → `127.0.0.1:8088`,
+> backed up by `harb-backup.service`. The path that actually works there
+> is selfupdate (`harb update`) + `systemctl --user restart harb` — see
+> path (a). The dedicated `harb-deploy-test` / `harb-promote-prod`
+> skills wrap that with a verify-before-prod gate.
 
 ## Inputs
 
@@ -38,29 +46,29 @@ Detect installed version, install method, and supervisor. For remote
 prefix every command with `ssh <host>`; for local run directly.
 
 ```bash
-harborrs version 2>/dev/null || echo not-installed
-brew list --versions harborrs 2>/dev/null         # brew install?
-ls -l ~/.local/bin/harborrs /usr/local/bin/harborrs 2>/dev/null  # install.sh / hotfix?
-systemctl --user is-active harborrs 2>/dev/null   # Linux supervisor
-launchctl list 2>/dev/null | grep -i harborrs     # macOS supervisor
-ls ~/Library/LaunchAgents/dev.*.harborrs.plist 2>/dev/null
+harb version 2>/dev/null || echo not-installed
+brew list --versions harb 2>/dev/null         # brew install?
+ls -l ~/.local/bin/harb /usr/local/bin/harb 2>/dev/null  # install.sh / hotfix?
+systemctl --user is-active harb 2>/dev/null   # Linux supervisor
+launchctl list 2>/dev/null | grep -i harb     # macOS supervisor
+ls ~/Library/LaunchAgents/dev.*.harb.plist 2>/dev/null
 ```
 
 Note the supervisor label exactly — it embeds the deploying user
-(`dev.<user>.harborrs`). If installed version already equals target,
+(`dev.<user>.harb`). If installed version already equals target,
 tell the user and stop unless they want a forced restart.
 
 ### 3. Pick the upgrade path
 
 Pick the path that matches the **install method actually pinned by the
 running supervisor's `ExecStart`**. Mixed installs are common; trust
-the unit, not `which harborrs`.
+the unit, not `which harb`.
 
-**(a) `harborrs update` — selfupdate, the default path:**
+**(a) `harb update` — selfupdate, the default path:**
 
 ```bash
-ssh <host> 'harborrs update -check'        # prints current vs latest
-ssh <host> 'harborrs update'               # downloads + atomic-replaces the binary
+ssh <host> 'harb update -check'        # prints current vs latest
+ssh <host> 'harb update'               # downloads + atomic-replaces the binary
 ```
 
 The `selfupdate` package writes to the same path as the running
@@ -69,21 +77,21 @@ process still holds the old binary in memory):
 
 ```bash
 # Linux
-ssh <host> 'systemctl --user restart harborrs'
+ssh <host> 'systemctl --user restart harb'
 
 # macOS
-ssh <host> "launchctl kickstart -k gui/\$UID/dev.<user>.harborrs"
+ssh <host> "launchctl kickstart -k gui/\$UID/dev.<user>.harb"
 ```
 
-If `harborrs update` fails because the binary lives in a path the user
+If `harb update` fails because the binary lives in a path the user
 can't write (e.g. `/usr/local/bin` on a locked-down box), fall back to
 `install.sh` with `PREFIX=$HOME/.local` or to `brew upgrade`.
 
 **(b) Brew (typical macOS):**
 
 ```bash
-ssh <host> 'brew update && brew upgrade kfet/tap/harborrs'
-ssh <host> "launchctl kickstart -k gui/\$UID/dev.<user>.harborrs"
+ssh <host> 'brew update && brew upgrade kfet/tap/harb'
+ssh <host> "launchctl kickstart -k gui/\$UID/dev.<user>.harb"
 ```
 
 If `brew upgrade` reports "already up-to-date" but the version still
@@ -94,24 +102,24 @@ lags, the tap index is stale — re-run `brew update`. Persistent miss
 
 ```bash
 ssh <host> 'curl -fsSL https://raw.githubusercontent.com/kfet/harb/main/install.sh | sh'
-ssh <host> 'systemctl --user restart harborrs'
+ssh <host> 'systemctl --user restart harb'
 ```
 
 **(d) Direct deploy from the dev tree (cross-build hotfix):**
 
 ```bash
 make build-linux-arm64               # or matching host arch
-scp harborrs-linux-arm64 <host>:~/.local/bin/harborrs
-ssh <host> 'systemctl --user restart harborrs'
+scp harb-linux-arm64 <host>:~/.local/bin/harb
+ssh <host> 'systemctl --user restart harb'
 ```
 
 ### 4. Optional: side-by-side verify on the test unit
 
-If a `harborrs-test` unit (from the deploy skill) is still installed,
+If a `harb-test` unit (from the deploy skill) is still installed,
 upgrade and restart **it first**, exercise it, then upgrade prod:
 
 ```bash
-ssh <host> 'systemctl --user restart harborrs-test'
+ssh <host> 'systemctl --user restart harb-test'
 curl -sf https://<host>.<tailnet>.ts.net/rss-test/accounts/ClientLogin \
   -X POST -d 'Email=<user>&Passwd=<test-password>' | head
 ```
@@ -125,9 +133,9 @@ incompatibilities that would otherwise corrupt prod data.
 ### 5. Verify prod
 
 ```bash
-ssh <host> 'harborrs version'                            # equals target
-ssh <host> 'systemctl --user is-active harborrs'         # → active   (Linux)
-ssh <host> "launchctl print gui/\$UID/dev.<user>.harborrs | grep state"  # → state = running  (macOS)
+ssh <host> 'harb version'                            # equals target
+ssh <host> 'systemctl --user is-active harb'         # → active   (Linux)
+ssh <host> "launchctl print gui/\$UID/dev.<user>.harb | grep state"  # → state = running  (macOS)
 ```
 
 If the host has a known public Funnel URL, optional smoke from your
@@ -152,21 +160,21 @@ anything failed, surface the error and stop — do not paper over.
 - **Missed restart** — replacing the binary on disk does not reload
   the running process. Always restart the supervisor.
 - **launchd label varies** — embeds the deploying user
-  (`dev.<user>.harborrs`). Read it from
-  `~/Library/LaunchAgents/dev.*.harborrs.plist`, don't guess.
-- **Mixed install methods** — a host may have `~/.local/bin/harborrs`
-  *and* a brew copy *and* `/usr/local/bin/harborrs`. The supervisor's
+  (`dev.<user>.harb`). Read it from
+  `~/Library/LaunchAgents/dev.*.harb.plist`, don't guess.
+- **Mixed install methods** — a host may have `~/.local/bin/harb`
+  *and* a brew copy *and* `/usr/local/bin/harb`. The supervisor's
   `ExecStart` pins one. Upgrade whichever the unit/plist points at,
-  not `command -v harborrs`.
-- **`harborrs update` write permissions** — selfupdate writes to the
-  binary's own path. If the unit ExecStarts `/usr/local/bin/harborrs`
+  not `command -v harb`.
+- **`harb update` write permissions** — selfupdate writes to the
+  binary's own path. If the unit ExecStarts `/usr/local/bin/harb`
   but the user can't write there, selfupdate fails silently from the
   user's POV (errors only on stdout). Switch to `brew upgrade` or
   re-run `install.sh` with a writable `PREFIX`.
 - **Active client polling drops** — restart kills in-flight HTTP;
   RSS clients will simply retry on their next sync interval. Avoid
   during a manual sync if avoidable.
-- **Storage compatibility** — harborrs uses on-disk NDJSON / append-
+- **Storage compatibility** — harb uses on-disk NDJSON / append-
   logs. Major version bumps may add migration steps; check the
   CHANGELOG before jumping more than one minor version, and prefer the
   test-unit verify path (step 4) for those.
@@ -179,5 +187,5 @@ anything failed, surface the error and stop — do not paper over.
 - [ ] If a test unit exists: upgraded + smoke-tested first.
 - [ ] Binary upgraded via the matching path.
 - [ ] Supervisor restarted.
-- [ ] `harborrs version` matches target.
+- [ ] `harb version` matches target.
 - [ ] Service active.
