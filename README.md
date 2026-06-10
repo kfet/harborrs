@@ -10,7 +10,7 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
 > The project is **Harbour RSS** and lives at `github.com/kfet/harb`
 > (Go module `github.com/kfet/harb`). The binary, CLI, and config keys
-> keep the `harborrs` name.
+> all use the short name `harb`.
 
 ## What it does
 
@@ -45,7 +45,7 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
 
 ```sh
 brew tap kfet/tap
-brew install kfet/tap/harborrs
+brew install kfet/tap/harb
 ```
 
 Updates come via `brew upgrade`.
@@ -62,36 +62,36 @@ writable). Supports `linux/amd64`, `linux/arm64`, `linux/armv6`
 target version with `VERSION=v0.1.0` or the install prefix with
 `PREFIX=$HOME/.local`.
 
-Once installed, `harborrs update` will pull the latest release in
+Once installed, `harb update` will pull the latest release in
 place — except when the binary is owned by a package manager (Homebrew,
-apt), in which case it'll tell you to use that instead. `harborrs
+apt), in which case it'll tell you to use that instead. `harb
 update -check` reports without installing.
 
 **From source:**
 
 ```sh
-go install github.com/kfet/harb/cmd/harborrs@latest
+go install github.com/kfet/harb/cmd/harb@latest
 ```
 
 ## Quick start
 
 ```sh
 # build
-go build -o harborrs ./cmd/harborrs
+go build -o harb ./cmd/harb
 
 # one-shot bootstrap: creates data dir, writes config.json, prints a
 # generated password. Pass -password to set your own, -username to
 # change the login name (default "admin").
-./harborrs init
+./harb init
 
 # import your existing subscriptions (optional)
-./harborrs import subscriptions.opml
+./harb import subscriptions.opml
 
 # one-shot poll (handy for cron)
-./harborrs poll-once
+./harb poll-once
 
 # serve (HTTP API + UI on :8088)
-./harborrs serve
+./harb serve
 ```
 
 Then point a FreshRSS-compatible client at `http://your-host:8088/` —
@@ -101,9 +101,9 @@ log in with the username (default `admin`) and the password printed by
 The web UI lives at `/ui/`; visiting `/` redirects there. The build
 version is shown in the UI footer and exposed on the API at
 `GET /status` (unauthenticated JSON: `{"product","version","commit","buildDate"}`)
-and as `harborrsVersion` on `/reader/api/0/user-info`.
+and as `harbVersion` on `/reader/api/0/user-info`.
 
-If you'd rather hand-roll the config, `harborrs hashpass <password>`
+If you'd rather hand-roll the config, `harb hashpass <password>`
 prints a hash you can drop into `<data-dir>/config.json` by hand.
 
 ### Passkeys (WebAuthn)

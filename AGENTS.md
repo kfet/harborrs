@@ -1,10 +1,11 @@
 # AGENTS.md
 
-Project brief for AI agents working on `harborrs`.
+Project brief for AI agents working on **Harbour RSS** (binary `harb`).
 
 ## What this is
 
-`harborrs` is a self-hosted RSS server. One binary, one user, plain-text
+**Harbour RSS** (binary `harb`) is a self-hosted RSS server. One binary,
+one user, plain-text
 storage. It speaks the **Google Reader API** dialect (the FreshRSS
 flavour) so existing RSS clients — Reeder Classic, NetNewsWire, Fiery
 Feeds, ReadKit, Unread, lire, Newsify — can sync against it with no
@@ -55,7 +56,7 @@ DB, single-user-first, stdlib-leaning Go.
 ## Storage model
 
 Filesystem-only, single-user. Layout under the config / state dir
-(`$XDG_DATA_HOME/harborrs` or similar):
+(`$XDG_DATA_HOME/harb` or similar):
 
 ```
 subscriptions.opml          # source of truth for feeds + tags
@@ -165,7 +166,7 @@ considering an approach change, about to declare a task done.
 
 There must be an end-to-end smoke target that:
 
-1. Spins up `harborrs serve` in a temp dir.
+1. Spins up `harb serve` in a temp dir.
 2. Imports a small OPML pointing at an `httptest.NewServer` that serves
    a canned RSS feed.
 3. Polls once (via subcommand or by sleeping past the next-fetch).

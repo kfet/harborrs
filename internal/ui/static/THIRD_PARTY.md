@@ -1,4 +1,4 @@
-harborrs bundles third-party assets in `internal/ui/static/`:
+harb bundles third-party assets in `internal/ui/static/`:
 
 - `htmx.min.js` — htmx v2.x, MIT-licensed, from
   https://github.com/bigskysoftware/htmx. Fetched via

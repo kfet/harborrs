@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docs corrected to the `harb` name.** `README.md`, `AGENTS.md`, and the
+  bundled `THIRD_PARTY.md` still referenced the pre-rename `harborrs`
+  binary, the `kfet/tap/harborrs` Homebrew formula, the `cmd/harborrs`
+  package, and the stale `harborrsVersion` Reader-API field — none of
+  which exist. They now use `harb` / `kfet/tap/harb` / `cmd/harb` /
+  `harbVersion`, matching the shipped binary, so the install and
+  quick-start instructions actually work.
+
 ## [0.12.4] - 2026-06-09
 
 ### Fixed
